@@ -3,6 +3,7 @@ import {
   type WorkRuntimeSession,
   type PendingConfirmation,
   type WorkerExecutor,
+  type WorkerStatus,
   type WorkerTaskRequest,
   type WorkerRunRecord,
   type WorkJob,
@@ -20,9 +21,16 @@ import {
   type ProviderEscalationRecord,
   type ReviewConfirmationDisposition,
   type ReviewConfirmationRecord,
+  ExecutionModeValue,
+  IssueStateValue,
+  WorkerExecutorValue,
+  WorkerStatusValue,
+  WorkJobExecutorValue,
+  WorkJobStatusValue,
   createId,
   nowIso,
   workerTaskRequestSchema,
+  terminalWorkJobStatusValues,
   workJobResultSchema,
   workJobSchema,
 } from "./contracts.js";
@@ -197,6 +205,28 @@ export interface AutoFlowIssueOptions {
 export interface LiveWorkerAdoptionOptions {
   adopter?: string;
   summary?: string;
+}
+
+export interface LocalThreadResultInput {
+  issueRef?: string;
+  repoKey?: string;
+  taskId?: string;
+  workJobId?: string;
+  status: Extract<WorkerStatus, "succeeded" | "blocked" | "failed">;
+  summary: string;
+  changedFiles?: string[];
+  testsRun?: string[];
+  blockers?: string[];
+  nextPickup?: string;
+  handoffPrompt?: string;
+  evidenceCandidate?: string;
+  completedAt?: string;
+}
+
+export interface LocalThreadResultRecord {
+  session: WorkRuntimeSession;
+  result: WorkerTaskResult;
+  adoptedRun?: WorkerRunRecord;
 }
 
 export interface BootstrapJiraIssueOptions {
@@ -1464,6 +1494,91 @@ export class FlowWorkRuntime {
     return this.recordWorkerResult(sessionId, result);
   }
 
+  async recordLocalThreadResult(
+    sessionId: string,
+    input: LocalThreadResultInput,
+  ): Promise<LocalThreadResultRecord> {
+    const session = await this.requireSession(sessionId);
+    const issueRef = input.issueRef ?? session.selectedIssueRef;
+    if (!issueRef) throw new Error("No issue selected for local-thread executor result.");
+    const issue = await this.ledger.readIssue(issueRef);
+    const repoKey = input.repoKey ?? session.selectedRepoKey ?? issue?.repoKeys[0];
+    if (!repoKey) throw new Error(`Repo routing is missing for ${issueRef}.`);
+
+    const executor: WorkerExecutor = WorkerExecutorValue.LiveAgentThread;
+    const workExecutor = workerExecutorToWorkExecutor(executor);
+    const runs = await this.ledger.listWorkerRuns(issueRef);
+    const latestActiveRun = [...runs]
+      .reverse()
+      .find((run) =>
+        run.repoKey === repoKey &&
+        (run.status === WorkerStatusValue.Queued || run.status === WorkerStatusValue.Running) &&
+        (!input.taskId || run.taskId === input.taskId)
+      );
+    const jobs = await this.ledger.listWorkJobs(issueRef);
+    const targetJob = input.workJobId
+      ? jobs.find((job) => job.id === input.workJobId)
+      : [...jobs]
+          .reverse()
+          .find((job) =>
+            job.repoKey === repoKey &&
+            !isTerminalWorkJobStatus(job.status) &&
+            this.workTypes.isCodeProducing(job.workType)
+          );
+    if (input.workJobId && !targetJob) {
+      throw new Error(`Work job ${input.workJobId} is not recorded for ${issueRef}.`);
+    }
+
+    const taskId = input.taskId ??
+      latestActiveRun?.taskId ??
+      stringFromRecord(targetJob?.input, "workerTaskId") ??
+      createId("worker-local");
+    const completedAt = input.completedAt ?? nowIso();
+    let adoptedRun: WorkerRunRecord | undefined;
+
+    if (targetJob && !isTerminalWorkJobStatus(targetJob.status)) {
+      const latestJob = await this.findWorkJob(session, targetJob.id, issueRef);
+      const claimed = latestJob.claimedBy === workExecutor
+        ? latestJob
+        : await this.claimWorkJob(sessionId, latestJob.id, workExecutor);
+      const startedAt = latestActiveRun?.startedAt ?? claimed.claimedAt ?? nowIso();
+      await this.markWorkJobRunning(sessionId, claimed, workExecutor, startedAt);
+      adoptedRun = {
+        taskId,
+        issueRef,
+        repoKey,
+        workJobId: targetJob.id,
+        executor,
+        status: WorkerStatusValue.Running,
+        workspacePath: stringFromRecord(targetJob.input, "workspacePath") ?? latestActiveRun?.workspacePath,
+        summary: `Local thread took over Worker ${taskId}.`,
+        blockers: [],
+        startedAt,
+        updatedAt: startedAt,
+      };
+      await this.ledger.recordWorkerRun(adoptedRun);
+    }
+
+    const result: WorkerTaskResult = {
+      taskId,
+      issueRef,
+      repoKey,
+      workJobId: input.workJobId ?? targetJob?.id ?? latestActiveRun?.workJobId,
+      executor,
+      status: input.status,
+      summary: input.summary,
+      changedFiles: input.changedFiles ?? [],
+      testsRun: input.testsRun ?? [],
+      blockers: input.blockers ?? [],
+      nextPickup: input.nextPickup,
+      handoffPrompt: input.handoffPrompt,
+      evidenceCandidate: input.evidenceCandidate,
+      completedAt,
+    };
+    const updated = await this.recordWorkerResult(sessionId, result);
+    return { session: updated, result, adoptedRun };
+  }
+
   async runBackgroundExecutor(
     sessionId: string,
     request: WorkerTaskRequest,
@@ -1474,7 +1589,7 @@ export class FlowWorkRuntime {
 
   async runWorker(sessionId: string, request: WorkerTaskRequest, spawner: WorkerSpawner): Promise<WorkerTaskResult> {
     await this.requireSession(sessionId);
-    const executor = request.executor ?? "pi";
+    const executor = request.executor ?? WorkerExecutorValue.Pi;
     const workExecutor = workerExecutorToWorkExecutor(executor);
     const requestWithJob = await this.ensureWorkerWorkJob(sessionId, request);
     const claimedJob = await this.claimWorkJob(sessionId, requestWithJob.workJobId, workExecutor);
@@ -1485,14 +1600,14 @@ export class FlowWorkRuntime {
         repoKey: request.repoKey,
         workJobId: requestWithJob.workJobId,
         executor,
-        status: "blocked",
+        status: WorkerStatusValue.Blocked,
         summary: `Worker workspace path is missing for ${request.repoKey}.`,
         changedFiles: [],
         testsRun: [],
         blockers: ["Worker workspace path is missing."],
         nextPickup: "Run prepare workspace for the routed repo, then retry advance/autoflow.",
         handoffPrompt: buildLiveWorkerHandoffPrompt(sessionId, request, {
-          status: "blocked",
+          status: WorkerStatusValue.Blocked,
           summary: "Worker workspace path is missing.",
           blockers: ["Worker workspace path is missing."],
         }),
@@ -1509,7 +1624,7 @@ export class FlowWorkRuntime {
       repoKey: request.repoKey,
       workJobId: requestWithJob.workJobId,
       executor,
-      status: "running",
+      status: WorkerStatusValue.Running,
       workspacePath: request.workspacePath,
       summary: "Worker started.",
       blockers: [],
@@ -1532,7 +1647,7 @@ export class FlowWorkRuntime {
           issueRef: event.issueRef,
           repoKey: event.repoKey,
           executor,
-          status: "running",
+          status: WorkerStatusValue.Running,
           workspacePath: request.workspacePath,
           summary: event.summary,
           blockers: [],
@@ -1546,14 +1661,14 @@ export class FlowWorkRuntime {
         issueRef: request.issueRef,
         repoKey: request.repoKey,
         executor,
-        status: "blocked",
+        status: WorkerStatusValue.Blocked,
         summary: `Pi Worker timed out or was interrupted before returning a structured result (${Math.round(workerTimeoutMs / 1000)}s workRuntime timeout).`,
         changedFiles: [],
         testsRun: [],
         blockers: ["Pi Worker timed out or was interrupted before returning a structured result."],
         nextPickup: "Retry worker run. If this repeats, inspect worker runtime/debug logs.",
         handoffPrompt: buildLiveWorkerHandoffPrompt(sessionId, request, {
-          status: "blocked",
+          status: WorkerStatusValue.Blocked,
           summary: "Pi Worker timed out or was interrupted before returning a structured result.",
           blockers: ["Pi Worker timed out or was interrupted before returning a structured result."],
         }),
@@ -1582,7 +1697,7 @@ export class FlowWorkRuntime {
     options: LiveWorkerAdoptionOptions = {},
   ): Promise<WorkerTaskRequest & { workJobId: string }> {
     await this.requireSession(sessionId);
-    const executor: WorkerExecutor = "live_agent_thread";
+    const executor: WorkerExecutor = WorkerExecutorValue.LiveAgentThread;
     const adopted = workerTaskRequestSchema.parse({
       ...request,
       executor,
@@ -1592,15 +1707,15 @@ export class FlowWorkRuntime {
     }
     const startedAt = nowIso();
     const adoptedWithJob = await this.ensureWorkerWorkJob(sessionId, adopted);
-    const claimedJob = await this.claimWorkJob(sessionId, adoptedWithJob.workJobId, "live_agent_thread");
-    await this.markWorkJobRunning(sessionId, claimedJob, "live_agent_thread", startedAt);
+    const claimedJob = await this.claimWorkJob(sessionId, adoptedWithJob.workJobId, WorkJobExecutorValue.LiveAgentThread);
+    await this.markWorkJobRunning(sessionId, claimedJob, WorkJobExecutorValue.LiveAgentThread, startedAt);
     await this.ledger.recordWorkerRun({
       taskId: adoptedWithJob.id,
       issueRef: adoptedWithJob.issueRef,
       repoKey: adoptedWithJob.repoKey,
       workJobId: adoptedWithJob.workJobId,
       executor: adoptedWithJob.executor,
-      status: "running",
+      status: WorkerStatusValue.Running,
       workspacePath: adoptedWithJob.workspacePath,
       summary: options.summary ?? liveWorkerAdoptionSummary(options.adopter),
       blockers: [],
@@ -1609,7 +1724,7 @@ export class FlowWorkRuntime {
     });
     const issue = await this.ledger.readIssue(adoptedWithJob.issueRef);
     if (issue) {
-      await this.ledger.writeIssue({ ...issue, state: "running" });
+      await this.ledger.writeIssue({ ...issue, state: IssueStateValue.Running });
     }
     await this.store.appendEvent({
       sessionId,
@@ -1675,7 +1790,7 @@ export class FlowWorkRuntime {
 
   private async ensureWorkerWorkJob(sessionId: string, request: WorkerTaskRequest): Promise<WorkerTaskRequest & { workJobId: string }> {
     if (request.workJobId) return { ...request, workJobId: request.workJobId };
-    const executionMode = request.executor === "live_agent_thread" ? "local_thread" : "background";
+    const executionMode = request.executor === WorkerExecutorValue.LiveAgentThread ? ExecutionModeValue.LocalThread : ExecutionModeValue.Background;
     const job = await this.submitWorkEnvelope(sessionId, [
       "---",
       `workType: ${this.workTypeForCategory("implement")}`,
@@ -3173,6 +3288,16 @@ function workJobResultFromWorkerResult(job: WorkJob, result: WorkerTaskResult): 
     workerResult: result,
     completedAt: result.completedAt,
   });
+}
+
+function isTerminalWorkJobStatus(status: WorkJob["status"]): boolean {
+  return (terminalWorkJobStatusValues as readonly string[]).includes(status);
+}
+
+function stringFromRecord(record: unknown, key: string): string | undefined {
+  if (!record || typeof record !== "object" || Array.isArray(record)) return undefined;
+  const value = (record as Record<string, unknown>)[key];
+  return typeof value === "string" && value.trim() ? value : undefined;
 }
 
 function workRuntimeWorkerTimeoutMs(): number {

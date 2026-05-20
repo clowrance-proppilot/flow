@@ -2430,6 +2430,53 @@ test("Work Runtime infers typed work job when live thread records result without
   assert.equal(jobResults[0].workerResult?.executor, "live_agent_thread");
 });
 
+test("Work Runtime records current local thread against a pending Worker request", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  const session = await workRuntime.createSession("session-codex-worker-result");
+  await workRuntime.selectIssue(session.id, {
+    ref: "ISSUE-33",
+    title: "Codex worker result",
+    repoKeys: ["app_api"],
+    state: "ready_to_run",
+    metadata: {
+      "workflow.repos.app_api.worktree_path": "/repo/app-api/.worktrees/feature-issue-33",
+    },
+  });
+
+  const pending = await workRuntime.advanceIssue(session.id);
+  const confirmationId = pending.session.pendingConfirmation?.id;
+  assert.ok(confirmationId);
+  const requested = await workRuntime.advanceIssue(session.id, confirmationId);
+  assert.equal(requested.status, "worker_requested");
+
+  const record = await workRuntime.recordLocalThreadResult(session.id, {
+    issueRef: "ISSUE-33",
+    repoKey: "app_api",
+    status: "succeeded",
+    summary: "Codex thread completed the Worker assignment.",
+    changedFiles: ["src/work-runtime.ts"],
+    testsRun: ["npm test"],
+  });
+
+  const results = await ledger.listWorkerResults("ISSUE-33");
+  const runs = await ledger.listWorkerRuns("ISSUE-33");
+  const jobs = await ledger.listWorkJobs("ISSUE-33");
+  const jobResults = await ledger.listWorkJobResults("ISSUE-33");
+  const advanced = await workRuntime.advanceIssue(session.id);
+
+  assert.equal(record.result.taskId, requested.workerRequest?.id);
+  assert.equal(record.result.workJobId, requested.workerRequest?.workJobId);
+  assert.equal(record.result.executor, "live_agent_thread");
+  assert.equal(results[0].executor, "live_agent_thread");
+  assert.equal(runs.at(-1)?.status, "succeeded");
+  assert.equal(jobs[0].claimedBy, "live_agent_thread");
+  assert.equal(jobs[0].status, "succeeded");
+  assert.equal(jobResults[0].workerResult?.taskId, requested.workerRequest?.id);
+  assert.notEqual(advanced.session.pendingConfirmation?.action, "spawn_worker");
+});
+
 test("Work Runtime routes and prepares main work in the project root", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
   const projectRoot = await mkdtemp(join(tmpdir(), "host-root-"));

@@ -5,6 +5,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
+  WorkerExecutorValue,
+  WorkerStatusValue,
   type WorkerTaskRequest,
   type WorkerTaskResult,
   nowIso,
@@ -85,7 +87,7 @@ export class PiWorkerSpawner implements WorkerSpawner {
         issueRef: request.issueRef,
         repoKey: request.repoKey,
         executor: request.executor,
-        status: "succeeded",
+        status: WorkerStatusValue.Succeeded,
         summary: assistantText || "Pi Worker completed.",
         changedFiles: [],
         testsRun: [],
@@ -115,7 +117,7 @@ export class PiWorkerSpawner implements WorkerSpawner {
         issueRef: request.issueRef,
         repoKey: request.repoKey,
         executor: request.executor,
-        status: "blocked",
+        status: WorkerStatusValue.Blocked,
         summary: compactErrorMessage(message),
         changedFiles: [],
         testsRun: [],
@@ -260,7 +262,7 @@ export class CodexWorkerSpawner implements WorkerSpawner {
         issueRef: request.issueRef,
         repoKey: request.repoKey,
         executor: request.executor,
-        status: "succeeded",
+        status: WorkerStatusValue.Succeeded,
         summary: assistantText || "Codex background executor completed.",
         changedFiles: [],
         testsRun: [],
@@ -274,7 +276,7 @@ export class CodexWorkerSpawner implements WorkerSpawner {
         issueRef: request.issueRef,
         repoKey: request.repoKey,
         executor: request.executor,
-        status: "blocked",
+        status: WorkerStatusValue.Blocked,
         summary: compactErrorMessage(message),
         changedFiles: [],
         testsRun: [],
@@ -321,10 +323,10 @@ export class CodexWorkerSpawner implements WorkerSpawner {
 export function createDefaultWorkerSpawner(options: DefaultWorkerSpawnerOptions = {}): WorkerSpawner {
   const env = options.env ?? process.env;
   const executor = env.FLOW_WORKER_EXECUTOR?.trim().toLowerCase();
-  if (executor === "codex") {
+  if (executor === WorkerExecutorValue.Codex) {
     return new CodexWorkerSpawner({ ...options, env });
   }
-  if (executor === "pi") {
+  if (executor === WorkerExecutorValue.Pi) {
     return new PiWorkerSpawner(options);
   }
   const command = env.FLOW_CODEX_BIN ?? "codex";

@@ -1,4 +1,10 @@
-import type { WorkJobExecutor, WorkTypeCategory } from "./contracts.js";
+import {
+  WorkerExecutorValue,
+  WorkJobExecutorValue,
+  type WorkerExecutor,
+  type WorkJobExecutor,
+  type WorkTypeCategory,
+} from "./contracts.js";
 
 export interface WorkTypeDefinition {
   workType: string;
@@ -80,46 +86,46 @@ export function createDefaultFlowWorkTypeRegistry(): WorkTypeRegistry {
         workType: "flow.prepare_workspace",
         category: "prepare",
         requiredCapabilities: ["repo.worktree.prepare"],
-        allowedExecutors: ["live_agent_thread"],
+        allowedExecutors: [WorkJobExecutorValue.LiveAgentThread],
         outputType: "workspace_result",
       },
       {
         workType: "flow.implement",
         category: "implement",
         requiredCapabilities: ["code.edit", "test.run"],
-        allowedExecutors: ["pi_worker", "live_agent_thread", "codex_worker"],
+        allowedExecutors: [WorkJobExecutorValue.PiWorker, WorkJobExecutorValue.LiveAgentThread, WorkJobExecutorValue.CodexWorker],
         outputType: "worker_result",
       },
       {
         workType: "flow.remediate",
         category: "remediate",
         requiredCapabilities: ["code.edit", "review.remediate", "test.run"],
-        allowedExecutors: ["pi_worker", "live_agent_thread", "codex_worker"],
+        allowedExecutors: [WorkJobExecutorValue.PiWorker, WorkJobExecutorValue.LiveAgentThread, WorkJobExecutorValue.CodexWorker],
         outputType: "worker_result",
       },
       {
         workType: "flow.verify",
         category: "verify",
         requiredCapabilities: ["test.run", "evidence.record"],
-        allowedExecutors: ["pi_worker", "live_agent_thread"],
+        allowedExecutors: [WorkJobExecutorValue.PiWorker, WorkJobExecutorValue.LiveAgentThread],
         outputType: "evidence_result",
       },
     ],
     [
       {
-        executor: "pi_worker",
+        executor: WorkJobExecutorValue.PiWorker,
         capabilities: ["code.edit", "test.run", "review.remediate"],
         canSubmit: [],
         outputs: ["worker_result", "blocked_result"],
       },
       {
-        executor: "codex_worker",
+        executor: WorkJobExecutorValue.CodexWorker,
         capabilities: ["code.edit", "test.run", "review.remediate"],
         canSubmit: [],
         outputs: ["worker_result", "blocked_result"],
       },
       {
-        executor: "live_agent_thread",
+        executor: WorkJobExecutorValue.LiveAgentThread,
         capabilities: ["repo.worktree.prepare", "code.edit", "test.run", "review.remediate", "evidence.record"],
         canSubmit: [
           "flow.prepare_workspace",
@@ -133,7 +139,7 @@ export function createDefaultFlowWorkTypeRegistry(): WorkTypeRegistry {
   );
 }
 
-export function workerExecutorToWorkExecutor(executor: "pi" | "live_agent_thread" | "codex" | undefined): WorkJobExecutor {
-  if (executor === "codex") return "codex_worker";
-  return executor === "live_agent_thread" ? "live_agent_thread" : "pi_worker";
+export function workerExecutorToWorkExecutor(executor: WorkerExecutor | undefined): WorkJobExecutor {
+  if (executor === WorkerExecutorValue.Codex) return WorkJobExecutorValue.CodexWorker;
+  return executor === WorkerExecutorValue.LiveAgentThread ? WorkJobExecutorValue.LiveAgentThread : WorkJobExecutorValue.PiWorker;
 }

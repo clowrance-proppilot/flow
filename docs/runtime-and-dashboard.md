@@ -80,6 +80,7 @@ From the repo root:
 
 ```bash
 flow commands
+flow manifest
 flow queue
 flow create-issue --type Bug --summary "Fix provider parquet schema" --description "Follow-up from ISSUE-15461." --repo app_api
 flow select ISSUE-123 --session codex-issue-123
@@ -87,11 +88,14 @@ flow advance ISSUE-123 --session codex-issue-123
 flow-dashboard
 ```
 
-`flow commands` is the CLI discovery command. It returns JSON containing command
-descriptions, examples, and the raw Work Runtime methods supported by
-`flow call`, including `createIssue`, `bootstrapJiraIssue`, `routeIssue`, and
-`advanceIssue`. Provider-specific method names remain only as compatibility
-aliases where existing agents already use them.
+`flow manifest` is the CLI discovery contract. It returns JSON derived from the
+registered Commander commands, including command descriptions, arguments,
+options, defaults, required flags, negated flags, and the raw Work Runtime
+methods supported by `flow call`, including `createIssue`,
+`bootstrapJiraIssue`, `routeIssue`, and `advanceIssue`. `flow commands` returns
+a compact compatibility view plus the same manifest. Provider-specific method
+names remain only as compatibility aliases where existing agents already use
+them.
 
 `npm run start:all` starts the Dashboard. It also builds the runtime and
 dashboard first.

@@ -74,17 +74,25 @@ Common commands:
 
 ```text
 flow commands
+flow manifest
 flow queue
 flow create-issue --type Bug --summary "Fix provider parquet schema" --description "Follow-up from ISSUE-15461." --repo app_api
 flow select ISSUE-123 --session codex-issue-123
 flow advance ISSUE-123 --session codex-issue-123
 flow autoflow ISSUE-123 --session codex-issue-123
+flow complete-worker ISSUE-123 --session codex-issue-123 --repo app_api --summary "Patch applied and focused tests passed" --changed-files src/example.ts --tests-run "npm test"
 ```
 
-`flow commands` emits the supported operator commands, descriptions, examples,
-and the raw Work Runtime methods available through `flow call`. Prefer the
-first-class commands for normal work; use `flow call` when you need a lower-level
-runtime method such as `createIssue` or `routeIssue`.
+`flow manifest` emits the machine-readable command contract derived from the
+registered Commander commands, including arguments, options, defaults, required
+flags, and raw Work Runtime methods available through `flow call`. `flow
+commands` is a compact compatibility view that includes the same manifest.
+Prefer the first-class commands for normal work; use `flow call` when you need a
+lower-level runtime method such as `createIssue` or `routeIssue`.
+
+Use `flow complete-worker` when the current local agent thread has already done
+the Worker assignment. Flow will claim the pending Worker job for the live-thread
+executor, record the structured result, and stop asking for a duplicate Worker.
 
 ## State
 

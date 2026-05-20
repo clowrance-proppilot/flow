@@ -12,9 +12,15 @@ import {
   FlowStore,
   FlowWorkRuntime,
   GhGitHubAdapter,
+  IssueStateValue,
   loadFlowConfig,
+  terminalWorkerStatusValues,
   type CreateIssueOptions,
+  type LocalThreadResultInput,
+  type WorkerExecutor,
+  type WorkerStatus,
   type WorkItem,
+  workerExecutorValues,
 } from "./index.js";
 import { GhGitHubIssueTrackerAdapter } from "./adapters/github.js";
 import { loadFlowEnv, repoRoot } from "./flow-runtime.js";
@@ -22,34 +28,6 @@ import { loadFlowEnv, repoRoot } from "./flow-runtime.js";
 loadFlowEnv();
 
 const defaultSessionId = process.env.FLOW_SESSION_ID ?? "cli";
-const cliCommands = [
-  "commands",
-  "session",
-  "queue",
-  "backlog",
-  "select",
-  "create-issue",
-  "advance",
-  "autoflow",
-  "doctor",
-  "handoff",
-  "observe",
-  "call",
-];
-const cliCommandDescriptions = {
-  commands: "Describe the CLI command surface and raw Work Runtime call methods.",
-  session: "Create or overwrite a named Work Runtime session.",
-  queue: "Inspect current configured issue queue.",
-  backlog: "Inspect configured issue backlog.",
-  select: "Select an existing issue in a file-backed Work Runtime session.",
-  "create-issue": "Create an issue through the configured issue tracker, store it in Flow, and select it by default.",
-  advance: "Advance a selected issue, or select the issue first when provided.",
-  autoflow: "Run deterministic autoflow for an issue.",
-  doctor: "Diagnose Flow visibility, routing, PR state, readiness blockers, and next action.",
-  handoff: "Summarize current session handoff state.",
-  observe: "Observe projected workflow state for a subject.",
-  call: "Call a supported Work Runtime method with raw JSON params.",
-} satisfies Record<string, string>;
 const rawWorkRuntimeMethods = [
   "inspectDashboardQueue",
   "inspectQueue",
@@ -67,6 +45,10 @@ const rawWorkRuntimeMethods = [
   "autoFlowIssue",
   "resetAutoflowState",
   "refreshReviewState",
+  "adoptPendingLocalThread",
+  "adoptLocalThread",
+  "recordExecutorResult",
+  "recordLocalThreadResult",
   "summarizeHandoff",
   "observeFlowSubject",
 ];
@@ -96,11 +78,12 @@ const program = new Command()
     writeErr: (value) => process.stderr.write(value),
   })
   .action(() => {
+    const manifest = commandManifest();
     writeJson({
       ok: false,
       error: "command required",
-      commands: cliCommands,
-      hint: "Run `flow commands` for descriptions, examples, and raw Work Runtime methods.",
+      commands: manifest.commands.map((command) => command.name),
+      hint: "Run `flow commands` or `flow manifest` for the command contract.",
     });
     process.exitCode = 1;
   });
@@ -108,20 +91,22 @@ const program = new Command()
 program
   .command("commands")
   .description("Emit supported agent protocol commands.")
-  .action(() => writeJson({
-    commands: cliCommands.filter((command) => command !== "commands"),
-    descriptions: cliCommandDescriptions,
-    rawWorkRuntimeMethods,
-    examples: [
-      "flow queue",
-      "flow create-issue --type Bug --summary \"Fix provider parquet schema\" --description \"Follow-up from ISSUE-15461.\" --repo app_api",
-      "flow call createIssue '{\"options\":{\"issueType\":\"Bug\",\"summary\":\"Fix provider parquet schema\",\"repoKeys\":[\"app_api\"]}}'",
-      "flow call routeIssue '{\"issueRef\":\"ISSUE-123\",\"repoKeys\":[\"app_api\"]}'",
-      "flow advance ISSUE-123 --session codex-issue-123",
-    ],
-    stdout: "json",
-    stderr: "diagnostics",
-  }));
+  .action(() => {
+    const manifest = commandManifest();
+    writeJson({
+      commands: manifest.commands.map((command) => command.name),
+      descriptions: Object.fromEntries(manifest.commands.map((command) => [command.name, command.description])),
+      rawWorkRuntimeMethods,
+      stdout: manifest.stdout,
+      stderr: manifest.stderr,
+      manifest,
+    });
+  });
+
+program
+  .command("manifest")
+  .description("Emit the machine-readable CLI command contract derived from registered commands.")
+  .action(() => writeJson(commandManifest()));
 
 program
   .command("session")
@@ -219,6 +204,49 @@ program
   });
 
 program
+  .command("complete-worker")
+  .description("Record the current local agent thread as the Worker result for an issue.")
+  .argument("[issue-ref]", "issue key or ref")
+  .requiredOption("--summary <text>", "worker result summary")
+  .option("-s, --session <id>", "session id", defaultSessionId)
+  .option("--repo <key>", "repo key")
+  .option("--task-id <id>", "worker task id to close")
+  .option("--work-job-id <id>", "typed work job id to close")
+  .option("--status <status>", "result status: succeeded, blocked, or failed", "succeeded")
+  .option("--changed-files <files>", "comma-separated changed files")
+  .option("--tests-run <commands>", "comma-separated verification commands")
+  .option("--blockers <items>", "comma-separated blockers")
+  .option("--next-pickup <text>", "next pickup guidance for blocked/failed work")
+  .action(async (issueRef: string | undefined, options: {
+    session: string;
+    summary: string;
+    repo?: string;
+    taskId?: string;
+    workJobId?: string;
+    status: string;
+    changedFiles?: string;
+    testsRun?: string;
+    blockers?: string;
+    nextPickup?: string;
+  }) => {
+    await ensureSession(options.session);
+    if (issueRef) await runtime.selectIssue(options.session, await queueIssue(issueRef));
+    const input: LocalThreadResultInput = {
+      issueRef,
+      repoKey: options.repo,
+      taskId: options.taskId,
+      workJobId: options.workJobId,
+      status: parseWorkerResultStatus(options.status),
+      summary: options.summary,
+      changedFiles: asStringArray(options.changedFiles),
+      testsRun: asStringArray(options.testsRun),
+      blockers: asStringArray(options.blockers),
+      nextPickup: options.nextPickup,
+    };
+    writeJson(await runtime.recordLocalThreadResult(options.session, input));
+  });
+
+program
   .command("doctor")
   .description("Diagnose Flow visibility, routing, PR state, readiness blockers, and next action.")
   .argument("[issue-ref]", "issue key or ref")
@@ -287,7 +315,7 @@ async function queueIssue(issueRef: string): Promise<WorkItem> {
     candidate.ref.toUpperCase() === issueKey || issueMatchesPullRequest(candidate, issueRef)
   );
   if (issue) return issue;
-  return { ref: issueKey, title: issueKey, repoKeys: [], state: "queued", metadata: {} };
+  return { ref: issueKey, title: issueKey, repoKeys: [], state: IssueStateValue.Queued, metadata: {} };
 }
 
 async function resolveIssueRef(ref: string): Promise<string | undefined> {
@@ -380,6 +408,68 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
       );
     case "advanceIssue":
       return runtime.advanceIssue(String(params.sessionId ?? defaultSessionId), typeof params.approveConfirmationId === "string" ? params.approveConfirmationId : undefined);
+    case "adoptPendingLocalThread":
+      return runtime.adoptPendingLocalThread(
+        String(params.sessionId ?? defaultSessionId),
+        {
+          adopter: typeof params.adopter === "string" ? params.adopter : undefined,
+          summary: typeof params.summary === "string" ? params.summary : undefined,
+        },
+      );
+    case "adoptLocalThread":
+      return runtime.adoptLocalThread(
+        String(params.sessionId ?? defaultSessionId),
+        {
+          id: String(params.id),
+          issueRef: String(params.issueRef),
+          repoKey: String(params.repoKey),
+          workJobId: typeof params.workJobId === "string" ? params.workJobId : undefined,
+          executor: parseWorkerExecutor(params.executor),
+          prompt: String(params.prompt),
+          workspacePath: String(params.workspacePath),
+          createdAt: typeof params.createdAt === "string" ? params.createdAt : new Date().toISOString(),
+        },
+        {
+          adopter: typeof params.adopter === "string" ? params.adopter : undefined,
+          summary: typeof params.summary === "string" ? params.summary : undefined,
+        },
+      );
+    case "recordExecutorResult":
+      return runtime.recordExecutorResult(String(params.sessionId ?? defaultSessionId), {
+        taskId: String(params.taskId),
+        issueRef: String(params.issueRef),
+        repoKey: String(params.repoKey),
+        workJobId: typeof params.workJobId === "string" ? params.workJobId : undefined,
+        executor: parseWorkerExecutor(params.executor),
+        status: parseWorkerResultStatus(params.status),
+        summary: String(params.summary),
+        changedFiles: asStringArray(params.changedFiles) ?? [],
+        testsRun: asStringArray(params.testsRun) ?? [],
+        blockers: asStringArray(params.blockers) ?? [],
+        nextPickup: typeof params.nextPickup === "string" ? params.nextPickup : undefined,
+        handoffPrompt: typeof params.handoffPrompt === "string" ? params.handoffPrompt : undefined,
+        evidenceCandidate: typeof params.evidenceCandidate === "string" ? params.evidenceCandidate : undefined,
+        completedAt: typeof params.completedAt === "string" ? params.completedAt : new Date().toISOString(),
+      });
+    case "recordLocalThreadResult":
+      return runtime.recordLocalThreadResult(
+        String(params.sessionId ?? defaultSessionId),
+        {
+          issueRef: typeof params.issueRef === "string" ? params.issueRef : undefined,
+          repoKey: typeof params.repoKey === "string" ? params.repoKey : undefined,
+          taskId: typeof params.taskId === "string" ? params.taskId : undefined,
+          workJobId: typeof params.workJobId === "string" ? params.workJobId : undefined,
+          status: parseWorkerResultStatus(params.status),
+          summary: String(params.summary),
+          changedFiles: asStringArray(params.changedFiles),
+          testsRun: asStringArray(params.testsRun),
+          blockers: asStringArray(params.blockers),
+          nextPickup: typeof params.nextPickup === "string" ? params.nextPickup : undefined,
+          handoffPrompt: typeof params.handoffPrompt === "string" ? params.handoffPrompt : undefined,
+          evidenceCandidate: typeof params.evidenceCandidate === "string" ? params.evidenceCandidate : undefined,
+          completedAt: typeof params.completedAt === "string" ? params.completedAt : undefined,
+        },
+      );
     case "diagnoseIssue":
       return runtime.diagnoseIssue(
         String(params.sessionId ?? defaultSessionId),
@@ -410,6 +500,44 @@ function writeJson(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value)}\n`);
 }
 
+function commandManifest() {
+  return {
+    manifestVersion: 1,
+    stdout: "json",
+    stderr: "diagnostics",
+    commands: program.commands.map((command) => ({
+      name: command.name(),
+      description: command.description(),
+      arguments: command.registeredArguments.map((argument) => ({
+        name: argument.name(),
+        description: argument.description,
+        required: argument.required,
+        variadic: argument.variadic,
+        default: serializableDefault(argument.defaultValue),
+        choices: argument.argChoices,
+      })),
+      options: command.options.map((option) => ({
+        name: option.attributeName(),
+        flags: option.flags,
+        description: option.description,
+        requiredValue: option.required,
+        optionalValue: option.optional,
+        mandatory: option.mandatory,
+        boolean: option.isBoolean(),
+        negated: option.negate,
+        variadic: option.variadic,
+        default: serializableDefault(option.defaultValue),
+        choices: option.argChoices,
+      })),
+    })),
+    rawWorkRuntimeMethods,
+  };
+}
+
+function serializableDefault(value: unknown): unknown {
+  return value === undefined ? undefined : value;
+}
+
 function parsePositiveInteger(value: string): number {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 1) throw new Error(`Expected a positive integer, got ${value}.`);
@@ -421,6 +549,17 @@ function asStringArray(value: unknown): string[] | undefined {
   if (Array.isArray(value)) return value.map(String);
   if (typeof value === "string") return value.split(",").map((item) => item.trim()).filter(Boolean);
   return [];
+}
+
+function parseWorkerExecutor(value: unknown): WorkerExecutor | undefined {
+  if (value === undefined) return undefined;
+  if (workerExecutorValues.includes(value as WorkerExecutor)) return value as WorkerExecutor;
+  throw new Error(`Expected executor ${workerExecutorValues.join(", ")}, got ${String(value)}.`);
+}
+
+function parseWorkerResultStatus(value: unknown): Extract<WorkerStatus, "succeeded" | "blocked" | "failed"> {
+  if ((terminalWorkerStatusValues as readonly string[]).includes(String(value))) return value as Extract<WorkerStatus, "succeeded" | "blocked" | "failed">;
+  throw new Error(`Expected worker result status ${terminalWorkerStatusValues.join(", ")}, got ${String(value)}.`);
 }
 
 function parseJiraIssueType(value: string): "Bug" | "Task" | "Story" {

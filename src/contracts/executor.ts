@@ -1,9 +1,45 @@
 import { z } from "zod";
 
-export const workerStatusSchema = z.enum(["queued", "running", "succeeded", "blocked", "failed"]);
+export const LifecycleStatusValue = {
+  Queued: "queued",
+  Running: "running",
+  Succeeded: "succeeded",
+  Blocked: "blocked",
+  Failed: "failed",
+} as const;
+
+export const WorkerStatusValue = LifecycleStatusValue;
+
+export const WorkerExecutorValue = {
+  Pi: "pi",
+  LiveAgentThread: "live_agent_thread",
+  Codex: "codex",
+} as const;
+
+export const workerStatusValues = [
+  LifecycleStatusValue.Queued,
+  LifecycleStatusValue.Running,
+  LifecycleStatusValue.Succeeded,
+  LifecycleStatusValue.Blocked,
+  LifecycleStatusValue.Failed,
+] as const;
+
+export const terminalWorkerStatusValues = [
+  LifecycleStatusValue.Succeeded,
+  LifecycleStatusValue.Blocked,
+  LifecycleStatusValue.Failed,
+] as const;
+
+export const workerExecutorValues = [
+  WorkerExecutorValue.Pi,
+  WorkerExecutorValue.LiveAgentThread,
+  WorkerExecutorValue.Codex,
+] as const;
+
+export const workerStatusSchema = z.enum(workerStatusValues);
 export type WorkerStatus = z.infer<typeof workerStatusSchema>;
 
-export const workerExecutorSchema = z.enum(["pi", "live_agent_thread", "codex"]);
+export const workerExecutorSchema = z.enum(workerExecutorValues);
 export type WorkerExecutor = z.infer<typeof workerExecutorSchema>;
 
 export const workerTaskRequestSchema = z.object({

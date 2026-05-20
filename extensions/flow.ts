@@ -1,7 +1,17 @@
 import { join } from "node:path";
 import { Type } from "typebox";
 import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { FlowWorkRuntime, FlowStore, createDefaultWorkerSpawner, createWorkflowLedger } from "../src/index.js";
+import {
+  FlowWorkRuntime,
+  FlowStore,
+  WorkerExecutorValue,
+  WorkerStatusValue,
+  createDefaultWorkerSpawner,
+  createWorkflowLedger,
+  terminalWorkerStatusValues,
+  workerExecutorValues,
+  workerStatusValues,
+} from "../src/index.js";
 import { GhGitHubAdapter } from "../src/adapters/github.js";
 import { AcliJiraAdapter } from "../src/adapters/jira.js";
 
@@ -21,6 +31,10 @@ function workRuntime() {
     jira: new AcliJiraAdapter({ cwd: repoRoot }),
     projectRoot: repoRoot,
   });
+}
+
+function stringLiteralUnion(values: readonly string[]) {
+  return Type.Union(values.map((value) => Type.Literal(value)) as never);
 }
 
 export default function (pi: ExtensionAPI) {
@@ -484,17 +498,8 @@ export default function (pi: ExtensionAPI) {
       taskId: Type.String(),
       issueRef: Type.String(),
       repoKey: Type.String(),
-      executor: Type.Optional(Type.Union([
-        Type.Literal("pi"),
-        Type.Literal("live_agent_thread"),
-      ])),
-      status: Type.Union([
-        Type.Literal("queued"),
-        Type.Literal("running"),
-        Type.Literal("succeeded"),
-        Type.Literal("blocked"),
-        Type.Literal("failed"),
-      ]),
+      executor: Type.Optional(stringLiteralUnion(workerExecutorValues)),
+      status: stringLiteralUnion(workerStatusValues),
       summary: Type.Optional(Type.String()),
       workspacePath: Type.Optional(Type.String()),
       blockers: Type.Optional(Type.Array(Type.String())),
@@ -510,8 +515,8 @@ export default function (pi: ExtensionAPI) {
         summary: params.summary,
         workspacePath: params.workspacePath,
         blockers: params.blockers ?? [],
-        startedAt: params.status === "running" ? updatedAt : undefined,
-        completedAt: ["succeeded", "blocked", "failed"].includes(params.status) ? updatedAt : undefined,
+        startedAt: params.status === WorkerStatusValue.Running ? updatedAt : undefined,
+        completedAt: terminalWorkerStatusValues.includes(params.status) ? updatedAt : undefined,
         updatedAt,
       };
       await createWorkflowLedger({ cwd: flowRoot() }).recordWorkerRun(run);
@@ -547,7 +552,7 @@ export default function (pi: ExtensionAPI) {
           issueRef: params.issueRef,
           repoKey: params.repoKey,
           workJobId: params.workJobId,
-          executor: "live_agent_thread",
+          executor: WorkerExecutorValue.LiveAgentThread,
           prompt: params.prompt,
           workspacePath: params.workspacePath,
           createdAt: params.createdAt,
@@ -598,15 +603,8 @@ export default function (pi: ExtensionAPI) {
       issueRef: Type.String(),
       repoKey: Type.String(),
       workJobId: Type.Optional(Type.String()),
-      executor: Type.Optional(Type.Union([
-        Type.Literal("pi"),
-        Type.Literal("live_agent_thread"),
-      ])),
-      status: Type.Union([
-        Type.Literal("succeeded"),
-        Type.Literal("blocked"),
-        Type.Literal("failed"),
-      ]),
+      executor: Type.Optional(stringLiteralUnion(workerExecutorValues)),
+      status: stringLiteralUnion(terminalWorkerStatusValues),
       summary: Type.String(),
       changedFiles: Type.Optional(Type.Array(Type.String())),
       testsRun: Type.Optional(Type.Array(Type.String())),
@@ -649,10 +647,7 @@ export default function (pi: ExtensionAPI) {
       id: Type.String(),
       issueRef: Type.String(),
       repoKey: Type.String(),
-      executor: Type.Optional(Type.Union([
-        Type.Literal("pi"),
-        Type.Literal("live_agent_thread"),
-      ])),
+      executor: Type.Optional(stringLiteralUnion(workerExecutorValues)),
       prompt: Type.String(),
       workspacePath: Type.Optional(Type.String()),
       createdAt: Type.String(),
