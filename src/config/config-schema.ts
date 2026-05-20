@@ -51,6 +51,22 @@ export const executorConfigSchema = z.object({
   outputs: z.array(z.string().min(1)).default([]),
 });
 
+export const serviceEndpointConfigSchema = z.object({
+  host: z.string().min(1).optional(),
+  port: z.number().int().positive().optional(),
+  url: z.string().min(1).optional(),
+}).catchall(z.unknown());
+
+export const runtimeConfigSchema = z.object({
+  stateDir: z.string().min(1).optional(),
+  storeDir: z.string().min(1).optional(),
+  eventLedgerPath: z.string().min(1).optional(),
+  workflowLedgerPath: z.string().min(1).optional(),
+  defaultSessionId: z.string().min(1).optional(),
+  workRuntime: serviceEndpointConfigSchema.optional(),
+  dashboard: serviceEndpointConfigSchema.optional(),
+}).catchall(z.unknown());
+
 export const flowConfigSchema = z.object({
   version: z.literal("1"),
   project: z.object({
@@ -61,6 +77,7 @@ export const flowConfigSchema = z.object({
   collaboration: adapterSelectionConfigSchema.optional(),
   sourceControl: adapterSelectionConfigSchema.optional(),
   ledger: adapterSelectionConfigSchema.optional(),
+  runtime: runtimeConfigSchema.optional(),
   workTypes: z.array(workTypeConfigSchema).optional(),
   executors: z.array(executorConfigSchema).optional(),
 });
@@ -71,4 +88,5 @@ export type IssueInferenceRuleConfig = z.infer<typeof issueInferenceRuleConfigSc
 export type TopologyConfig = z.infer<typeof topologyConfigSchema>;
 export type WorkTypeConfig = z.infer<typeof workTypeConfigSchema>;
 export type ExecutorConfig = z.infer<typeof executorConfigSchema>;
+export type RuntimeConfig = z.infer<typeof runtimeConfigSchema>;
 export type FlowConfig = z.infer<typeof flowConfigSchema>;

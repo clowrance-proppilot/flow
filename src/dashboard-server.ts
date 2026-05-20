@@ -7,13 +7,16 @@ import { fileURLToPath } from "node:url";
 import { DashboardState, callWorkRuntime } from "./dashboard-state.js";
 import { FlowEventStream } from "./event-stream.js";
 import { flowRoot, loadFlowEnv, repoRoot } from "./flow-runtime.js";
+import { loadFlowConfig } from "./config/config-loader.js";
+import type { FlowConfig } from "./config/config-schema.js";
 
 loadFlowEnv();
 
-const port = parsePort(process.env.FLOW_DASHBOARD_PORT ?? "8767");
-const host = process.env.FLOW_DASHBOARD_HOST ?? "127.0.0.1";
-const publicUrl = process.env.FLOW_DASHBOARD_URL ?? `http://${host}:${port}`;
-const workRuntimeUrl = process.env.FLOW_WORK_RUNTIME_URL ?? "http://127.0.0.1:8771";
+const flowConfig = await loadFlowConfig({ projectRoot: repoRoot });
+const host = resolveDashboardHost(flowConfig);
+const port = resolveDashboardPort(flowConfig);
+const publicUrl = resolveDashboardUrl(flowConfig);
+const workRuntimeUrl = resolveWorkRuntimeUrl(flowConfig);
 const dashboardFilePath = resolveDashboardFilePath();
 const dashboardAssetsPath = join(dirname(dashboardFilePath), "assets");
 const serviceStartedAt = new Date();
@@ -172,7 +175,7 @@ async function handleAction(action: string, body: Record<string, unknown>): Prom
 async function selectRuntimeIssue(sessionId: string, issueRef: string, body: Record<string, unknown>): Promise<unknown> {
   const options = isRecord(body.bootstrapOptions) ? body.bootstrapOptions : {};
   try {
-    return await callWorkRuntime(workRuntimeUrl, "bootstrapJiraIssue", { sessionId, issueRef, options });
+    return await callWorkRuntime(workRuntimeUrl, "bootstrapIssue", { sessionId, issueRef, options });
   } catch (error) {
     if (isRecord(body.issue)) {
       return callWorkRuntime(workRuntimeUrl, "selectIssue", { sessionId, issue: body.issue });
@@ -226,6 +229,32 @@ function parsePort(value: string): number {
     throw new Error(`FLOW_DASHBOARD_PORT must be an integer from 1 to 65535; got ${value}.`);
   }
   return parsed;
+}
+
+function resolveDashboardHost(config: FlowConfig | undefined): string {
+  const host = config?.runtime?.dashboard?.host?.trim();
+  if (!host) throw new Error("Missing required config value: runtime.dashboard.host");
+  return host;
+}
+
+function resolveDashboardPort(config: FlowConfig | undefined): number {
+  const port = config?.runtime?.dashboard?.port;
+  if (port === undefined || !Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error("Missing required config value: runtime.dashboard.port");
+  }
+  return port;
+}
+
+function resolveDashboardUrl(config: FlowConfig | undefined): string {
+  const url = config?.runtime?.dashboard?.url?.trim();
+  if (!url) throw new Error("Missing required config value: runtime.dashboard.url");
+  return url;
+}
+
+function resolveWorkRuntimeUrl(config: FlowConfig | undefined): string {
+  const url = config?.runtime?.workRuntime?.url?.trim();
+  if (!url) throw new Error("Missing required config value: runtime.workRuntime.url");
+  return url;
 }
 
 function errorMessage(error: unknown): string {

@@ -13,24 +13,27 @@ import {
   loadFlowConfig,
 } from "./index.js";
 import { GhGitHubAdapter } from "./adapters/github.js";
+import { GhGitHubIssueTrackerAdapter } from "./adapters/github.js";
 import { AcliJiraAdapter } from "./adapters/jira.js";
 import { FlowEventStream } from "./event-stream.js";
 import { loadFlowEnv, repoRoot } from "./flow-runtime.js";
+import type { FlowConfig } from "./config/config-schema.js";
 
 loadFlowEnv();
 
-const host = process.env.FLOW_WORK_RUNTIME_HOST ?? process.env.FLOW_WORK_RUNTIME_HOST ?? "127.0.0.1";
-const port = Number(process.env.FLOW_WORK_RUNTIME_PORT ?? process.env.FLOW_WORK_RUNTIME_PORT ?? "8771");
 const events = new FlowEventStream("work_runtime");
 const flowConfig = await loadFlowConfig({ projectRoot: repoRoot });
+const host = resolveRuntimeHost(flowConfig);
+const port = resolveRuntimePort(flowConfig);
 const flowEvents = new JsonlFlowEventLedger(join(repoRoot, ".context", "flow", "events.jsonl"));
 
 const workRuntime = new FlowWorkRuntime({
   store: new FlowStore({ root: join(repoRoot, ".context", "flow", "runtime") }),
   ledger: createWorkflowLedger({ cwd: repoRoot }),
-  github: new GhGitHubAdapter({ cwd: repoRoot }),
-  jira: new AcliJiraAdapter({ cwd: repoRoot }),
+  github: new GhGitHubAdapter({ cwd: repoRoot, owner: configString(flowConfig?.collaboration, "owner") }),
+  issueTracker: createIssueTracker(),
   flowEventLedger: flowEvents,
+  defaultJiraProjectKey: configString(flowConfig?.issueTracker, "projectKey"),
   ...(flowConfig
     ? {
       topology: configToProjectTopology(flowConfig),
@@ -97,6 +100,7 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
       return workRuntime.createSession(typeof params.id === "string" ? params.id : undefined);
     case "selectIssue":
       return workRuntime.selectIssue(String(params.sessionId), params.issue as never);
+    case "bootstrapIssue":
     case "bootstrapJiraIssue":
       return workRuntime.bootstrapJiraIssue(
         String(params.sessionId),
@@ -217,4 +221,50 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function asStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function createIssueTracker() {
+  const issueTracker = flowConfig?.issueTracker;
+  const type = configString(issueTracker, "type") ?? "jira";
+  if (type === "github" || type === "github_issues") {
+    return new GhGitHubIssueTrackerAdapter({
+      cwd: repoRoot,
+      owner: configString(issueTracker, "owner") ?? configString(flowConfig?.collaboration, "owner"),
+      repo: configString(issueTracker, "repo") ?? configString(flowConfig?.collaboration, "repo") ?? "flow",
+      assignee: configString(issueTracker, "assignee"),
+      activeLabels: configStringArray(issueTracker, "activeLabels"),
+      backlogLabels: configStringArray(issueTracker, "backlogLabels"),
+    });
+  }
+  return new AcliJiraAdapter({
+    cwd: repoRoot,
+    siteUrl: configString(issueTracker, "siteUrl"),
+    projectKey: configString(issueTracker, "projectKey"),
+  });
+}
+
+function configString(config: Record<string, unknown> | undefined, key: string): string | undefined {
+  const value = config?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function configStringArray(config: Record<string, unknown> | undefined, key: string): string[] {
+  const value = config?.[key];
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
+}
+
+function resolveRuntimeHost(config: FlowConfig | undefined): string {
+  const host = config?.runtime?.workRuntime?.host?.trim();
+  if (!host) {
+    throw new Error("Missing required config value: runtime.workRuntime.host");
+  }
+  return host;
+}
+
+function resolveRuntimePort(config: FlowConfig | undefined): number {
+  const port = config?.runtime?.workRuntime?.port;
+  if (port === undefined || !Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error("Missing required config value: runtime.workRuntime.port");
+  }
+  return port;
 }

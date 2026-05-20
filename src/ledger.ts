@@ -216,13 +216,16 @@ export interface BeadsWorkflowLedgerOptions {
 export interface WorkflowLedgerFactoryOptions {
   cwd: string;
   env?: NodeJS.ProcessEnv;
+  adapter?: string;
+  path?: string;
 }
 
 export function createWorkflowLedger(options: WorkflowLedgerFactoryOptions): WorkflowLedger {
   const env = options.env ?? process.env;
-  if (env.FLOW_LEDGER_ADAPTER === "beads") return new BeadsWorkflowLedger({ cwd: options.cwd });
+  const adapter = options.adapter ?? env.FLOW_LEDGER_ADAPTER;
+  if (adapter === "beads") return new BeadsWorkflowLedger({ cwd: options.cwd });
   return new JsonlWorkflowLedger({
-    path: env.FLOW_WORKFLOW_LEDGER_PATH || join(options.cwd, ".context", "flow", "workflow.jsonl"),
+    path: options.path ?? env.FLOW_WORKFLOW_LEDGER_PATH ?? join(options.cwd, ".context", "flow", "workflow.jsonl"),
   });
 }
 

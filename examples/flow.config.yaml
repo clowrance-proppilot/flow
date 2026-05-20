@@ -1,0 +1,75 @@
+version: "1"
+project:
+  name: "example"
+
+topology:
+  repos:
+    main:
+      name: "example"
+      baseBranch: "main"
+    api:
+      name: "example-api"
+      baseBranch: "main"
+      pathFromRoot: "services/api"
+  branchPattern: "{kind}/{issueRef}-{slug}"
+  pullRequestUrlPattern: "https://github.com/example-org/{repoName}/pull/{number}"
+  issueInference:
+    - repo: api
+      keywords: ["api", "backend", "endpoint"]
+
+issueTracker:
+  type: "jira"
+  siteUrl: "https://example.atlassian.net"
+  projectKey: "EXAMPLE"
+
+collaboration:
+  type: "github"
+  owner: "example-org"
+
+sourceControl:
+  type: "git"
+
+ledger:
+  type: "flow"
+
+runtime:
+  workRuntime:
+    host: "127.0.0.1"
+    port: 8871
+    url: "http://127.0.0.1:8871"
+  dashboard:
+    host: "127.0.0.1"
+    port: 8867
+    url: "http://127.0.0.1:8867"
+
+workTypes:
+  - name: "flow.prepare_workspace"
+    category: "prepare"
+    requiredCapabilities: ["repo.worktree.prepare"]
+    allowedExecutors: ["live_agent_thread"]
+    outputType: "workspace_result"
+  - name: "flow.implement"
+    category: "implement"
+    requiredCapabilities: ["code.edit", "test.run"]
+    allowedExecutors: ["live_agent_thread", "codex_worker"]
+    outputType: "worker_result"
+  - name: "flow.remediate"
+    category: "remediate"
+    requiredCapabilities: ["code.edit", "review.remediate", "test.run"]
+    allowedExecutors: ["live_agent_thread", "codex_worker"]
+    outputType: "worker_result"
+  - name: "flow.verify"
+    category: "verify"
+    requiredCapabilities: ["test.run", "evidence.record"]
+    allowedExecutors: ["live_agent_thread"]
+    outputType: "evidence_result"
+
+executors:
+  - name: "codex_worker"
+    executionMode: "background"
+    capabilities: ["code.edit", "test.run", "review.remediate"]
+    outputs: ["worker_result", "blocked_result"]
+  - name: "live_agent_thread"
+    executionMode: "local_thread"
+    capabilities: ["repo.worktree.prepare", "code.edit", "test.run", "review.remediate", "evidence.record"]
+    outputs: ["workspace_result", "worker_result", "blocked_result", "evidence_result"]
