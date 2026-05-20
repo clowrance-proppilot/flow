@@ -7,7 +7,7 @@ import type {
 } from "./provider-contracts.js";
 
 const execFileAsync = promisify(execFile);
-const defaultJiraSiteUrl = "https://beckshybrids.atlassian.net";
+const defaultJiraSiteUrl = "https://example.atlassian.net";
 
 export interface JiraIssue {
   key: string;
@@ -19,6 +19,7 @@ export interface JiraIssue {
   assignee?: string;
   updated?: string;
   labels: string[];
+  url?: string;
 }
 
 export interface JiraComment {
@@ -29,6 +30,7 @@ export interface JiraComment {
 export interface JiraAdapterOptions {
   cwd: string;
   siteUrl?: string;
+  projectKey?: string;
   email?: string;
   apiToken?: string;
 }
@@ -69,12 +71,14 @@ export class AcliJiraAdapter implements IssueTrackerProvider {
 
   private readonly cwd: string;
   private readonly siteUrl: string;
+  private readonly projectKey?: string;
   private readonly email?: string;
   private readonly apiToken?: string;
 
   constructor(options: JiraAdapterOptions) {
     this.cwd = options.cwd;
-    this.siteUrl = (options.siteUrl ?? process.env.ATLASSIAN_SITE_URL ?? defaultJiraSiteUrl).replace(/\/+$/, "");
+    this.siteUrl = (options.siteUrl ?? process.env.ATLASSIAN_SITE_URL ?? process.env.FLOW_JIRA_SITE_URL ?? defaultJiraSiteUrl).replace(/\/+$/, "");
+    this.projectKey = options.projectKey ?? process.env.FLOW_JIRA_PROJECT_KEY ?? process.env.JIRA_PROJECT_KEY;
     this.email = options.email ?? process.env.ATLASSIAN_EMAIL;
     this.apiToken = options.apiToken ?? process.env.ATLASSIAN_API_TOKEN;
   }
@@ -142,7 +146,7 @@ export class AcliJiraAdapter implements IssueTrackerProvider {
           "workitem",
           "search",
           "--jql",
-          currentUserOpenSprintJql(),
+          currentUserOpenSprintJql(this.projectKey),
           "--fields",
           "key,summary,issuetype,status,assignee,labels",
           "--limit",
@@ -167,7 +171,7 @@ export class AcliJiraAdapter implements IssueTrackerProvider {
           "workitem",
           "search",
           "--jql",
-          currentUserBacklogJql(),
+          currentUserBacklogJql(this.projectKey),
           "--fields",
           "key,summary,issuetype,status,assignee,labels",
           "--limit",
@@ -244,7 +248,7 @@ export class AcliJiraAdapter implements IssueTrackerProvider {
     if (issueKeys.length === 0) throw new Error("At least one Jira issue key is required.");
     const sprint = input.sprintId
       ? { id: input.sprintId, name: undefined, originBoardId: input.boardId }
-      : await this.findActiveSprint(input.projectKey ?? "FSB", input.boardId);
+      : await this.findActiveSprint(input.projectKey ?? this.requireProjectKey(), input.boardId);
     await this.jiraSoftwareRequest(`/rest/agile/1.0/sprint/${sprint.id}/issue`, {
       method: "POST",
       body: JSON.stringify({ issues: issueKeys }),
@@ -281,6 +285,11 @@ export class AcliJiraAdapter implements IssueTrackerProvider {
     return ids;
   }
 
+  private requireProjectKey(): string {
+    if (this.projectKey) return this.projectKey;
+    throw new Error("Jira project key is required. Configure issueTracker.projectKey, pass projectKey, or set FLOW_JIRA_PROJECT_KEY.");
+  }
+
   private async jiraSoftwareRequest(path: string, init: RequestInit = {}): Promise<unknown> {
     if (!this.email || !this.apiToken) {
       throw new Error("Jira REST auth is not configured. Set ATLASSIAN_EMAIL and ATLASSIAN_API_TOKEN.");
@@ -304,8 +313,9 @@ export class AcliJiraAdapter implements IssueTrackerProvider {
   }
 }
 
-export function currentUserOpenSprintJql(): string {
-  return "project = FSB AND assignee = currentUser() AND sprint in openSprints() AND status in ('Ready for Dev', 'In Progress', 'In Review')";
+export function currentUserOpenSprintJql(projectKey?: string): string {
+  const projectClause = jiraProjectJqlClause(projectKey);
+  return `${projectClause}assignee = currentUser() AND sprint in openSprints() AND status in ('Ready for Dev', 'In Progress', 'In Review')`;
 }
 
 async function withPerfLog<T>(label: string, operation: () => Promise<T>, defaultThresholdMs = 1000): Promise<T> {
@@ -321,8 +331,13 @@ async function withPerfLog<T>(label: string, operation: () => Promise<T>, defaul
   }
 }
 
-export function currentUserBacklogJql(): string {
-  return "project = FSB AND assignee = currentUser() AND sprint is EMPTY AND status in ('Ready for Dev', 'To Do', 'Selected for Development') ORDER BY updated DESC";
+export function currentUserBacklogJql(projectKey?: string): string {
+  const projectClause = jiraProjectJqlClause(projectKey);
+  return `${projectClause}assignee = currentUser() AND sprint is EMPTY AND status in ('Ready for Dev', 'To Do', 'Selected for Development') ORDER BY updated DESC`;
+}
+
+function jiraProjectJqlClause(projectKey?: string): string {
+  return projectKey ? `project = ${projectKey} AND ` : "";
 }
 
 export function parseJiraIssue(value: unknown, fallbackKey = ""): JiraIssue {

@@ -1,0 +1,31 @@
+version: "1"
+project:
+  name: "Flow"
+
+topology:
+  repos:
+    flow:
+      name: "flow"
+      baseBranch: "main"
+  branchPattern: "{kind}/{issueRef}-{slug}"
+  pullRequestUrlPattern: "https://github.com/camden-lowrance/{repoName}/pull/{number}"
+  issueInference:
+    - repo: flow
+      keywords: ["flow", "runtime", "dashboard", "github", "issue", "adapter", "cli"]
+
+issueTracker:
+  type: "github"
+  owner: "camden-lowrance"
+  repo: "flow"
+  assignee: "@me"
+
+collaboration:
+  type: "github"
+  owner: "camden-lowrance"
+  repo: "flow"
+
+sourceControl:
+  type: "git"
+
+ledger:
+  type: "flow"

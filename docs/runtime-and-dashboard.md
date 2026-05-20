@@ -1,8 +1,8 @@
 # Flow Runtime And Dashboard
 
-Flow is optional local workflow infrastructure for FARMserver
-agent-assisted work. It is not part of the FARMserver application runtime and is
-not required for manual development.
+Flow is optional local workflow infrastructure for repo-hosted
+agent-assisted work. It is not part of any product application runtime and is not
+required for manual development.
 
 Use it when an operator-facing agent needs durable workflow coordination across
 Jira, Git, GitHub, local worktrees, executor attempts, acceptance evidence, and PR
@@ -16,7 +16,8 @@ The active local stack has two long-running roles plus the CLI:
 - **Readiness checks** evaluates Work Runtime-reconciled state and returns blockers or
   readiness.
 - **Work Runtime** is the workflow authority. It reconciles Jira, Git/worktree,
-  GitHub, Executor output, and Beads before deciding the next valid action.
+  GitHub, Executor output, and ledger state before deciding the next valid
+  action.
 - **CLI** is the operator surface used by Codex, Claude, Quad, and other agents.
   It emits stable JSON and persists Work Runtime sessions.
 - **Dashboard** is the browser operator console. It presents Work Runtime state
@@ -35,7 +36,7 @@ state, blockers, and closeout. Chat history is not the workflow ledger.
 
 Operator-facing agents talk to the CLI for workflow actions. The CLI is the
 protocol boundary that turns JSON command input into Work Runtime-owned workflow
-calls. This keeps Jira/GitHub/Beads/native Flow writes, readiness gates, evidence, PR
+calls. This keeps Jira/GitHub/ledger/native Flow writes, readiness gates, evidence, PR
 handoff, approval closeout, and post-merge Jira verification in one authority path.
 
 ```mermaid
@@ -45,7 +46,7 @@ flowchart LR
   Coord["Work Runtime: workflow authority"]
   Gate["Readiness checks: readiness"]
   Executor["Background Executor: optional"]
-  Systems["Jira / GitHub / Beads"]
+  Systems["Jira / GitHub / ledger"]
   Tree["Prepared worktree"]
 
   Live --> CLI
@@ -81,10 +82,17 @@ From the repo root:
 ```bash
 flow commands
 flow queue
-flow select FSB-123 --session codex-fsb-123
-flow advance FSB-123 --session codex-fsb-123
+flow create-issue --type Bug --summary "Fix provider parquet schema" --description "Follow-up from ISSUE-15461." --repo app_api
+flow select ISSUE-123 --session codex-issue-123
+flow advance ISSUE-123 --session codex-issue-123
 flow-dashboard
 ```
+
+`flow commands` is the CLI discovery command. It returns JSON containing command
+descriptions, examples, and the raw Work Runtime methods supported by
+`flow call`, including `createIssue`, `bootstrapJiraIssue`, `routeIssue`, and
+`advanceIssue`. Provider-specific method names remain only as compatibility
+aliases where existing agents already use them.
 
 `npm run start:all` starts Work Runtime and Dashboard
 together. It also builds the runtime and dashboard first.
@@ -131,7 +139,7 @@ Work Runtime writes to the native Flow JSONL workflow ledger by default:
 different local ledger file.
 
 Set `FLOW_LEDGER_ADAPTER=beads` only when intentionally running the legacy
-FARMserver Beads adapter.
+Beads adapter.
 
 The API includes snapshot freshness:
 
@@ -154,7 +162,7 @@ times out, it returns `degraded=true` with the error and an empty issue list.
 
 ## Authority Boundary
 
-Dashboard must not write Jira, GitHub, Beads, branch state, PR state, work
+Dashboard must not write Jira, GitHub, ledger, branch state, PR state, work
 envelopes, or executor orchestration directly. Work Runtime owns workflow
 mutation and reconciliation.
 

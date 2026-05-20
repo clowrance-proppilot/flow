@@ -3,19 +3,142 @@
 @tailwind utilities;
 
 @layer base {
-  html {
+  :root,
+  [data-theme="dark"] {
+    --th-primary: #6366f1;
+    --th-primary-dark: #4338ca;
+    --th-primary-fg: #ffffff;
+
+    --th-app: color-mix(in srgb, #070a0f 90%, var(--th-primary) 10%);
+    --th-surface: color-mix(in srgb, #0d1218 88%, var(--th-primary) 12%);
+    --th-card: color-mix(in srgb, #131a22 86%, var(--th-primary) 14%);
+    --th-card-hover: color-mix(in srgb, #1a2430 82%, var(--th-primary) 18%);
+    --th-input: color-mix(in srgb, #0b1016 90%, var(--th-primary) 10%);
+    --th-border: color-mix(in srgb, #2a3442 78%, var(--th-primary) 22%);
+    --th-border-strong: color-mix(in srgb, #3d4a5a 72%, var(--th-primary) 28%);
+    --th-fg: #fafafa;
+    --th-fg-soft: #d4d4d4;
+    --th-fg-muted: #a3a3a3;
+    --th-fg-faint: #6b6b6b;
+    --th-hover: color-mix(in srgb, var(--th-primary) 12%, transparent);
+
     color-scheme: dark;
+  }
+
+  [data-theme="light"] {
+    --th-app: color-mix(in srgb, #f4f7f2 94%, var(--th-primary) 6%);
+    --th-surface: color-mix(in srgb, #fbfdf8 95%, var(--th-primary) 5%);
+    --th-card: #ffffff;
+    --th-card-hover: color-mix(in srgb, #eff4ea 92%, var(--th-primary) 8%);
+    --th-input: #ffffff;
+    --th-border: color-mix(in srgb, #d7ded0 85%, var(--th-primary) 15%);
+    --th-border-strong: color-mix(in srgb, #b7c5af 75%, var(--th-primary) 25%);
+    --th-fg: #222222;
+    --th-fg-soft: #424242;
+    --th-fg-muted: #737373;
+    --th-fg-faint: #b3b3b3;
+    --th-hover: rgba(0, 0, 0, 0.04);
+
+    color-scheme: light;
   }
 
   body {
     margin: 0;
-    background: #0f1115;
+    background:
+      radial-gradient(circle at 16% -10%, color-mix(in srgb, var(--th-primary) 22%, transparent), transparent 42%),
+      radial-gradient(circle at 88% 0%, color-mix(in srgb, var(--th-primary-dark) 18%, transparent), transparent 38%),
+      var(--th-app);
+    color: var(--th-fg);
     font-family: theme("fontFamily.sans");
     -webkit-font-smoothing: antialiased;
+    transition: background-color 0.2s, color 0.2s;
   }
 
   button,
   input {
     font: inherit;
   }
+}
+
+/* ---- Brand accent utilities (driven by --th-primary) ---- */
+.accent-bg {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--th-primary) 92%, #ffffff 8%),
+    color-mix(in srgb, var(--th-primary-dark) 92%, #000000 8%)
+  );
+  color: var(--th-primary-fg);
+}
+.accent-bg:hover {
+  filter: brightness(0.92);
+}
+.accent-bg-tint {
+  background: color-mix(in srgb, var(--th-primary) 15%, transparent);
+}
+.accent-bg-tint-hover:hover {
+  background: color-mix(in srgb, var(--th-primary) 25%, transparent);
+}
+.accent-text {
+  color: var(--th-primary);
+}
+.accent-border {
+  border-color: var(--th-primary);
+}
+.accent-border-soft {
+  border-color: color-mix(in srgb, var(--th-primary) 40%, transparent);
+}
+.accent-dot {
+  background: var(--th-primary);
+}
+.accent-ring-focus:focus {
+  border-color: var(--th-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--th-primary) 15%, transparent);
+}
+.accent-selected {
+  border-color: var(--th-primary) !important;
+  background: color-mix(in srgb, var(--th-primary) 8%, transparent) !important;
+  box-shadow: 0 0 0 1px var(--th-primary) inset,
+    0 0 0 3px color-mix(in srgb, var(--th-primary) 18%, transparent);
+}
+.accent-spinner {
+  border-color: var(--th-border);
+  border-top-color: var(--th-primary);
+}
+
+/* ---- Settings dropdown ---- */
+.settings-menu {
+  opacity: 0;
+  transform: translateY(-4px) scale(0.98);
+  transform-origin: top right;
+  pointer-events: none;
+  transition: opacity 0.12s, transform 0.12s;
+}
+.settings-menu[data-open="true"] {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
+
+/* ---- Latest event fade ---- */
+@keyframes fadeRow {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.fade-in {
+  animation: fadeRow 0.4s ease-out;
+}
+
+/* ---- Scrollbar ---- */
+.themed-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.themed-scroll::-webkit-scrollbar-thumb {
+  background: var(--th-hover);
+  border-radius: 8px;
 }

@@ -38,16 +38,12 @@ const workRuntime = createServer(async (req, res) => {
       ok: true,
       result: [
         {
-          ref: "FSB-1",
+          ref: "ISSUE-1",
           title: "Dashboard smoke",
-          repoKeys: ["fs_flow"],
-          state: "queued",
+          repoKeys: ["main"],
           workflowState: "queued",
-          lane: "needs_flow",
-          substate: "needs flow",
-          substateTooltip: "Smoke fixture substate.",
-          nextAction: "Advance",
-          flowActionable: true,
+          issueStatus: "Open",
+          issueUrl: "https://github.com/example/flow/issues/1",
           metadata: {},
         },
       ],
@@ -94,7 +90,7 @@ try {
   }
 
   const payload = initialPayload;
-  if (payload.issues?.[0]?.ref !== "FSB-1") {
+  if (payload.issues?.[0]?.ref !== "ISSUE-1") {
     throw new Error(`unexpected dashboard issue payload: ${JSON.stringify(payload.issues)}`);
   }
   if (typeof payload.snapshot?.ageSeconds !== "number" || typeof payload.snapshot?.stale !== "boolean") {
@@ -106,9 +102,9 @@ try {
   await fetchJson(`${dashboardUrl}/api/actions/autoflow`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ issueRef: "FSB-1", issue: payload.issues[0] }),
+    body: JSON.stringify({ issueRef: "ISSUE-1", issue: payload.issues[0] }),
   });
-  if (!runtimeMethods.includes("bootstrapJiraIssue") || !runtimeMethods.includes("autoFlowIssue")) {
+  if (!runtimeMethods.includes("bootstrapIssue") || !runtimeMethods.includes("autoFlowIssue")) {
     throw new Error(`dashboard autoflow should bootstrap the issue before invoking autoflow: ${JSON.stringify(runtimeMethods)}`);
   }
 

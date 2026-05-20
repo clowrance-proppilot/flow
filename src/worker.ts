@@ -564,7 +564,7 @@ function nextPickupForWorkerError(message: string): string {
 
 function codexWorkerPrompt(request: WorkerTaskRequest): string {
   return [
-    `You are a background executor for FARMserver Jira issue ${request.issueRef}.`,
+    `You are a background executor for Flow issue ${request.issueRef}.`,
     "",
     "Use the workspace you were launched in. Keep the change scoped to the Flow-provided task.",
     "Do not create commits, push branches, mark PRs ready, or write Jira/GitHub comments.",

@@ -12,23 +12,68 @@ import {
   FlowStore,
   FlowWorkRuntime,
   GhGitHubAdapter,
-  JsonlFlowEventLedger,
   loadFlowConfig,
+  type CreateIssueOptions,
   type WorkItem,
 } from "./index.js";
+import { GhGitHubIssueTrackerAdapter } from "./adapters/github.js";
 import { loadFlowEnv, repoRoot } from "./flow-runtime.js";
 
 loadFlowEnv();
 
 const defaultSessionId = process.env.FLOW_SESSION_ID ?? "cli";
+const cliCommands = [
+  "commands",
+  "session",
+  "queue",
+  "backlog",
+  "select",
+  "create-issue",
+  "advance",
+  "autoflow",
+  "doctor",
+  "handoff",
+  "observe",
+  "call",
+];
+const cliCommandDescriptions = {
+  commands: "Describe the CLI command surface and raw Work Runtime call methods.",
+  session: "Create or overwrite a named Work Runtime session.",
+  queue: "Inspect current configured issue queue.",
+  backlog: "Inspect configured issue backlog.",
+  select: "Select an existing issue in a file-backed Work Runtime session.",
+  "create-issue": "Create an issue through the configured issue tracker, store it in Flow, and select it by default.",
+  advance: "Advance a selected issue, or select the issue first when provided.",
+  autoflow: "Run deterministic autoflow for an issue.",
+  doctor: "Diagnose Flow visibility, routing, PR state, readiness blockers, and next action.",
+  handoff: "Summarize current session handoff state.",
+  observe: "Observe projected workflow state for a subject.",
+  call: "Call a supported Work Runtime method with raw JSON params.",
+} satisfies Record<string, string>;
+const rawWorkRuntimeMethods = [
+  "inspectDashboardQueue",
+  "inspectQueue",
+  "inspectBacklog",
+  "createSession",
+  "selectIssue",
+  "createIssue",
+  "bootstrapJiraIssue",
+  "createJiraIssue",
+  "routeIssue",
+  "advanceIssue",
+  "diagnoseIssue",
+  "autoFlowIssue",
+  "resetAutoflowState",
+  "summarizeHandoff",
+  "observeFlowSubject",
+];
 const flowConfig = await loadFlowConfig({ projectRoot: repoRoot });
-const flowEvents = new JsonlFlowEventLedger(join(repoRoot, ".context", "flow", "events.jsonl"));
 const runtime = new FlowWorkRuntime({
   store: new FlowStore({ root: join(repoRoot, ".context", "flow", "runtime") }),
   ledger: createWorkflowLedger({ cwd: repoRoot }),
-  github: new GhGitHubAdapter({ cwd: repoRoot }),
-  jira: new AcliJiraAdapter({ cwd: repoRoot }),
-  flowEventLedger: flowEvents,
+  github: new GhGitHubAdapter({ cwd: repoRoot, owner: configString(flowConfig?.collaboration, "owner") }),
+  issueTracker: createIssueTracker(),
+  defaultJiraProjectKey: configString(flowConfig?.issueTracker, "projectKey"),
   ...(flowConfig
     ? {
       topology: configToProjectTopology(flowConfig),
@@ -51,7 +96,8 @@ const program = new Command()
     writeJson({
       ok: false,
       error: "command required",
-      commands: ["commands", "session", "queue", "backlog", "select", "advance", "autoflow", "doctor", "handoff", "observe", "call"],
+      commands: cliCommands,
+      hint: "Run `flow commands` for descriptions, examples, and raw Work Runtime methods.",
     });
     process.exitCode = 1;
   });
@@ -60,7 +106,16 @@ program
   .command("commands")
   .description("Emit supported agent protocol commands.")
   .action(() => writeJson({
-    commands: ["session", "queue", "backlog", "select", "advance", "autoflow", "doctor", "handoff", "observe", "call"],
+    commands: cliCommands.filter((command) => command !== "commands"),
+    descriptions: cliCommandDescriptions,
+    rawWorkRuntimeMethods,
+    examples: [
+      "flow queue",
+      "flow create-issue --type Bug --summary \"Fix provider parquet schema\" --description \"Follow-up from ISSUE-15461.\" --repo app_api",
+      "flow call createIssue '{\"options\":{\"issueType\":\"Bug\",\"summary\":\"Fix provider parquet schema\",\"repoKeys\":[\"app_api\"]}}'",
+      "flow call routeIssue '{\"issueRef\":\"ISSUE-123\",\"repoKeys\":[\"app_api\"]}'",
+      "flow advance ISSUE-123 --session codex-issue-123",
+    ],
     stdout: "json",
     stderr: "diagnostics",
   }));
@@ -73,20 +128,20 @@ program
 
 program
   .command("queue")
-  .description("Inspect current Jira sprint queue.")
+  .description("Inspect current configured issue queue.")
   .option("-l, --limit <count>", "issue limit", parsePositiveInteger, 10)
   .action(async (options: { limit: number }) => writeJson(await runtime.inspectQueue(options.limit)));
 
 program
   .command("backlog")
-  .description("Inspect current Jira backlog.")
+  .description("Inspect configured issue backlog.")
   .option("-l, --limit <count>", "issue limit", parsePositiveInteger, 10)
   .action(async (options: { limit: number }) => writeJson(await runtime.inspectBacklog(options.limit)));
 
 program
   .command("select")
   .description("Select an issue in a file-backed Work Runtime session.")
-  .argument("<issue-ref>", "Jira issue key")
+  .argument("<issue-ref>", "issue key or ref")
   .option("-s, --session <id>", "session id", defaultSessionId)
   .action(async (issueRef: string, options: { session: string }) => {
     await ensureSession(options.session);
@@ -94,9 +149,42 @@ program
   });
 
 program
+  .command("create-issue")
+  .description("Create an issue through the configured issue tracker and select it by default.")
+  .requiredOption("--summary <text>", "issue summary")
+  .option("--description <text>", "issue description")
+  .option("--type <type>", "issue type: Bug, Task, or Story", "Bug")
+  .option("--project <key>", "issue tracker project key")
+  .option("--repo <keys>", "comma-separated routed repo keys")
+  .option("--branch-kind <kind>", "Flow branch kind: bug or feature")
+  .option("-s, --session <id>", "session id", defaultSessionId)
+  .option("--no-select", "create and store the issue without selecting it")
+  .action(async (options: {
+    summary: string;
+    description?: string;
+    type: "Bug" | "Task" | "Story";
+    project?: string;
+    repo?: string;
+    branchKind?: "bug" | "feature";
+    session: string;
+    select: boolean;
+  }) => {
+    await ensureSession(options.session);
+    writeJson(await runtime.createIssue(options.session, {
+      projectKey: options.project,
+      issueType: parseJiraIssueType(options.type),
+      branchKind: parseBranchKind(options.branchKind),
+      summary: options.summary,
+      description: options.description,
+      repoKeys: asStringArray(options.repo),
+      select: options.select,
+    }));
+  });
+
+program
   .command("advance")
   .description("Advance a selected issue, or select the issue first when provided.")
-  .argument("[issue-ref]", "Jira issue key")
+  .argument("[issue-ref]", "issue key or ref")
   .option("-s, --session <id>", "session id", defaultSessionId)
   .option("--approve <confirmation-id>", "approve pending confirmation id")
   .action(async (issueRef: string | undefined, options: { session: string; approve?: string }) => {
@@ -108,7 +196,7 @@ program
 program
   .command("autoflow")
   .description("Run deterministic autoflow for an issue.")
-  .argument("<issue-ref>", "Jira issue key")
+  .argument("<issue-ref>", "issue key or ref")
   .option("-s, --session <id>", "session id", defaultSessionId)
   .option("--steps <count>", "maximum Work Runtime autoflow steps", parsePositiveInteger, 20)
   .option("--no-worker", "do not run a background executor")
@@ -130,7 +218,7 @@ program
 program
   .command("doctor")
   .description("Diagnose Flow visibility, routing, PR state, readiness blockers, and next action.")
-  .argument("[issue-ref]", "Jira issue key")
+  .argument("[issue-ref]", "issue key or ref")
   .option("-s, --session <id>", "session id", defaultSessionId)
   .action(async (issueRef: string | undefined, options: { session: string }) => {
     await ensureSession(options.session);
@@ -149,7 +237,7 @@ program
 
 program
   .command("observe")
-  .description("Observe projected Flow Core state for a subject.")
+  .description("Observe projected workflow state for a subject.")
   .argument("<ref>", "subject reference, defaults to issue ref")
   .option("-t, --type <type>", "subject type", "issue")
   .action(async (ref: string, options: { type: string }) => {
@@ -212,6 +300,16 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
         String(params.issueRef),
         params.options ?? {},
       );
+    case "createIssue":
+      return runtime.createIssue(
+        String(params.sessionId ?? defaultSessionId),
+        params.options as CreateIssueOptions,
+      );
+    case "createJiraIssue":
+      return runtime.createJiraIssue(
+        String(params.sessionId ?? defaultSessionId),
+        params.options as CreateIssueOptions,
+      );
     case "routeIssue":
       return runtime.routeIssue(
         String(params.sessionId ?? defaultSessionId),
@@ -258,6 +356,47 @@ function asStringArray(value: unknown): string[] | undefined {
   return [];
 }
 
+function parseJiraIssueType(value: string): "Bug" | "Task" | "Story" {
+  if (value === "Bug" || value === "Task" || value === "Story") return value;
+  throw new Error(`Expected issue type Bug, Task, or Story, got ${value}.`);
+}
+
+function parseBranchKind(value: string | undefined): "bug" | "feature" | undefined {
+  if (value === undefined) return undefined;
+  if (value === "bug" || value === "feature") return value;
+  throw new Error(`Expected branch kind bug or feature, got ${value}.`);
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function createIssueTracker() {
+  const issueTracker = flowConfig?.issueTracker;
+  const type = configString(issueTracker, "type") ?? "jira";
+  if (type === "github" || type === "github_issues") {
+    return new GhGitHubIssueTrackerAdapter({
+      cwd: repoRoot,
+      owner: configString(issueTracker, "owner") ?? configString(flowConfig?.collaboration, "owner"),
+      repo: configString(issueTracker, "repo") ?? configString(flowConfig?.collaboration, "repo") ?? "flow",
+      assignee: configString(issueTracker, "assignee"),
+      activeLabels: configStringArray(issueTracker, "activeLabels"),
+      backlogLabels: configStringArray(issueTracker, "backlogLabels"),
+    });
+  }
+  return new AcliJiraAdapter({
+    cwd: repoRoot,
+    siteUrl: configString(issueTracker, "siteUrl"),
+    projectKey: configString(issueTracker, "projectKey"),
+  });
+}
+
+function configString(config: Record<string, unknown> | undefined, key: string): string | undefined {
+  const value = config?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function configStringArray(config: Record<string, unknown> | undefined, key: string): string[] {
+  const value = config?.[key];
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
 }

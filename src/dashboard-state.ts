@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { flowRoot } from "./flow-runtime.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -116,7 +117,7 @@ export class DashboardState {
   }
 
   private async cliInspectQueue(limit: number): Promise<Record<string, unknown>[]> {
-    const bin = process.env.FLOW_BIN ?? "flow";
+    const bin = process.env.FLOW_BIN ?? join(flowRoot, "bin", "flow");
     const { stdout, stderr } = await execFileAsync(bin, ["call", "inspectDashboardQueue", JSON.stringify({ limit })], {
       cwd: this.repoRoot,
       maxBuffer: 20 * 1024 * 1024,
@@ -181,14 +182,8 @@ function summarizeIssue(issue: Record<string, unknown>): Record<string, unknown>
     ref,
     title: asString(issue.title),
     workflowState: asString(issue.workflowState) || asString(issue.state),
-    lane: asString(issue.lane),
-    substate: asString(issue.substate),
-    substateTooltip: asString(issue.substateTooltip),
-    nextAction: asString(issue.nextAction),
-    hidden: issue.hidden === true,
-    flowActionable: issue.flowActionable === true ? true : issue.flowActionable === false ? false : undefined,
-    jiraStatus: asString(issue.jiraStatus),
-    jiraUrl: asString(issue.jiraUrl) || (ref ? `https://beckshybrids.atlassian.net/browse/${ref}` : ""),
+    issueStatus: asString(issue.issueStatus),
+    issueUrl: asString(issue.issueUrl),
     repoKeys,
     branch: asString(issue.branch),
     headSha: asString(issue.headSha),
@@ -206,23 +201,9 @@ function summarizeIssue(issue: Record<string, unknown>): Record<string, unknown>
     autoflowExhausted: issue.autoflowExhausted === true,
     updatedAt: asString(issue.updatedAt),
     blockers,
-    actions: dashboardActions(issue, blockers),
   };
 }
 
-function dashboardActions(issue: Record<string, unknown>, blockers: string[]): Record<string, unknown>[] {
-  const ref = String(issue.ref ?? "");
-  const repoKeys = Array.isArray(issue.repoKeys) ? issue.repoKeys.map(String) : [];
-  const hasRepo = repoKeys.length > 0;
-  const hasWorktree = Boolean(asString(issue.worktreePath));
-  return [
-    { id: "select", label: "Select issue", enabled: Boolean(ref), blocker: ref ? "" : "Issue reference is missing." },
-    { id: "prepare_workspace", label: "Prepare workspace", enabled: Boolean(ref && hasRepo), blocker: hasRepo ? "" : "Repo routing is missing." },
-    { id: "advance", label: "Advance", enabled: Boolean(ref && hasWorktree), blocker: hasWorktree ? "" : "Prepared workspace is missing." },
-    { id: "summarize_handoff", label: "Summarize handoff", enabled: Boolean(ref), blocker: ref ? "" : "Issue reference is missing." },
-    { id: "blocked", label: "Current blockers", enabled: blockers.length === 0, blocker: blockers.join(" ") },
-  ];
-}
 
 function asString(value: unknown): string {
   return typeof value === "string" ? value : "";

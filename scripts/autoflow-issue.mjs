@@ -4,7 +4,7 @@ import { Command } from "commander";
 const program = new Command()
   .name("flow-autoflow")
   .description("Run Flow autoflow against one Jira issue through the Work Runtime.")
-  .argument("<issue-ref>", "Jira issue key, for example FSB-15737")
+  .argument("<issue-ref>", "Jira issue key, for example ISSUE-123")
   .option(
     "--work-runtime-url <url>",
     "Work Runtime URL",
@@ -56,7 +56,7 @@ for (let cycle = 0; cycle < maxCycles; cycle += 1) {
   const status = String(finalResult?.status ?? "");
   const message = String(finalResult?.message ?? "");
   if (status === "review_ready" || status === "done") break;
-  if (message.toLowerCase().includes("blocked on leaf escalation")) break;
+  if (message.toLowerCase().includes("blocked on provider escalation")) break;
 }
 
 const issue = finalResult?.issue ?? null;

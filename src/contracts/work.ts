@@ -7,8 +7,8 @@ export const issueStateSchema = z.enum([
   "ready_to_run",
   "running",
   "blocked",
-  "review_ready",
-  "human_review",
+  "awaiting_review",
+  "awaiting_human",
   "done",
 ]);
 export type IssueState = z.infer<typeof issueStateSchema>;

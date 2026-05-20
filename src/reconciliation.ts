@@ -723,9 +723,9 @@ function externallyDrivenState(current: WorkItem["state"], metadata: Record<stri
   }
   if (existingString(metadata.prMergedAt)) return "done";
   if (existingString(metadata.prUrl) && metadata.prIsDraft === true) return "blocked";
-  if (jiraStatus.includes("review")) return "human_review";
-  if (metadata.humanReviewRequired === true) return "human_review";
-  if (existingString(metadata.prUrl)) return "review_ready";
+  if (jiraStatus.includes("review")) return "awaiting_human";
+  if (metadata.humanReviewRequired === true) return "awaiting_human";
+  if (existingString(metadata.prUrl)) return "awaiting_review";
   return current;
 }
 

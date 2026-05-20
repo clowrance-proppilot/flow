@@ -2,13 +2,17 @@
 
 Flow is a durable coordination and workflow orchestration engine for
 agent-assisted developer work. Projects bring a `flow.config.yaml`; Flow brings
-the runtime, event ledger, reconciliation, readiness checks, executor tracking,
+the runtime, workflow ledger, reconciliation, readiness checks, executor tracking,
 CLI, and operator dashboard.
+
+Flow is a standalone package that can be plugged into multiple host repos. The
+consuming architecture owns its `flow.config.yaml`; Flow owns the reusable
+runtime. See [Host Repo Integration](docs/host-integration.md).
 
 ## Runtime Shape
 
 - **CLI** is the operator surface and emits stable JSON.
-- **Work Runtime** validates work, reconciles Jira/Git/GitHub/Beads, runs
+- **Work Runtime** validates work, reconciles Jira/Git/GitHub/ledger state, runs
   readiness checks, and records lifecycle state.
 - **Executors** are execution modes: local live agent thread or hands-off
   background run.
@@ -23,6 +27,29 @@ From the Flow repo:
 npm run check
 npm test
 npm run start:all:watch
+```
+
+## Host Repo Integration
+
+Use the checked-in example as a starting shape for the host repo's
+`flow.config.yaml`:
+
+```text
+examples/flow.config.yaml
+```
+
+With a sibling checkout:
+
+```bash
+FLOW_PROJECT_ROOT=/path/to/host-repo /path/to/flow/bin/flow queue
+```
+
+With Flow installed as a host repo dependency:
+
+```bash
+npm install --save-dev ../flow
+npx flow queue
+npx flow-dashboard
 ```
 
 ## Run Flow Against A Project
@@ -44,11 +71,18 @@ cd /path/to/project
 Common commands:
 
 ```text
+flow commands
 flow queue
-flow select FSB-123 --session codex-fsb-123
-flow advance FSB-123 --session codex-fsb-123
-flow autoflow FSB-123 --session codex-fsb-123
+flow create-issue --type Bug --summary "Fix provider parquet schema" --description "Follow-up from ISSUE-15461." --repo app_api
+flow select ISSUE-123 --session codex-issue-123
+flow advance ISSUE-123 --session codex-issue-123
+flow autoflow ISSUE-123 --session codex-issue-123
 ```
+
+`flow commands` emits the supported operator commands, descriptions, examples,
+and the raw Work Runtime methods available through `flow call`. Prefer the
+first-class commands for normal work; use `flow call` when you need a lower-level
+runtime method such as `createIssue` or `routeIssue`.
 
 ## State
 

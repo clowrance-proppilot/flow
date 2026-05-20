@@ -72,9 +72,7 @@ import {
   mapWithConcurrency,
   workRuntimeQueueConcurrency,
 } from "./runtime-utils.js";
-import type { FlowEventInput } from "./core/events.js";
-import type { FlowEventLedger } from "./core/event-ledger.js";
-import { projectWorkSubject, type ProjectedWorkSubject } from "./core/work-projection.js";
+import type { ProjectedWorkSubject } from "./core/work-projection.js";
 import type { ExecutorAdapter } from "./executors/executor-contracts.js";
 
 export interface WorkRuntimeOptions {
@@ -85,8 +83,6 @@ export interface WorkRuntimeOptions {
   collaboration?: CodeCollaborationIntegration | CodeCollaborationProvider;
   issueTracker?: IssueTrackerIntegration | IssueTrackerProvider;
   workTypes?: WorkTypeRegistry;
-  flowEvents?: FlowEventRecorder;
-  flowEventLedger?: FlowEventLedger;
   executors?: ExecutorAdapter[];
   /** @deprecated Use sourceControl. */
   git?: GitInspector;
@@ -95,28 +91,19 @@ export interface WorkRuntimeOptions {
   /** @deprecated Use issueTracker. */
   jira?: JiraInspector;
   projectRoot?: string;
+  defaultJiraProjectKey?: string;
   readiness?: ReadinessEvaluator;
 }
 export interface ReadinessEvaluator {
   assess(input: Parameters<typeof assessIssue>[0]): ReturnType<typeof assessIssue> | Promise<ReturnType<typeof assessIssue>>;
 }
 
-export interface FlowEventRecorder {
-  record(event: FlowEventInput): Promise<void>;
-}
-
 export interface DashboardQueueIssue {
   ref: string;
   title: string;
   workflowState: WorkItem["state"];
-  lane: DashboardLane;
-  substate: string;
-  substateTooltip: string;
-  nextAction: string;
-  hidden: boolean;
-  flowActionable: boolean;
-  jiraStatus?: string;
-  jiraUrl: string;
+  issueStatus?: string;
+  issueUrl: string;
   repoKeys: string[];
   branch?: string;
   headSha?: string;
@@ -134,25 +121,6 @@ export interface DashboardQueueIssue {
   autoflowExhausted: boolean;
   updatedAt?: string;
   blockers: string[];
-}
-
-export type DashboardLane = "needs_flow" | "needs_work" | "needs_intervention" | "pr_review";
-
-interface DashboardProjectionInput {
-  issue: WorkItem;
-  workflowState: WorkItem["state"];
-  blockers: string[];
-  autoflowExhausted: boolean;
-  review?: ReturnType<typeof reviewMetadata>;
-}
-
-interface DashboardProjection {
-  lane: DashboardLane;
-  substate: string;
-  substateTooltip: string;
-  nextAction: string;
-  hidden: boolean;
-  flowActionable: boolean;
 }
 
 export interface GitInspector {
@@ -203,7 +171,7 @@ type EvidenceRecordInput = Omit<EvidenceRecord, "recordedAt" | "criteria"> & {
 };
 
 export interface AdvanceIssueResult {
-  status: "needs_issue" | "needs_confirmation" | "blocked" | "worker_requested" | "review_ready";
+  status: "needs_issue" | "needs_confirmation" | "blocked" | "worker_requested" | "awaiting_review";
   session: WorkRuntimeSession;
   issue?: WorkItem;
   message: string;
@@ -251,6 +219,8 @@ export interface CreateJiraIssueOptions {
   repoKeys?: string[];
   select?: boolean;
 }
+
+export type CreateIssueOptions = CreateJiraIssueOptions;
 
 export type PullRequestMergeMethod = "merge" | "squash" | "rebase";
 
@@ -325,9 +295,8 @@ export class FlowWorkRuntime {
   private readonly collaboration?: CodeCollaborationIntegration;
   private readonly issueTracker?: IssueTrackerIntegration;
   private readonly workTypes: WorkTypeRegistry;
-  private readonly flowEvents?: FlowEventRecorder;
-  private readonly flowEventLedger?: FlowEventLedger;
   private readonly projectRoot: string;
+  private readonly defaultJiraProjectKey?: string;
   private readonly readiness: ReadinessEvaluator;
   private readonly reconciliation: ReconciliationEngine;
   private readonly issueMutationQueues = new Map<string, Promise<unknown>>();
@@ -340,9 +309,8 @@ export class FlowWorkRuntime {
     this.collaboration = normalizeCodeCollaborationIntegration(options.collaboration ?? options.github);
     this.issueTracker = normalizeIssueTrackerIntegration(options.issueTracker ?? options.jira);
     this.workTypes = options.workTypes ?? createDefaultFlowWorkTypeRegistry();
-    this.flowEvents = options.flowEvents;
-    this.flowEventLedger = options.flowEventLedger;
     this.projectRoot = options.projectRoot ?? process.cwd();
+    this.defaultJiraProjectKey = options.defaultJiraProjectKey ?? process.env.FLOW_JIRA_PROJECT_KEY ?? process.env.JIRA_PROJECT_KEY;
     this.readiness = options.readiness ?? { assess: assessIssue };
     this.reconciliation = new ReconciliationEngine({
       topology: this.topology,
@@ -358,20 +326,6 @@ export class FlowWorkRuntime {
     console.error(`[flow-pi debug] ${event} ${JSON.stringify(details)}`);
   }
 
-  private async recordFlowEvent(event: FlowEventInput): Promise<void> {
-    if (!this.flowEvents && !this.flowEventLedger) return;
-    try {
-      if (this.flowEvents) await this.flowEvents.record(event);
-      else await this.flowEventLedger?.append(event);
-    } catch (error) {
-      this.debug("flow_event.record_failed", {
-        primitive: event.primitive,
-        subject: event.subject,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
   async createSession(id?: string): Promise<WorkRuntimeSession> {
     await this.store.ensure();
     const session = await this.store.createSession(id);
@@ -385,12 +339,80 @@ export class FlowWorkRuntime {
   }
 
   async observeFlowSubject(subject: { type?: string; ref: string }): Promise<ProjectedWorkSubject> {
-    if (!this.flowEventLedger) {
-      throw new Error("Flow event ledger is not configured in this runtime.");
-    }
     const flowSubject = { type: subject.type ?? "issue", ref: subject.ref };
-    const events = await this.flowEventLedger.readSubject(flowSubject);
-    return projectWorkSubject(events, flowSubject);
+    if (flowSubject.type !== "issue") {
+      return {
+        subject: flowSubject,
+        state: "queued",
+        claims: [],
+        blockers: [],
+        links: [],
+        records: [],
+        handoffs: [],
+      };
+    }
+    const [issue, jobs, jobResults, workerResults] = await Promise.all([
+      this.ledger.readIssue(flowSubject.ref),
+      this.ledger.listWorkJobs(flowSubject.ref),
+      this.ledger.listWorkJobResults(flowSubject.ref),
+      this.ledger.listWorkerResults(flowSubject.ref),
+    ]);
+    const claims = jobs
+      .filter((job) => job.claimedBy || job.claimedAt)
+      .map((job) => ({
+        eventId: `workflow:work_job:${job.id}:claim`,
+        actorId: job.claimedBy ?? "unknown",
+        claimedAt: job.claimedAt ?? job.updatedAt,
+        input: { jobId: job.id, repoKey: job.repoKey, workType: job.workType },
+      }));
+    const records = [
+      ...jobs.map((job) => ({
+        eventId: `workflow:work_job:${job.id}`,
+        recordedAt: job.updatedAt,
+        input: { kind: "work_job", repoKey: job.repoKey, workType: job.workType },
+        result: { job },
+      })),
+      ...jobResults.map((result) => ({
+        eventId: `workflow:work_job_result:${result.jobId}`,
+        recordedAt: result.completedAt,
+        input: { kind: "work_job_result", jobId: result.jobId, repoKey: result.repoKey, workType: result.workType },
+        result,
+      })),
+      ...workerResults.map((result) => ({
+        eventId: `workflow:worker_result:${result.taskId}`,
+        recordedAt: result.completedAt,
+        input: { kind: "worker_result", taskId: result.taskId, repoKey: result.repoKey },
+        result,
+      })),
+    ];
+    const blockers = workerResults
+      .filter((result) => result.status === "blocked" || result.blockers.length)
+      .map((result) => ({
+        eventId: `workflow:worker_result:${result.taskId}:blocker`,
+        actorId: result.executor ?? "worker",
+        askedAt: result.completedAt,
+        input: { taskId: result.taskId, blockers: result.blockers },
+      }));
+    const handoffs = workerResults
+      .filter((result) => result.handoffPrompt?.trim())
+      .map((result) => ({
+        eventId: `workflow:worker_result:${result.taskId}:handoff`,
+        actorId: result.executor ?? "worker",
+        handedOffAt: result.completedAt,
+        input: { taskId: result.taskId },
+        result: { handoffPrompt: result.handoffPrompt },
+      }));
+    return {
+      subject: flowSubject,
+      state: issue?.state ?? "queued",
+      claims,
+      blockers,
+      links: [],
+      records,
+      handoffs,
+      completedAt: issue?.state === "done" ? issue.updatedAt : undefined,
+      completedByEventId: issue?.state === "done" ? `workflow:issue:${flowSubject.ref}` : undefined,
+    };
   }
 
   async selectIssue(sessionId: string, issue: WorkItem): Promise<WorkRuntimeSession> {
@@ -422,14 +444,6 @@ export class FlowWorkRuntime {
       issueRef: storedIssue.ref,
       message: `Selected ${storedIssue.ref}.`,
       payload: { issue: storedIssue },
-    });
-    await this.recordFlowEvent({
-      primitive: "claim",
-      subject: { type: "issue", ref: storedIssue.ref },
-      actor: { type: "agent", id: sessionId },
-      input: { selectedRepoKey: storedIssue.repoKeys[0] },
-      correlationId: sessionId,
-      idempotencyKey: `${sessionId}:claim:${storedIssue.ref}`,
     });
     return updated;
   }
@@ -488,14 +502,6 @@ export class FlowWorkRuntime {
       message: `Bootstrapped ${storedIssue.ref} from Jira.`,
       payload: { issue: storedIssue, selected: shouldSelect },
     });
-    await this.recordFlowEvent({
-      primitive: "issue",
-      subject: { type: "issue", ref: storedIssue.ref },
-      actor: { type: "adapter", id: "jira" },
-      input: { title: storedIssue.title, repoKeys: storedIssue.repoKeys, selected: shouldSelect },
-      correlationId: sessionId,
-      idempotencyKey: `${sessionId}:issue:${storedIssue.ref}:bootstrap`,
-    });
     return storedIssue;
   }
 
@@ -503,19 +509,26 @@ export class FlowWorkRuntime {
     sessionId: string,
     options: CreateJiraIssueOptions,
   ): Promise<WorkItem> {
+    return this.createIssue(sessionId, options);
+  }
+
+  async createIssue(
+    sessionId: string,
+    options: CreateIssueOptions,
+  ): Promise<WorkItem> {
     const session = await this.requireSession(sessionId);
     if (!this.issueTracker?.createIssue) {
-      throw new Error("Jira issue creation is not available in this runtime.");
+      throw new Error("Issue creation is not available in this runtime.");
     }
-    if (!options.summary?.trim()) throw new Error("Jira issue summary is required.");
+    if (!options.summary?.trim()) throw new Error("Issue summary is required.");
     const issueType = options.issueType ?? "Bug";
-    const jiraIssue = await this.issueTracker.createIssue({
-      projectKey: options.projectKey ?? "FSB",
+    const createdIssue = await this.issueTracker.createIssue({
+      projectKey: options.projectKey ?? this.requireDefaultJiraProjectKey(),
       issueType,
       summary: options.summary.trim(),
       description: options.description?.trim(),
     });
-    const queueIssue = this.mergeJiraQueueIssue(jiraIssue);
+    const queueIssue = this.mergeJiraQueueIssue(createdIssue);
     const repoKeys = options.repoKeys?.length
       ? this.resolveRoutedRepoKeys(options.repoKeys)
       : queueIssue.repoKeys;
@@ -526,7 +539,7 @@ export class FlowWorkRuntime {
       state: shouldSelect ? "selected" : queueIssue.state,
       metadata: {
         ...queueIssue.metadata,
-        jiraIssueType: jiraIssue.issueType ?? issueType,
+        jiraIssueType: createdIssue.issueType ?? issueType,
         ...(options.branchKind ? { branchKind: options.branchKind } : {}),
       },
     });
@@ -543,7 +556,7 @@ export class FlowWorkRuntime {
       sessionId,
       type: "issue.created",
       issueRef: storedIssue.ref,
-      message: `Created Jira ${storedIssue.ref}.`,
+      message: `Created issue ${storedIssue.ref}.`,
       payload: { issue: storedIssue, selected: shouldSelect },
     });
     return storedIssue;
@@ -562,7 +575,7 @@ export class FlowWorkRuntime {
     }
     const moved = await this.issueTracker.moveIssuesToActiveSprint({
       issueKeys: refs,
-      projectKey: options.projectKey ?? "FSB",
+      projectKey: options.projectKey ?? this.requireDefaultJiraProjectKey(),
       boardId: options.boardId,
       sprintId: options.sprintId,
     });
@@ -665,25 +678,12 @@ export class FlowWorkRuntime {
       const activeWorkerRun = await this.latestActiveWorkerRun(issue.ref);
       const workflowState = activeWorkerRun ? "running" : issue.state;
       const autoflowExhausted = blockers.length > 0 && (hasHardAutoflowBlocker(blockers) || autoflowAttempts >= autoflowAttemptLimit);
-      const projection = projectDashboardState({
-        issue,
-        workflowState,
-        blockers,
-        autoflowExhausted,
-        review,
-      });
       return {
         ref: issue.ref,
         title: issue.title,
         workflowState,
-        lane: projection.lane,
-        substate: projection.substate,
-        substateTooltip: projection.substateTooltip,
-        nextAction: projection.nextAction,
-        hidden: projection.hidden,
-        flowActionable: projection.flowActionable,
-        jiraStatus: existingString(issue.metadata.jiraStatus),
-        jiraUrl: `https://beckshybrids.atlassian.net/browse/${issue.ref}`,
+        issueStatus: existingString(issue.metadata.jiraStatus),
+        issueUrl: existingString(issue.metadata.jiraUrl) ?? "",
         repoKeys: issue.repoKeys,
         branch: repoKey ? branchForRepo(issue, repoKey) : undefined,
         headSha: repoKey ? existingString(issue.metadata[`workflow.repos.${normalizeRepoKey(repoKey)}.head_sha`]) : undefined,
@@ -969,9 +969,9 @@ export class FlowWorkRuntime {
     });
 
     if (assessment.reviewReady) {
-      await this.ledger.writeIssue({ ...issue, state: "review_ready" });
+      await this.ledger.writeIssue({ ...issue, state: "awaiting_review" });
       return {
-        status: "review_ready",
+        status: "awaiting_review",
         session: sessionWithFindings,
         issue,
         message: `${issue.ref} is review-ready in Readiness assessment.`,
@@ -1306,15 +1306,6 @@ export class FlowWorkRuntime {
       message: result.summary,
       payload: { result: parsedResult },
     });
-    await this.recordFlowEvent({
-      primitive: "record",
-      subject: { type: "issue", ref: result.issueRef },
-      actor: { type: "agent", id: result.executor ?? "worker" },
-      input: { kind: "worker_result", taskId: result.taskId, repoKey: result.repoKey },
-      result: parsedResult,
-      correlationId: sessionId,
-      idempotencyKey: `${result.issueRef}:worker_result:${result.taskId}`,
-    });
     this.debug("worker.result_recorded", {
       sessionId,
       issueRef: result.issueRef,
@@ -1369,15 +1360,6 @@ export class FlowWorkRuntime {
         message: `Submitted ${job.workType} job ${job.id}.`,
         payload: { job },
       });
-      await this.recordFlowEvent({
-        primitive: "record",
-        subject: { type: "issue", ref: job.issueRef },
-        actor: { type: "system", id: "work-runtime" },
-        input: { kind: "work_job", repoKey: job.repoKey, workType: job.workType },
-        result: { job },
-        correlationId: sessionId,
-        idempotencyKey: `work_job:${job.id}`,
-      });
       return job;
     });
   }
@@ -1424,14 +1406,6 @@ export class FlowWorkRuntime {
         message: `${executor} claimed ${claimed.workType} job ${claimed.id}.`,
         payload: { job: claimed },
       });
-      await this.recordFlowEvent({
-        primitive: "claim",
-        subject: { type: "issue", ref: claimed.issueRef },
-        actor: { type: "agent", id: executor },
-        input: { kind: "work_job_claim", jobId: claimed.id, repoKey: claimed.repoKey, workType: claimed.workType },
-        correlationId: sessionId,
-        idempotencyKey: `work_job_claim:${claimed.id}:${executor}`,
-      });
       return claimed;
     });
   }
@@ -1455,15 +1429,6 @@ export class FlowWorkRuntime {
         issueRef: parsed.issueRef,
         message: parsed.summary,
         payload: { result: parsed },
-      });
-      await this.recordFlowEvent({
-        primitive: "record",
-        subject: { type: "issue", ref: parsed.issueRef },
-        actor: { type: "agent", id: completed.claimedBy ?? "worker" },
-        input: { kind: "work_job_result", jobId: parsed.jobId, repoKey: parsed.repoKey, workType: parsed.workType },
-        result: parsed,
-        correlationId: sessionId,
-        idempotencyKey: `work_job_result:${parsed.jobId}`,
       });
       return parsed;
     });
@@ -2244,6 +2209,7 @@ export class FlowWorkRuntime {
       jiraStatusCategory: jiraIssue.statusCategory,
       jiraResolution: jiraIssue.resolution,
       jiraUpdated: jiraIssue.updated,
+      jiraUrl: existingString((jiraIssue as { url?: unknown }).url),
     };
     const issue: WorkItem = {
       ref: jiraIssue.key,
@@ -2255,6 +2221,11 @@ export class FlowWorkRuntime {
       metadata,
     };
     return issue;
+  }
+
+  private requireDefaultJiraProjectKey(): string {
+    if (this.defaultJiraProjectKey) return this.defaultJiraProjectKey;
+    throw new Error("Jira project key is required. Provide projectKey or set FLOW_JIRA_PROJECT_KEY.");
   }
 
   private resolveJiraQueueRepoKeys(jiraIssue: JiraIssue, existing?: WorkItem): string[] {
@@ -2650,6 +2621,7 @@ function jiraIssueFromUnified(issue: UnifiedIssue): JiraIssue {
     assignee: issue.assignee,
     updated: issue.updatedAt,
     labels: issue.labels,
+    url: issue.url,
   };
 }
 
@@ -2799,145 +2771,6 @@ function pullRequestCloseoutBlockers(issue: WorkItem, pr: PullRequestStatus): st
     blockers.push("Auto-review confirmation is unresolved.");
   }
   return blockers;
-}
-
-function projectDashboardState(input: DashboardProjectionInput): DashboardProjection {
-  const { issue, workflowState, blockers, autoflowExhausted, review } = input;
-  const jiraStatus = existingString(issue.metadata.jiraStatus)?.toLowerCase() ?? "";
-  const blockingBlockers = blockers.filter((blocker) => blocker !== "Pull request requires human review.");
-  const blockingBlocker = blockingBlockers[0];
-  const prReviewDecision = existingString(issue.metadata.prReviewDecision);
-  const prApproved = prReviewDecision === "APPROVED";
-  const prNeedsReview = Boolean(review?.humanReviewRequired || prReviewDecision === "REVIEW_REQUIRED" || jiraStatus.includes("review"));
-  const hidden = blockers.length === 0
-    && !Boolean(review?.prUrl && jiraStatus.includes("review"))
-    && (workflowState === "done" || jiraStatus === "done" || jiraStatus === "closed");
-
-  if (hidden) {
-    return {
-      lane: "pr_review",
-      substate: "done",
-      substateTooltip: "The runtime has closed this item out of the active dashboard flow.",
-      nextAction: "Done",
-      hidden: true,
-      flowActionable: false,
-    };
-  }
-
-  if (review?.prUrl && review.checksPassing === false) {
-    return {
-      lane: "needs_intervention",
-      substate: "checks",
-      substateTooltip: "GitHub reports failing pull-request checks.",
-      nextAction: "PR checks need attention",
-      hidden: false,
-      flowActionable: false,
-    };
-  }
-
-  if (blockingBlockers.length > 0 && autoflowExhausted) {
-    return {
-      lane: "needs_intervention",
-      substate: substateForBlocker(blockingBlocker),
-      substateTooltip: "Flow has exhausted the automatic path and needs operator judgment.",
-      nextAction: blockingBlocker ?? "Flow needs operator intervention",
-      hidden: false,
-      flowActionable: false,
-    };
-  }
-
-  if (review?.prUrl && (prNeedsReview || !prApproved)) {
-    return {
-      lane: "pr_review",
-      substate: prApproved ? "approved" : "review",
-      substateTooltip: prApproved
-        ? "The pull request is approved and waiting for an explicit closeout action."
-        : "The pull request is waiting for human GitHub review.",
-      nextAction: prApproved ? "Approved PR awaits closeout" : "GitHub PR review",
-      hidden: false,
-      flowActionable: false,
-    };
-  }
-
-  if (review?.prUrl && prApproved) {
-    return {
-      lane: "pr_review",
-      substate: "approved",
-      substateTooltip: "The pull request is approved and waiting for an explicit closeout action.",
-      nextAction: "Approved PR awaits closeout",
-      hidden: false,
-      flowActionable: false,
-    };
-  }
-
-  if (workflowState === "running") {
-    return {
-      lane: "needs_work",
-      substate: "worker started",
-      substateTooltip: "A worker was started. Treat this as a work marker, not proof of live process health.",
-      nextAction: "Work started; verify or adopt if stale",
-      hidden: false,
-      flowActionable: false,
-    };
-  }
-
-  if (worktreePathForDashboard(issue)) {
-    return {
-      lane: "needs_work",
-      substate: "worktree ready",
-      substateTooltip: "A prepared worktree exists and implementation or remediation is the next useful work.",
-      nextAction: "Implementation or remediation needed",
-      hidden: false,
-      flowActionable: false,
-    };
-  }
-
-  if (blockingBlockers.length > 0) {
-    return {
-      lane: "needs_flow",
-      substate: substateForBlocker(blockingBlocker),
-      substateTooltip: "Flow can take the next deterministic orchestration step recorded by runtime readiness.",
-      nextAction: `Flow can retry (${metadataNumber(issue.metadata["workflow.autoflow.attempts"]) ?? 0}/${autoflowBlockedThreshold()})`,
-      hidden: false,
-      flowActionable: true,
-    };
-  }
-
-  if (workflowState === "queued" || workflowState === "selected" || workflowState === "ready_to_run" || workflowState === "review_ready") {
-    return {
-      lane: "needs_flow",
-      substate: "needs flow",
-      substateTooltip: "Flow can reconcile, route, prepare, advance, or choose the next action.",
-      nextAction: "Bootstrap, route, prepare, or reconcile",
-      hidden: false,
-      flowActionable: true,
-    };
-  }
-
-  return {
-    lane: "needs_intervention",
-    substate: "needs human",
-    substateTooltip: "Flow cannot safely classify the next action from the reconciled ledger state.",
-    nextAction: "Flow needs operator judgment",
-    hidden: false,
-    flowActionable: false,
-  };
-}
-
-function worktreePathForDashboard(issue: WorkItem): string | undefined {
-  const repoKey = issue.repoKeys[0] ?? "";
-  return repoKey ? worktreePathForRepo(issue, repoKey) : undefined;
-}
-
-function substateForBlocker(blocker: string | undefined): string {
-  const text = blocker?.toLowerCase() ?? "";
-  if (text.includes("credential")) return "credentials";
-  if (text.includes("provider")) return "provider";
-  if (text.includes("conflict")) return "conflict";
-  if (text.includes("repo routing")) return "routing";
-  if (text.includes("worktree")) return "workspace";
-  if (text.includes("pull request")) return "pull request";
-  return "needs flow";
 }
 
 function doctorNextAction(
@@ -3258,7 +3091,7 @@ function buildLiveWorkerHandoffPrompt(
 ): string {
   const blockers = result.blockers.length ? result.blockers.map((blocker) => `- ${blocker}`).join("\n") : "- No structured blocker was recorded.";
   return [
-    `You are a local-thread executor for FARMserver Jira issue ${request.issueRef}.`,
+    `You are a local-thread executor for Flow issue ${request.issueRef}.`,
     `Name this thread "${threadTitleForHandoff(request)}".`,
     "",
     "Work through Flow. First reconcile/adopt this executor task using the metadata below, then keep going until Flow reports a real blocker or the work is review-ready.",
@@ -3305,7 +3138,7 @@ function threadTitleForHandoff(request: Pick<WorkerTaskRequest, "issueRef" | "pr
     .split(/\s+/)
     .slice(0, 6)
     .join(" ");
-  return `${shortDescription || "FARMserver work"} ${request.issueRef}`.trim();
+  return `${shortDescription || "Flow work"} ${request.issueRef}`.trim();
 }
 
 function worktreePathForRepo(issue: WorkItem, repoKey: string): string | undefined {

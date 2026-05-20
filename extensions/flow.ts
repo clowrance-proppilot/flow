@@ -247,7 +247,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "flow_create_jira_issue",
     label: "Flow Create Jira",
-    description: "Create a new FARMserver Jira issue through Work Runtime, then optionally select it.",
+    description: "Create a new Jira issue through Work Runtime, then optionally select it.",
     parameters: Type.Object({
       sessionId: Type.String(),
       summary: Type.String(),
@@ -495,7 +495,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "flow_record_provider_escalation",
     label: "Flow Provider Escalation",
-    description: "Record that an issue is blocked on a third-party provider instead of a FARMserver code change.",
+    description: "Record that an issue is blocked on a third-party provider instead of a code change.",
     parameters: Type.Object({
       sessionId: Type.String(),
       issueRef: Type.String(),
@@ -535,7 +535,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "flow_observe_executors",
     label: "Flow Observe Executors",
-    description: "Inspect Work Runtime-recorded executor lifecycle state from Beads.",
+    description: "Inspect Work Runtime-recorded executor lifecycle state from the configured ledger.",
     parameters: Type.Object({
       sessionId: Type.String(),
       issueRef: Type.Optional(Type.String()),
@@ -586,7 +586,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "flow_record_executor_progress",
     label: "Flow Executor Progress",
-    description: "Record executor-scoped progress in Beads without mutating issue phase.",
+    description: "Record executor-scoped progress without mutating issue phase.",
     parameters: Type.Object({
       taskId: Type.String(),
       issueRef: Type.String(),
@@ -933,7 +933,7 @@ function flowCommandPrompt(args: string): string {
     default:
       return [
         "Explain the Flow commands briefly.",
-        "Mention: /flow queue, /flow next, /flow select FSB-123, /flow advance FSB-123, /flow autoflow FSB-123.",
+        "Mention: /flow queue, /flow next, /flow select ISSUE-123, /flow advance ISSUE-123, /flow autoflow ISSUE-123.",
       ].join("\n");
   }
 }

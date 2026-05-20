@@ -41,6 +41,14 @@ runtime:
     host: "127.0.0.1"
     port: 8867
     url: "http://127.0.0.1:8867"
+    defaultThemeId: "farmserver"
+    defaultMode: "dark"
+    themes:
+      - id: "farmserver"
+        name: "FARMserver"
+        primary: "#6fb143"
+        primaryDark: "#3f6f24"
+        primaryFg: "#102108"
 
 workTypes:
   - name: "flow.prepare_workspace"

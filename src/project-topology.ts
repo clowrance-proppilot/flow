@@ -19,35 +19,30 @@ export interface ProjectTopology {
   pullRequestUrl(repo: string, number: number): string;
 }
 
+interface DefaultRepoConfig {
+  name: string;
+  baseBranch?: string;
+  pathFromRoot?: string;
+  keywords?: string[];
+}
+
 export class DefaultProjectTopology implements ProjectTopology {
-  readonly validRepoKeys: ReadonlySet<string> = DEFAULT_REPO_KEYS;
+  readonly validRepoKeys: ReadonlySet<string> = new Set(Object.keys(BUILTIN_DEFAULT_REPOS));
 
   isValidRepoKey(repoKey: string): boolean {
-    return DEFAULT_REPO_KEYS.has(normalizeRepoKey(repoKey));
+    return this.repoConfig(repoKey) !== undefined;
   }
 
   inferRepoKeysFromIssue(issue: TopologyIssueHint): string[] {
-    const text = `${issue.title} ${issue.labels.join(" ")}`.toLowerCase();
-    const candidates: string[] = [];
-    if (containsAny(text, ["fs-python", "leaf", "agi", "agfiniti", "agleader", "celery", "controller data", "controller-data", "pixi", "flask"])) {
-      candidates.push("fs_python");
-    }
-    if (containsAny(text, ["fs-client-pwa", "pwa", "frontend", "react", "vite", "browser ui"])) {
-      candidates.push("fs_client_pwa");
-    }
-    if (containsAny(text, ["fs-client-ios", "ios", "swift", "xcode", "iphone"])) {
-      candidates.push("fs_client_ios");
-    }
-    if (containsAny(text, ["fs-public-api", "public api", "request-export", "endpoint contract", "nx workspace"])) {
-      candidates.push("fs_public_api");
-    }
-    if (containsAny(text, ["fs-core-database", "stored procedure", "sproc", "sql revision", "sql trigger"])) {
-      candidates.push("fs_core_database");
-    }
-    if (containsAny(text, ["flow", "workflow workRuntime", "worker executor"])) {
-      candidates.push("fs_flow");
-    }
-    return candidates;
+    const text = [
+      issue.title,
+      issue.description,
+      issue.type,
+      ...issue.labels,
+    ].filter(Boolean).join(" ").toLowerCase();
+    return Object.entries(BUILTIN_DEFAULT_REPOS)
+      .filter(([, repo]) => repo.keywords?.some((keyword) => text.includes(keyword.toLowerCase())))
+      .map(([repoKey]) => repoKey);
   }
 
   branchName(issue: WorkItem): string {
@@ -62,42 +57,41 @@ export class DefaultProjectTopology implements ProjectTopology {
   }
 
   defaultBaseBranch(repoKey: string): string {
-    return normalizeRepoKey(repoKey) === "fs_flow" ? "main" : "develop";
+    return this.requireRepoConfig(repoKey).baseBranch ?? "main";
   }
 
   repoName(repoKey: string): string {
-    const normalized = normalizeRepoKey(repoKey);
-    return normalized === "fs_flow" ? "FARMserver" : normalized.replace(/_/g, "-");
+    return this.requireRepoConfig(repoKey).name;
   }
 
   repoPath(projectRoot: string, repoKey: string): string {
-    const normalized = normalizeRepoKey(repoKey);
-    if (normalized === "fs_flow") return projectRoot;
-    return join(projectRoot, normalized.replace(/_/g, "-"));
+    const pathFromRoot = this.requireRepoConfig(repoKey).pathFromRoot;
+    return pathFromRoot ? join(projectRoot, pathFromRoot) : projectRoot;
   }
 
   pullRequestUrl(repo: string, number: number): string {
-    return `https://github.com/BecksDevTeam/${repo}/pull/${number}`;
+    return `${repo}/pull/${number}`;
+  }
+
+  private repoConfig(repoKey: string): DefaultRepoConfig | undefined {
+    return BUILTIN_DEFAULT_REPOS[normalizeRepoKey(repoKey)];
+  }
+
+  private requireRepoConfig(repoKey: string): DefaultRepoConfig {
+    const config = this.repoConfig(repoKey);
+    if (!config) throw new Error(`Unknown repo key ${repoKey}.`);
+    return config;
   }
 }
 
 type BranchKind = "bug" | "feature";
 
-const DEFAULT_REPO_KEYS = new Set([
-  "fs_flow",
-  "fs_client_pwa",
-  "fs_client_ios",
-  "fs_public_api",
-  "fs_python",
-  "fs_core_database",
-]);
+const BUILTIN_DEFAULT_REPOS: Record<string, DefaultRepoConfig> = {
+  main: { name: "main" },
+};
 
 function normalizeRepoKey(value: string): string {
   return value.replace(/-/g, "_").replace(/[^a-zA-Z0-9_]/g, "_");
-}
-
-function containsAny(text: string, values: string[]): boolean {
-  return values.some((value) => text.includes(value));
 }
 
 function branchKindForIssue(issue: WorkItem): BranchKind {

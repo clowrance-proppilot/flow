@@ -15,7 +15,7 @@ def root_path() -> Path:
     for path in Path(__file__).resolve().parents:
         if (path / "flow.toml").exists():
             return path
-    raise SystemExit("Unable to locate FARMserver root; set FLOW_ROOT.")
+    raise SystemExit("Unable to locate Flow project root; set FLOW_ROOT.")
 
 
 def load_branch_policy() -> tuple[list[str], list[str], list[str]]:

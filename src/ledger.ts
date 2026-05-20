@@ -625,7 +625,7 @@ export function workItemToBeadsMetadata(issue: WorkItem): Record<string, unknown
     ...repoWorkflowMetadata(issue.metadata),
     "workflow.jira_key": issue.ref,
     "workflow.phase": stateToPhase(issue.state),
-    "workflow.ready_for_review": issue.state === "review_ready",
+    "workflow.ready_for_review": issue.state === "awaiting_review",
     "workflow.routed_repos": JSON.stringify(issue.repoKeys),
     "workflow.repo": primaryRepoKey ?? issue.metadata["workflow.repo"] ?? "",
     branchKind: issue.metadata.branchKind ?? "",
@@ -694,7 +694,7 @@ function routedRepos(metadata: Record<string, unknown>): string[] {
 
 function phaseToState(phase: string, beadStatus?: string): WorkItem["state"] {
   if (beadStatus === "closed") return "done";
-  if (phase === "ready_for_review") return "review_ready";
+  if (phase === "ready_for_review") return "awaiting_review";
   if (phase === "done") return "done";
   if (phase === "implementation") return "ready_to_run";
   if (phase === "blocked") return "blocked";
@@ -702,7 +702,7 @@ function phaseToState(phase: string, beadStatus?: string): WorkItem["state"] {
 }
 
 function stateToPhase(state: WorkItem["state"]): string {
-  if (state === "review_ready" || state === "human_review") return "ready_for_review";
+  if (state === "awaiting_review" || state === "awaiting_human") return "ready_for_review";
   if (state === "done") return "done";
   if (state === "blocked") return "blocked";
   if (state === "running" || state === "ready_to_run" || state === "selected") return "implementation";

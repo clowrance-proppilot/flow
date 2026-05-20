@@ -1,5 +1,9 @@
 node_modules/
 .tmp/
+.claude/
+.context/
+.playwright-mcp/
+.worktrees/
 .DS_Store
 .env
 .env.local

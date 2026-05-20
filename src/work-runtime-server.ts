@@ -9,7 +9,6 @@ import {
   createDefaultWorkerSpawner,
   configToProjectTopology,
   configToWorkTypeRegistry,
-  JsonlFlowEventLedger,
   loadFlowConfig,
 } from "./index.js";
 import { GhGitHubAdapter } from "./adapters/github.js";
@@ -25,14 +24,12 @@ const events = new FlowEventStream("work_runtime");
 const flowConfig = await loadFlowConfig({ projectRoot: repoRoot });
 const host = resolveRuntimeHost(flowConfig);
 const port = resolveRuntimePort(flowConfig);
-const flowEvents = new JsonlFlowEventLedger(join(repoRoot, ".context", "flow", "events.jsonl"));
 
 const workRuntime = new FlowWorkRuntime({
   store: new FlowStore({ root: join(repoRoot, ".context", "flow", "runtime") }),
   ledger: createWorkflowLedger({ cwd: repoRoot }),
   github: new GhGitHubAdapter({ cwd: repoRoot, owner: configString(flowConfig?.collaboration, "owner") }),
   issueTracker: createIssueTracker(),
-  flowEventLedger: flowEvents,
   defaultJiraProjectKey: configString(flowConfig?.issueTracker, "projectKey"),
   ...(flowConfig
     ? {
@@ -109,6 +106,8 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
       );
     case "createJiraIssue":
       return workRuntime.createJiraIssue(String(params.sessionId), params.options as never);
+    case "createIssue":
+      return workRuntime.createIssue(String(params.sessionId), params.options as never);
     case "moveIssuesToActiveSprint":
       return workRuntime.moveIssuesToActiveSprint(
         String(params.sessionId),

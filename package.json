@@ -4,6 +4,31 @@
   "private": true,
   "type": "module",
   "description": "Flow durable coordination and workflow orchestration engine.",
+  "bin": {
+    "flow": "./bin/flow",
+    "flow-dashboard": "./bin/flow-dashboard"
+  },
+  "exports": {
+    ".": {
+      "types": "./.tmp/bin/src/index.d.ts",
+      "default": "./.tmp/bin/src/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "assets",
+    "bin",
+    "docs",
+    "examples",
+    "extensions",
+    "prompts",
+    "skills",
+    "src",
+    "vite.dashboard.config.ts",
+    "postcss.config.mjs",
+    "tailwind.config.ts",
+    "tsconfig.json"
+  ],
   "scripts": {
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "node scripts/test-flow.mjs",

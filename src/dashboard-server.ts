@@ -17,6 +17,7 @@ const host = resolveDashboardHost(flowConfig);
 const port = resolveDashboardPort(flowConfig);
 const publicUrl = resolveDashboardUrl(flowConfig);
 const workRuntimeUrl = resolveWorkRuntimeUrl(flowConfig);
+const themeConfig = resolveThemeConfig(flowConfig);
 const dashboardFilePath = resolveDashboardFilePath();
 const dashboardAssetsPath = join(dirname(dashboardFilePath), "assets");
 const serviceStartedAt = new Date();
@@ -43,10 +44,11 @@ app.get("/api/events", (req, res) => {
 
 app.get("/api/dashboard", async (req, res) => {
   try {
-    res.json(await dashboardState.payload({
+    const payload = await dashboardState.payload({
       limit: 25,
       health: healthPayload(),
-    }));
+    });
+    res.json({ ...payload, ui: themeConfig });
   } catch (error) {
     res.status(500).json({ ok: false, error: errorMessage(error) });
   }
@@ -56,7 +58,10 @@ app.post("/api/actions/:action", async (req, res) => {
   try {
     events.publish("dashboard.action.started", { action: req.params.action, issueRef: isRecord(req.body) ? req.body.issueRef : undefined });
     const result = await handleAction(req.params.action, isRecord(req.body) ? req.body : {});
-    const dashboard = await dashboardState.payload({ limit: 25, health: healthPayload() });
+    const dashboard = {
+      ...(await dashboardState.payload({ limit: 25, health: healthPayload() })),
+      ui: themeConfig,
+    };
     events.publish("dashboard.action.completed", { action: req.params.action, issueRef: isRecord(req.body) ? req.body.issueRef : undefined });
     res.json({ ok: true, result, dashboard });
   } catch (error) {
@@ -255,6 +260,15 @@ function resolveWorkRuntimeUrl(config: FlowConfig | undefined): string {
   const url = config?.runtime?.workRuntime?.url?.trim();
   if (!url) throw new Error("Missing required config value: runtime.workRuntime.url");
   return url;
+}
+
+function resolveThemeConfig(config: FlowConfig | undefined): Record<string, unknown> {
+  const dashboard = config?.runtime?.dashboard;
+  return {
+    themes: dashboard?.themes ?? [],
+    defaultThemeId: dashboard?.defaultThemeId ?? "",
+    defaultMode: dashboard?.defaultMode ?? "",
+  };
 }
 
 function errorMessage(error: unknown): string {
