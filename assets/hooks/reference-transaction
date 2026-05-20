@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
+
+if [ -x /opt/homebrew/bin/python3 ]; then
+  exec /opt/homebrew/bin/python3 "$SCRIPT_DIR/../bin/flow-guard.py" hook-reference-transaction "$@"
+fi
+
+exec python3 "$SCRIPT_DIR/../bin/flow-guard.py" hook-reference-transaction "$@"

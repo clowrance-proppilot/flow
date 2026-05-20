@@ -1,0 +1,88 @@
+#!/usr/bin/env node
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import ts from "typescript";
+
+const scriptDir = dirname(fileURLToPath(import.meta.url));
+const rootDir = join(scriptDir, "..");
+
+buildRuntime();
+buildDashboard();
+
+const entry = resolveEntry([
+  join(rootDir, ".tmp", "bin", "src", "dashboard-server.js"),
+  join(rootDir, ".tmp", "bin", "dashboard-server.js"),
+]);
+if (!entry) {
+  console.error("Flow Dashboard entry not found.");
+  process.exit(1);
+}
+
+await import(`${pathToFileURL(entry).href}?t=${Date.now()}`);
+
+function buildRuntime() {
+  const configPath = ts.findConfigFile(rootDir, ts.sys.fileExists, "tsconfig.json");
+  if (!configPath) {
+    console.error(`Flow Dashboard could not find tsconfig.json under ${rootDir}`);
+    process.exit(1);
+  }
+
+  const config = ts.readConfigFile(configPath, ts.sys.readFile);
+  if (config.error) {
+    reportDiagnostics([config.error]);
+    process.exit(1);
+  }
+
+  const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, rootDir, undefined, configPath);
+  if (parsed.errors.length) {
+    reportDiagnostics(parsed.errors);
+    process.exit(1);
+  }
+
+  const program = ts.createProgram(parsed.fileNames, parsed.options);
+  const emit = program.emit();
+  const diagnostics = ts.getPreEmitDiagnostics(program).concat(emit.diagnostics);
+  if (diagnostics.length) {
+    reportDiagnostics(diagnostics);
+    process.exit(1);
+  }
+  if (emit.emitSkipped) {
+    console.error("Flow Dashboard TypeScript build skipped emit.");
+    process.exit(1);
+  }
+}
+
+function buildDashboard() {
+  const viteBin = join(rootDir, "node_modules", "vite", "bin", "vite.js");
+  if (!existsSync(viteBin)) {
+    console.error("Flow dashboard build dependency missing. Run `npm install` in the Flow repo.");
+    process.exit(1);
+  }
+
+  const result = spawnSync(process.execPath, [viteBin, "build", "--config", join(rootDir, "vite.dashboard.config.ts")], {
+    cwd: rootDir,
+    stdio: "inherit",
+  });
+  if (result.status !== 0) {
+    console.error("Flow dashboard build failed.");
+    process.exit(result.status ?? 1);
+  }
+}
+
+function reportDiagnostics(diagnostics) {
+  const host = {
+    getCanonicalFileName: (fileName) => fileName,
+    getCurrentDirectory: () => rootDir,
+    getNewLine: () => "\n",
+  };
+  console.error(ts.formatDiagnosticsWithColorAndContext(diagnostics, host));
+}
+
+function resolveEntry(candidates) {
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return undefined;
+}

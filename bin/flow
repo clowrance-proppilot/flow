@@ -1,0 +1,105 @@
+#!/usr/bin/env node
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { existsSync, readdirSync, statSync } from "node:fs";
+import dotenv from "dotenv";
+import ts from "typescript";
+
+const scriptDir = dirname(fileURLToPath(import.meta.url));
+const rootDir = join(scriptDir, "..");
+
+loadEnv(join(process.env.HOME ?? "", ".config", "flow", "env"));
+loadEnv(join(rootDir, ".env"));
+loadEnv(join(rootDir, ".env.local"));
+
+const entry = resolveEntry([
+  join(rootDir, ".tmp", "bin", "src", "flow.js"),
+  join(rootDir, ".tmp", "bin", "flow.js"),
+]);
+if (!entry || needsBuild(entry)) {
+  buildFlow();
+}
+
+const builtEntry = resolveEntry([
+  join(rootDir, ".tmp", "bin", "src", "flow.js"),
+  join(rootDir, ".tmp", "bin", "flow.js"),
+]);
+if (!builtEntry) {
+  console.error("Flow entry not found.");
+  process.exit(1);
+}
+
+await import(`${pathToFileURL(builtEntry).href}?t=${Date.now()}`);
+
+function loadEnv(path) {
+  if (!path || !existsSync(path)) return;
+  dotenv.config({ path, override: false });
+}
+
+function buildFlow() {
+  const configPath = ts.findConfigFile(rootDir, ts.sys.fileExists, "tsconfig.json");
+  if (!configPath) {
+    console.error(`Flow could not find tsconfig.json under ${rootDir}`);
+    process.exit(1);
+  }
+
+  const config = ts.readConfigFile(configPath, ts.sys.readFile);
+  if (config.error) {
+    reportDiagnostics([config.error]);
+    process.exit(1);
+  }
+
+  const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, rootDir, undefined, configPath);
+  if (parsed.errors.length) {
+    reportDiagnostics(parsed.errors);
+    process.exit(1);
+  }
+
+  const program = ts.createProgram(parsed.fileNames, parsed.options);
+  const emit = program.emit();
+  const diagnostics = ts.getPreEmitDiagnostics(program).concat(emit.diagnostics);
+  if (diagnostics.length) {
+    reportDiagnostics(diagnostics);
+    process.exit(1);
+  }
+  if (emit.emitSkipped) {
+    console.error("Flow TypeScript build skipped emit.");
+    process.exit(1);
+  }
+}
+
+function reportDiagnostics(diagnostics) {
+  const host = {
+    getCanonicalFileName: (fileName) => fileName,
+    getCurrentDirectory: () => rootDir,
+    getNewLine: () => "\n",
+  };
+  console.error(ts.formatDiagnosticsWithColorAndContext(diagnostics, host));
+}
+
+function resolveEntry(candidates) {
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return undefined;
+}
+
+function needsBuild(entry) {
+  if (process.env.FLOW_FORCE_BUILD === "1") return true;
+  const entryMtime = statSync(entry).mtimeMs;
+  return latestSourceMtime(join(rootDir, "src")) > entryMtime;
+}
+
+function latestSourceMtime(dir) {
+  let latest = 0;
+  for (const item of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, item.name);
+    if (item.isDirectory()) {
+      if (item.name === "node_modules" || item.name === ".tmp") continue;
+      latest = Math.max(latest, latestSourceMtime(path));
+    } else if (item.isFile() && path.endsWith(".ts")) {
+      latest = Math.max(latest, statSync(path).mtimeMs);
+    }
+  }
+  return latest;
+}
