@@ -33,10 +33,6 @@ ledger:
   type: "flow"
 
 runtime:
-  workRuntime:
-    host: "127.0.0.1"
-    port: 8871
-    url: "http://127.0.0.1:8871"
   dashboard:
     host: "127.0.0.1"
     port: 8867

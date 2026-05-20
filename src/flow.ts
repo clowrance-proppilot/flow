@@ -57,13 +57,16 @@ const rawWorkRuntimeMethods = [
   "createSession",
   "selectIssue",
   "createIssue",
+  "bootstrapIssue",
   "bootstrapJiraIssue",
   "createJiraIssue",
   "routeIssue",
+  "prepareWorkspace",
   "advanceIssue",
   "diagnoseIssue",
   "autoFlowIssue",
   "resetAutoflowState",
+  "refreshReviewState",
   "summarizeHandoff",
   "observeFlowSubject",
 ];
@@ -222,8 +225,9 @@ program
   .option("-s, --session <id>", "session id", defaultSessionId)
   .action(async (issueRef: string | undefined, options: { session: string }) => {
     await ensureSession(options.session);
-    if (issueRef) await runtime.selectIssue(options.session, await queueIssue(issueRef));
-    writeJson(await runtime.diagnoseIssue(options.session, issueRef));
+    const issue = issueRef ? await queueIssue(issueRef) : undefined;
+    if (issue) await runtime.selectIssue(options.session, issue);
+    writeJson(await runtime.diagnoseIssue(options.session, issue?.ref));
   });
 
 program
@@ -275,11 +279,62 @@ async function ensureSession(sessionId: string): Promise<void> {
 }
 
 async function queueIssue(issueRef: string): Promise<WorkItem> {
+  const resolvedIssueRef = await resolveIssueRef(issueRef);
+  if (resolvedIssueRef) issueRef = resolvedIssueRef;
   const issueKey = issueRef.toUpperCase();
   const queue = await runtime.inspectQueue(50);
-  const issue = queue.find((candidate) => candidate.ref.toUpperCase() === issueKey);
+  const issue = queue.find((candidate) =>
+    candidate.ref.toUpperCase() === issueKey || issueMatchesPullRequest(candidate, issueRef)
+  );
   if (issue) return issue;
   return { ref: issueKey, title: issueKey, repoKeys: [], state: "queued", metadata: {} };
+}
+
+async function resolveIssueRef(ref: string): Promise<string | undefined> {
+  const pullRequest = parsePullRequestRef(ref);
+  if (!pullRequest) return undefined;
+
+  const queueMatch = (await runtime.inspectQueue(50)).find((issue) => issueMatchesPullRequest(issue, ref));
+  if (queueMatch) return queueMatch.ref;
+
+  const pr = await runtimeGithubPullRequest(pullRequest.repo, pullRequest.number);
+  return pr ? extractIssueRef([pr.title, pr.body, pr.headRefName, pr.url]) : undefined;
+}
+
+async function runtimeGithubPullRequest(repo: string, number: number) {
+  try {
+    return await runtimeGithub().getPullRequest(repo, number);
+  } catch {
+    return undefined;
+  }
+}
+
+function runtimeGithub(): GhGitHubAdapter {
+  return new GhGitHubAdapter({ cwd: repoRoot, owner: configString(flowConfig?.collaboration, "owner") });
+}
+
+function parsePullRequestRef(ref: string): { repo: string; number: number } | undefined {
+  const match = /^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+)\/pull\/(\d+)(?:[/?#].*)?$/i.exec(ref.trim());
+  if (!match) return undefined;
+  return { repo: `${match[1]}/${match[2]}`, number: Number(match[3]) };
+}
+
+function issueMatchesPullRequest(issue: WorkItem, ref: string): boolean {
+  const normalized = ref.trim();
+  if (!normalized) return false;
+  const metadata = issue.metadata ?? {};
+  if (metadata.prUrl === normalized) return true;
+  return Object.entries(metadata).some(([key, value]) =>
+    key.endsWith(".pr_url") && value === normalized
+  );
+}
+
+function extractIssueRef(values: Array<string | undefined>): string | undefined {
+  for (const value of values) {
+    const match = /(?:^|[^A-Z0-9])([A-Z][A-Z0-9]+-\d+)(?=$|[^A-Z0-9])/i.exec(value ?? "");
+    if (match) return match[1].toUpperCase();
+  }
+  return undefined;
 }
 
 async function dispatch(method: string, params: Record<string, unknown>): Promise<unknown> {
@@ -295,6 +350,7 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     case "selectIssue":
       return runtime.selectIssue(String(params.sessionId ?? defaultSessionId), params.issue as WorkItem);
     case "bootstrapJiraIssue":
+    case "bootstrapIssue":
       return runtime.bootstrapJiraIssue(
         String(params.sessionId ?? defaultSessionId),
         String(params.issueRef),
@@ -316,6 +372,12 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
         String(params.issueRef),
         asStringArray(params.repoKeys) ?? [],
       );
+    case "prepareWorkspace":
+      return runtime.prepareWorkspace(
+        String(params.sessionId ?? defaultSessionId),
+        String(params.issueRef),
+        params.options ?? {},
+      );
     case "advanceIssue":
       return runtime.advanceIssue(String(params.sessionId ?? defaultSessionId), typeof params.approveConfirmationId === "string" ? params.approveConfirmationId : undefined);
     case "diagnoseIssue":
@@ -327,6 +389,11 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
       return runtime.autoFlowIssue(String(params.sessionId ?? defaultSessionId), createDefaultWorkerSpawner({ flowRoot: repoRoot }), params.options ?? {});
     case "resetAutoflowState":
       return runtime.resetAutoflowState(String(params.sessionId ?? defaultSessionId), asStringArray(params.issueRefs));
+    case "refreshReviewState":
+      return runtime.refreshReviewState(
+        String(params.sessionId ?? defaultSessionId),
+        String(params.issueRef),
+      );
     case "summarizeHandoff":
       return runtime.summarizeHandoff(String(params.sessionId ?? defaultSessionId));
     case "observeFlowSubject":

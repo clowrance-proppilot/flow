@@ -1,14 +1,21 @@
 #!/usr/bin/env node
 import { Command } from "commander";
+import { execFile } from "node:child_process";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
+const flowRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
 const program = new Command()
   .name("flow-autoflow")
-  .description("Run Flow autoflow against one Jira issue through the Work Runtime.")
+  .description("Run Flow autoflow against one Jira issue through the Flow CLI.")
   .argument("<issue-ref>", "Jira issue key, for example ISSUE-123")
   .option(
-    "--work-runtime-url <url>",
-    "Work Runtime URL",
-    process.env.FLOW_WORK_RUNTIME_URL ?? "http://127.0.0.1:8771",
+    "--flow-bin <path>",
+    "Flow CLI path",
+    process.env.FLOW_BIN ?? join(flowRoot, "bin", "flow"),
   )
   .option(
     "--cycles <count>",
@@ -18,7 +25,7 @@ const program = new Command()
   )
   .option(
     "--steps <count>",
-    "maximum Work Runtime autoflow steps per cycle",
+    "maximum autoflow steps per cycle",
     parsePositiveInteger,
     Number(process.env.FLOW_AUTOFLOW_STEPS ?? 20),
   );
@@ -28,7 +35,7 @@ program.parse();
 const [issueRef] = program.args;
 const options = program.opts();
 
-const workRuntimeUrl = options.workRuntimeUrl.replace(/\/+$/, "");
+const flowBin = options.flowBin;
 const maxCycles = options.cycles;
 const maxSteps = options.steps;
 
@@ -70,16 +77,12 @@ const output = {
 console.log(JSON.stringify(output, null, 2));
 
 async function call(method, params) {
-  const response = await fetch(`${workRuntimeUrl}/v1/work-runtime`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ method, params }),
+  const { stdout, stderr } = await execFileAsync(flowBin, ["call", method, JSON.stringify(params)], {
+    cwd: process.env.FLOW_PROJECT_ROOT ?? process.cwd(),
+    maxBuffer: 20 * 1024 * 1024,
   });
-  const payload = await response.json();
-  if (!response.ok || !payload?.ok) {
-    throw new Error(payload?.error ?? `${method} failed`);
-  }
-  return payload.result;
+  if (stderr.trim()) process.stderr.write(stderr);
+  return JSON.parse(stdout);
 }
 
 function parsePositiveInteger(value) {

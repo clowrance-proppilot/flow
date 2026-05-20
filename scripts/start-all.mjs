@@ -7,25 +7,16 @@ import { fileURLToPath } from "node:url";
 const flowRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const dashboardHost = process.env.FLOW_DASHBOARD_HOST ?? "127.0.0.1";
 const dashboardPort = process.env.FLOW_DASHBOARD_PORT ?? "8767";
-const workRuntimeHost = process.env.FLOW_WORK_RUNTIME_HOST ?? "127.0.0.1";
-const workRuntimePort = process.env.FLOW_WORK_RUNTIME_PORT ?? "8771";
-const workRuntimeUrl = process.env.FLOW_WORK_RUNTIME_URL ?? `http://${workRuntimeHost}:${workRuntimePort}`;
 const dashboardUrl = process.env.FLOW_DASHBOARD_URL ?? `http://${dashboardHost}:${dashboardPort}`;
 const children = [];
 
-await cleanListeningPorts([dashboardPort, workRuntimePort]);
+await cleanListeningPorts([dashboardPort]);
 buildFrontendAndRuntime();
 
-console.log("Starting Flow services: Work Runtime and Dashboard. Executors launch per issue.");
-
-const workRuntime = startRole("Work Runtime", resolveEntry("work-runtime-server.js"), {
-  FLOW_WORK_RUNTIME_URL: workRuntimeUrl,
-});
-await waitForHealth(`${workRuntimeUrl}/healthz`, "Work Runtime");
+console.log("Starting Flow Dashboard. Workflow actions are routed through the Flow CLI.");
 
 const dashboard = startRole("Dashboard", resolveEntry("dashboard-server.js"), {
   FLOW_DASHBOARD_URL: dashboardUrl,
-  FLOW_WORK_RUNTIME_URL: workRuntimeUrl,
 });
 await waitForHealth(`${dashboardUrl}/healthz`, "Dashboard");
 

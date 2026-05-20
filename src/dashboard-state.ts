@@ -5,7 +5,7 @@ import { flowRoot } from "./flow-runtime.js";
 
 const execFileAsync = promisify(execFile);
 
-export type DashboardSnapshotSource = "work_runtime" | "empty";
+export type DashboardSnapshotSource = "flow_cli" | "empty";
 
 export interface DashboardSnapshot {
   issues: Record<string, unknown>[];
@@ -20,19 +20,16 @@ export interface DashboardPayloadOptions {
 }
 
 export interface DashboardStateOptions {
-  workRuntimeUrl: string;
   repoRoot?: string;
   debugLog?: (event: string, details: Record<string, unknown>) => void;
 }
 
 export class DashboardState {
-  private readonly workRuntimeUrl: string;
   private readonly repoRoot: string;
   private readonly debugLog: (event: string, details: Record<string, unknown>) => void;
   private refresh: Promise<DashboardSnapshot> | undefined;
 
   constructor(options: DashboardStateOptions) {
-    this.workRuntimeUrl = options.workRuntimeUrl.replace(/\/+$/, "");
     this.repoRoot = options.repoRoot ?? process.cwd();
     this.debugLog = options.debugLog ?? (() => undefined);
   }
@@ -70,8 +67,8 @@ export class DashboardState {
     };
   }
 
-  async workRuntimeAction(method: string, params: Record<string, unknown>): Promise<unknown> {
-    return callWorkRuntime(this.workRuntimeUrl, method, params);
+  async runtimeAction(method: string, params: Record<string, unknown>): Promise<unknown> {
+    return callFlowCli(this.repoRoot, method, params, this.debugLog);
   }
 
   private async getLiveSnapshot(limit: number): Promise<DashboardSnapshot> {
@@ -96,54 +93,32 @@ export class DashboardState {
     const issues = await withTimeout(this.inspectQueue(limit), dashboardLiveRefreshTimeoutMs());
     return {
       issues,
-      source: "work_runtime",
+      source: "flow_cli",
       refreshedAt: new Date().toISOString(),
       degradedError: "",
     };
   }
 
   private async inspectQueue(limit: number): Promise<Record<string, unknown>[]> {
-    try {
-      return await this.workRuntimeInspectQueue(limit);
-    } catch (error) {
-      this.debugLog("dashboard.work_runtime_unavailable", { error: firstErrorLine(error) });
-      return await this.cliInspectQueue(limit);
-    }
-  }
-
-  private async workRuntimeInspectQueue(limit: number): Promise<Record<string, unknown>[]> {
-    const result = await callWorkRuntime(this.workRuntimeUrl, "inspectDashboardQueue", { limit });
-    return Array.isArray(result) ? result as Record<string, unknown>[] : [];
-  }
-
-  private async cliInspectQueue(limit: number): Promise<Record<string, unknown>[]> {
-    const bin = process.env.FLOW_BIN ?? join(flowRoot, "bin", "flow");
-    const { stdout, stderr } = await execFileAsync(bin, ["call", "inspectDashboardQueue", JSON.stringify({ limit })], {
-      cwd: this.repoRoot,
-      maxBuffer: 20 * 1024 * 1024,
-    });
-    if (stderr.trim()) this.debugLog("dashboard.cli_queue_stderr", { stderr: stderr.trim().slice(0, 1000) });
-    const parsed = JSON.parse(stdout) as unknown;
+    const parsed = await callFlowCli(this.repoRoot, "inspectDashboardQueue", { limit }, this.debugLog);
     return Array.isArray(parsed) ? parsed as Record<string, unknown>[] : [];
   }
 
 }
 
-export async function callWorkRuntime(
-  workRuntimeUrl: string,
+export async function callFlowCli(
+  repoRoot: string,
   method: string,
   params: Record<string, unknown>,
+  debugLog: (event: string, details: Record<string, unknown>) => void = () => undefined,
 ): Promise<unknown> {
-  const response = await fetch(`${workRuntimeUrl.replace(/\/+$/, "")}/v1/work-runtime`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ method, params }),
+  const bin = process.env.FLOW_BIN ?? join(flowRoot, "bin", "flow");
+  const { stdout, stderr } = await execFileAsync(bin, ["call", method, JSON.stringify(params)], {
+    cwd: repoRoot,
+    maxBuffer: 20 * 1024 * 1024,
   });
-  const payload = await response.json() as { ok?: boolean; result?: unknown; error?: string };
-  if (!response.ok || !payload.ok) {
-    throw new Error(payload.error ?? `Work Runtime ${method} failed with HTTP ${response.status}.`);
-  }
-  return payload.result;
+  if (stderr.trim()) debugLog("dashboard.flow_cli_stderr", { method, stderr: stderr.trim().slice(0, 1000) });
+  return JSON.parse(stdout) as unknown;
 }
 
 function dashboardLiveRefreshTimeoutMs(): number {

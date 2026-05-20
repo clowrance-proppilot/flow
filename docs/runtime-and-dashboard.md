@@ -11,7 +11,7 @@ explicit direct-tooling recovery.
 
 ## Runtime Roles
 
-The active local stack has two long-running roles plus the CLI:
+The active local stack has one long-running role plus the CLI:
 
 - **Readiness checks** evaluates Work Runtime-reconciled state and returns blockers or
   readiness.
@@ -20,8 +20,8 @@ The active local stack has two long-running roles plus the CLI:
   action.
 - **CLI** is the operator surface used by Codex, Claude, Quad, and other agents.
   It emits stable JSON and persists Work Runtime sessions.
-- **Dashboard** is the browser operator console. It presents Work Runtime state
-  as a read-only projection.
+- **Dashboard** is the browser operator console. It presents CLI-reconciled Flow
+  state and routes any dashboard actions back through `flow call`.
 
 Executors are assigned per issue. An executor may be the current live agent thread
 adopted by Work Runtime, or a bounded background agent launched for a
@@ -59,12 +59,11 @@ flowchart LR
   Live --> Tree
   Executor --> Tree
   Executor --> CLI
-  Coord --> Dashboard["Dashboard: read-only console"]
+  CLI --> Dashboard["Dashboard: browser console"]
 ```
 
-Dashboard is a separate read-only operator console over Work Runtime state. It
-does not author work envelopes, orchestrate execution, or act as a workflow
-authority.
+Dashboard is a separate operator console over CLI-reconciled state. It does not
+own Jira, GitHub, ledger, branch, PR, work envelope, or executor decisions.
 
 ## Start Commands
 
@@ -94,12 +93,12 @@ descriptions, examples, and the raw Work Runtime methods supported by
 `advanceIssue`. Provider-specific method names remain only as compatibility
 aliases where existing agents already use them.
 
-`npm run start:all` starts Work Runtime and Dashboard
-together. It also builds the runtime and dashboard first.
+`npm run start:all` starts the Dashboard. It also builds the runtime and
+dashboard first.
 
-You do not need to launch a Flow server for CLI workflow. The CLI loads Work
-Runtime directly and exits after emitting JSON. Launch the dashboard server only
-when you want the browser operator console.
+You do not need to launch a Flow server for workflow. The CLI loads Work Runtime
+directly and exits after emitting JSON. Launch the dashboard server only when you
+want the browser operator console.
 
 `npm run start:all:watch` wraps `start:all` with Node watch mode for `src/` and
 `flow/`. Use it while editing Flow runtime code so file changes rebuild
@@ -119,16 +118,17 @@ Dashboard:
 - API: `http://127.0.0.1:8767/api/dashboard`
 - Health: `http://127.0.0.1:8767/healthz`
 
-Work Runtime and Readiness checks are internal role servers used by CLI and
-projected by Dashboard.
+Work Runtime is an in-process library used by the CLI. Dashboard actions route
+through the same CLI path instead of a separate Work Runtime API.
 
 ## Dashboard Refresh Semantics
 
-The dashboard serves live Work Runtime state. It does not cache queue data or
+The dashboard serves live CLI-reconciled Flow state. It does not cache queue data or
 serve stale snapshots.
 
 - Browser poll interval: 5 seconds
-- Every `/api/dashboard` request performs a Work Runtime queue inspection
+- Every `/api/dashboard` request performs a `flow call inspectDashboardQueue`
+  inspection
 - Manual Refresh performs the same live read immediately
 - Live refresh timeout: `FLOW_DASHBOARD_LIVE_REFRESH_TIMEOUT_MS`, default 60 seconds
 
@@ -141,12 +141,12 @@ different local ledger file.
 Set `FLOW_LEDGER_ADAPTER=beads` only when intentionally running the legacy
 Beads adapter.
 
-The API includes snapshot freshness:
+The dashboard API includes snapshot freshness:
 
 ```json
 {
   "snapshot": {
-    "source": "work_runtime",
+    "source": "flow_cli",
     "refreshedAt": "2026-05-13T20:43:18.114Z",
     "ageSeconds": 0,
     "stale": false
@@ -157,18 +157,19 @@ The API includes snapshot freshness:
 }
 ```
 
-The API does not return stale issue data. If Work Runtime is unavailable or
-times out, it returns `degraded=true` with the error and an empty issue list.
+The dashboard API does not return stale issue data. If the Flow CLI is unavailable
+or times out, it returns `degraded=true` with the error and an empty issue list.
 
 ## Authority Boundary
 
 Dashboard must not write Jira, GitHub, ledger, branch state, PR state, work
-envelopes, or executor orchestration directly. Work Runtime owns workflow
-mutation and reconciliation.
+envelopes, or executor orchestration directly. The Flow CLI is the only blessed
+workflow write/control surface; Work Runtime remains the in-process library
+behind it.
 
-If Dashboard and Flow disagree, use the Flow or Work Runtime to reconcile the
+If Dashboard and Flow disagree, use the Flow CLI to reconcile the
 issue, then refresh Dashboard. Do not treat Dashboard card text as more
-authoritative than Work Runtime, Readiness checks, Jira, GitHub, or the prepared
+authoritative than CLI output, Readiness checks, Jira, GitHub, or the prepared
 worktree.
 
 ## Validation

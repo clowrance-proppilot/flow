@@ -16,6 +16,7 @@ export interface PullRequestStatus {
   number: number;
   title: string;
   url: string;
+  body?: string;
   headRefName: string;
   state?: string;
   mergedAt?: string;
@@ -525,6 +526,7 @@ function parseSinglePullRequest(value: unknown, repo: string): PullRequestStatus
     number,
     title: String(record.title ?? ""),
     url: String(record.url ?? ""),
+    body: typeof record.body === "string" ? record.body : undefined,
     headRefName: String(record.headRefName ?? ""),
     state: typeof record.state === "string" ? record.state : undefined,
     mergedAt: typeof record.mergedAt === "string" ? record.mergedAt : undefined,

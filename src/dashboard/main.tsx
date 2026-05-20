@@ -222,7 +222,6 @@ function App() {
     source.addEventListener("dashboard.action.started", onEvent);
     source.addEventListener("dashboard.action.completed", onEvent);
     source.addEventListener("dashboard.action.failed", onEvent);
-    source.addEventListener("work_runtime.event", onEvent);
     source.onerror = () => setStatus((current) => current.kind === "error" ? current : { kind: "stale", message: "Event stream reconnecting" });
     return () => source.close();
   }, [refresh, issues, pushEvent]);
@@ -257,7 +256,7 @@ function App() {
             <div>
               <div className="accent-spinner mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2" />
               <div className="text-sm font-semibold text-[var(--th-fg)]">Loading Flow state</div>
-              <div className="mt-1 text-xs text-[var(--th-fg-muted)]">Waiting for Work Runtime reconciliation</div>
+              <div className="mt-1 text-xs text-[var(--th-fg-muted)]">Waiting for Flow CLI reconciliation</div>
             </div>
           </div>
         ) : (
@@ -910,7 +909,7 @@ function statusDotClass(kind: StatusKind): string {
 }
 
 function statusMessage(payload: DashboardPayload): string {
-  if (payload.degraded) return payload.degradedError || "Work Runtime refresh degraded";
+  if (payload.degraded) return payload.degradedError || "Flow CLI refresh degraded";
   if (payload.refreshing) return "Refreshing snapshot";
   if (payload.stale || payload.snapshot?.stale) {
     const age = typeof payload.snapshot?.ageSeconds === "number" ? ` (${payload.snapshot.ageSeconds}s old)` : "";

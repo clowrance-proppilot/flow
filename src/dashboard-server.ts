@@ -4,7 +4,7 @@ import type { Server } from "node:http";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DashboardState, callWorkRuntime } from "./dashboard-state.js";
+import { DashboardState } from "./dashboard-state.js";
 import { FlowEventStream } from "./event-stream.js";
 import { flowRoot, loadFlowEnv, repoRoot } from "./flow-runtime.js";
 import { loadFlowConfig } from "./config/config-loader.js";
@@ -16,7 +16,6 @@ const flowConfig = await loadFlowConfig({ projectRoot: repoRoot });
 const host = resolveDashboardHost(flowConfig);
 const port = resolveDashboardPort(flowConfig);
 const publicUrl = resolveDashboardUrl(flowConfig);
-const workRuntimeUrl = resolveWorkRuntimeUrl(flowConfig);
 const themeConfig = resolveThemeConfig(flowConfig);
 const dashboardFilePath = resolveDashboardFilePath();
 const dashboardAssetsPath = join(dirname(dashboardFilePath), "assets");
@@ -25,7 +24,6 @@ const debugEnabled = process.env.FLOW_DASHBOARD_DEBUG === "1";
 const events = new FlowEventStream("dashboard");
 
 const dashboardState = new DashboardState({
-  workRuntimeUrl,
   repoRoot,
   debugLog,
 });
@@ -103,12 +101,10 @@ const server = app.listen(port, host, () => {
     host,
     port,
     publicUrl,
-    workRuntimeUrl,
     repoRoot,
     dashboardFilePath,
     dashboardExists: existsSync(dashboardFilePath),
   });
-  proxyWorkRuntimeEvents();
 });
 server.on("error", (error: NodeJS.ErrnoException) => {
   const message = error.code === "EADDRINUSE"
@@ -125,7 +121,6 @@ function healthPayload(): Record<string, unknown> {
     ok: true,
     role: "dashboard",
     repoRoot,
-    workRuntimeUrl,
     pid: process.pid,
     startedAt: serviceStartedAt.toISOString(),
     uptimeSeconds: Math.round(process.uptime()),
@@ -146,32 +141,32 @@ async function handleAction(action: string, body: Record<string, unknown>): Prom
   switch (action) {
     case "refresh_review":
     case "refresh_pr_state":
-      return callWorkRuntime(workRuntimeUrl, "refreshReviewState", { sessionId, issueRef });
+      return dashboardState.runtimeAction("refreshReviewState", { sessionId, issueRef });
     case "select":
     case "select_issue":
       return selectRuntimeIssue(sessionId, issueRef, body);
     case "prepare_workspace":
       await selectRuntimeIssue(sessionId, issueRef, body);
-      return callWorkRuntime(workRuntimeUrl, "prepareWorkspace", {
+      return dashboardState.runtimeAction("prepareWorkspace", {
         sessionId,
         issueRef,
         options: { repoKey: typeof body.repoKey === "string" ? body.repoKey : undefined },
       });
     case "advance":
       await selectRuntimeIssue(sessionId, issueRef, body);
-      return callWorkRuntime(workRuntimeUrl, "advanceIssue", {
+      return dashboardState.runtimeAction("advanceIssue", {
         sessionId,
         approveConfirmationId: typeof body.approveConfirmationId === "string" ? body.approveConfirmationId : undefined,
       });
     case "autoflow":
       await selectRuntimeIssue(sessionId, issueRef, body);
-      return callWorkRuntime(workRuntimeUrl, "autoFlowIssue", {
+      return dashboardState.runtimeAction("autoFlowIssue", {
         sessionId,
         options: isRecord(body.options) ? body.options : {},
       });
     case "summarize_handoff":
       await selectRuntimeIssue(sessionId, issueRef, body);
-      return callWorkRuntime(workRuntimeUrl, "summarizeHandoff", { sessionId });
+      return dashboardState.runtimeAction("summarizeHandoff", { sessionId });
     default:
       throw new Error(`Unknown dashboard action: ${action}`);
   }
@@ -180,17 +175,17 @@ async function handleAction(action: string, body: Record<string, unknown>): Prom
 async function selectRuntimeIssue(sessionId: string, issueRef: string, body: Record<string, unknown>): Promise<unknown> {
   const options = isRecord(body.bootstrapOptions) ? body.bootstrapOptions : {};
   try {
-    return await callWorkRuntime(workRuntimeUrl, "bootstrapIssue", { sessionId, issueRef, options });
+    return await dashboardState.runtimeAction("bootstrapIssue", { sessionId, issueRef, options });
   } catch (error) {
     if (isRecord(body.issue)) {
-      return callWorkRuntime(workRuntimeUrl, "selectIssue", { sessionId, issue: body.issue });
+      return dashboardState.runtimeAction("selectIssue", { sessionId, issue: body.issue });
     }
     throw error;
   }
 }
 
 async function createSession(): Promise<string> {
-  const session = await callWorkRuntime(workRuntimeUrl, "createSession", {}) as Record<string, unknown>;
+  const session = await dashboardState.runtimeAction("createSession", {}) as Record<string, unknown>;
   const id = session.id;
   if (typeof id !== "string" || !id) throw new Error("Work Runtime did not return a session id.");
   return id;
@@ -237,13 +232,13 @@ function parsePort(value: string): number {
 }
 
 function resolveDashboardHost(config: FlowConfig | undefined): string {
-  const host = config?.runtime?.dashboard?.host?.trim();
+  const host = process.env.FLOW_DASHBOARD_HOST?.trim() ?? config?.runtime?.dashboard?.host?.trim();
   if (!host) throw new Error("Missing required config value: runtime.dashboard.host");
   return host;
 }
 
 function resolveDashboardPort(config: FlowConfig | undefined): number {
-  const port = config?.runtime?.dashboard?.port;
+  const port = process.env.FLOW_DASHBOARD_PORT ? parsePort(process.env.FLOW_DASHBOARD_PORT) : config?.runtime?.dashboard?.port;
   if (port === undefined || !Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error("Missing required config value: runtime.dashboard.port");
   }
@@ -251,14 +246,8 @@ function resolveDashboardPort(config: FlowConfig | undefined): number {
 }
 
 function resolveDashboardUrl(config: FlowConfig | undefined): string {
-  const url = config?.runtime?.dashboard?.url?.trim();
+  const url = process.env.FLOW_DASHBOARD_URL?.trim() ?? config?.runtime?.dashboard?.url?.trim();
   if (!url) throw new Error("Missing required config value: runtime.dashboard.url");
-  return url;
-}
-
-function resolveWorkRuntimeUrl(config: FlowConfig | undefined): string {
-  const url = config?.runtime?.workRuntime?.url?.trim();
-  if (!url) throw new Error("Missing required config value: runtime.workRuntime.url");
   return url;
 }
 
@@ -279,44 +268,6 @@ function errorMessage(error: unknown): string {
 function debugLog(event: string, details: Record<string, unknown>): void {
   if (!debugEnabled) return;
   console.error(`[flow-dashboard debug] ${event} ${JSON.stringify(details)}`);
-}
-
-function proxyWorkRuntimeEvents(): void {
-  void (async () => {
-    while (true) {
-      try {
-        const response = await fetch(`${workRuntimeUrl.replace(/\/+$/, "")}/v1/events`);
-        if (!response.ok || !response.body) throw new Error(`Work Runtime event stream failed with HTTP ${response.status}.`);
-        debugLog("events.connected", { workRuntimeUrl });
-        let buffer = "";
-        const decoder = new TextDecoder();
-        for await (const chunk of response.body) {
-          buffer += decoder.decode(chunk, { stream: true });
-          let boundary = buffer.indexOf("\n\n");
-          while (boundary >= 0) {
-            const block = buffer.slice(0, boundary);
-            buffer = buffer.slice(boundary + 2);
-            forwardSseBlock(block);
-            boundary = buffer.indexOf("\n\n");
-          }
-        }
-      } catch (error) {
-        debugLog("events.disconnected", { error: errorMessage(error).split("\n")[0] });
-        await delay(1500);
-      }
-    }
-  })();
-}
-
-function forwardSseBlock(block: string): void {
-  const dataLine = block.split("\n").find((line) => line.startsWith("data: "));
-  if (!dataLine) return;
-  const parsed = JSON.parse(dataLine.slice("data: ".length)) as Record<string, unknown>;
-  events.publish("work_runtime.event", parsed);
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

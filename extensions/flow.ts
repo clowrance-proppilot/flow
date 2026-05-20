@@ -10,8 +10,6 @@ function flowRoot() {
 }
 
 function workRuntime() {
-  const serviceUrl = workRuntimeServiceUrl();
-  if (serviceUrl) return new WorkRuntimeServiceClient(serviceUrl) as unknown as FlowWorkRuntime;
   const repoRoot = flowRoot();
   const root = join(repoRoot, ".context", "flow", "flow-runtime");
   // TODO(flow-contracts): Route tool response payloads through a dedicated
@@ -23,111 +21,6 @@ function workRuntime() {
     jira: new AcliJiraAdapter({ cwd: repoRoot }),
     projectRoot: repoRoot,
   });
-}
-
-function workRuntimeServiceUrl(): string | undefined {
-  const value = process.env.FLOW_WORK_RUNTIME_URL;
-  if (!value) return undefined;
-  return value.replace(/\/+$/, "");
-}
-
-class WorkRuntimeServiceClient {
-  constructor(private readonly baseUrl: string) {}
-
-  inspectQueue(limit?: number) {
-    return callWorkRuntime(this.baseUrl, "inspectQueue", { limit });
-  }
-  inspectBacklog(limit?: number) {
-    return callWorkRuntime(this.baseUrl, "inspectBacklog", { limit });
-  }
-  createSession(id?: string) {
-    return callWorkRuntime(this.baseUrl, "createSession", { id });
-  }
-  selectIssue(sessionId: string, issue: unknown) {
-    return callWorkRuntime(this.baseUrl, "selectIssue", { sessionId, issue });
-  }
-  bootstrapJiraIssue(sessionId: string, issueRef: string, options: unknown = {}) {
-    return callWorkRuntime(this.baseUrl, "bootstrapJiraIssue", { sessionId, issueRef, options });
-  }
-  createJiraIssue(sessionId: string, options: unknown = {}) {
-    return callWorkRuntime(this.baseUrl, "createJiraIssue", { sessionId, options });
-  }
-  moveIssuesToActiveSprint(sessionId: string, issueRefs: string[], options: unknown = {}) {
-    return callWorkRuntime(this.baseUrl, "moveIssuesToActiveSprint", { sessionId, issueRefs, options });
-  }
-  routeIssue(sessionId: string, issueRef: string, repoKeys: string[]) {
-    return callWorkRuntime(this.baseUrl, "routeIssue", { sessionId, issueRef, repoKeys });
-  }
-  prepareWorkspace(sessionId: string, issueRef: string, options: unknown = {}) {
-    return callWorkRuntime(this.baseUrl, "prepareWorkspace", { sessionId, issueRef, options });
-  }
-  advanceIssue(sessionId: string, approveConfirmationId?: string) {
-    return callWorkRuntime(this.baseUrl, "advanceIssue", { sessionId, approveConfirmationId });
-  }
-  summarizeHandoff(sessionId: string) {
-    return callWorkRuntime(this.baseUrl, "summarizeHandoff", { sessionId });
-  }
-  recordEvidence(sessionId: string, record: unknown) {
-    return callWorkRuntime(this.baseUrl, "recordEvidence", { sessionId, record });
-  }
-  recordAcceptanceWriteback(sessionId: string, issueRef?: string) {
-    return callWorkRuntime(this.baseUrl, "recordAcceptanceWriteback", { sessionId, issueRef });
-  }
-  closeoutAfterApproval(sessionId: string, options: unknown = {}) {
-    return callWorkRuntime(this.baseUrl, "closeoutAfterApproval", { sessionId, options });
-  }
-  recordReviewConfirmation(sessionId: string, record: unknown) {
-    return callWorkRuntime(this.baseUrl, "recordReviewConfirmation", { sessionId, record });
-  }
-  recordDocumentation(sessionId: string, record: unknown) {
-    return callWorkRuntime(this.baseUrl, "recordDocumentation", { sessionId, record });
-  }
-  recordProviderEscalation(sessionId: string, record: unknown) {
-    return callWorkRuntime(this.baseUrl, "recordProviderEscalation", { sessionId, record });
-  }
-  recordPullRequest(sessionId: string, record: unknown) {
-    return callWorkRuntime(this.baseUrl, "recordPullRequest", { sessionId, record });
-  }
-  observeExecutors(sessionId: string, issueRef?: string) {
-    return callWorkRuntime(this.baseUrl, "observeExecutors", { sessionId, issueRef });
-  }
-  listWorkJobs(sessionId: string, issueRef?: string) {
-    return callWorkRuntime(this.baseUrl, "listWorkJobs", { sessionId, issueRef });
-  }
-  submitWorkEnvelope(sessionId: string, envelope: string) {
-    return callWorkRuntime(this.baseUrl, "submitWorkEnvelope", { sessionId, envelope });
-  }
-  adoptLocalThread(sessionId: string, request: unknown, options: unknown = {}) {
-    return callWorkRuntime(this.baseUrl, "adoptLocalThread", { sessionId, request, options });
-  }
-  adoptPendingLocalThread(sessionId: string, options: unknown = {}) {
-    return callWorkRuntime(this.baseUrl, "adoptPendingLocalThread", { sessionId, options });
-  }
-  recordExecutorResult(sessionId: string, result: unknown) {
-    return callWorkRuntime(this.baseUrl, "recordExecutorResult", { sessionId, result });
-  }
-  runBackgroundExecutor(sessionId: string, request: unknown) {
-    return callWorkRuntime(this.baseUrl, "runBackgroundExecutor", { sessionId, request });
-  }
-  autoFlowIssue(sessionId: string, _spawner: unknown, options: unknown = {}) {
-    return callWorkRuntime(this.baseUrl, "autoFlowIssue", { sessionId, options });
-  }
-  resetAutoflowState(sessionId: string, issueRefs?: string[]) {
-    return callWorkRuntime(this.baseUrl, "resetAutoflowState", { sessionId, issueRefs });
-  }
-}
-
-async function callWorkRuntime(baseUrl: string, method: string, params: Record<string, unknown>) {
-  const response = await fetch(`${baseUrl}/v1/work-runtime`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ method, params }),
-  });
-  const payload = await response.json() as { ok?: boolean; result?: unknown; error?: string };
-  if (!response.ok || !payload.ok) {
-    throw new Error(payload.error ?? `Work Runtime service ${method} failed (${response.status}).`);
-  }
-  return payload.result;
 }
 
 export default function (pi: ExtensionAPI) {

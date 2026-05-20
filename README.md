@@ -11,9 +11,11 @@ runtime. See [Host Repo Integration](docs/host-integration.md).
 
 ## Runtime Shape
 
-- **CLI** is the operator surface and emits stable JSON.
-- **Work Runtime** validates work, reconciles Jira/Git/GitHub/ledger state, runs
-  readiness checks, and records lifecycle state.
+- **CLI** is the only blessed operator write/control surface and emits stable
+  JSON.
+- **Work Runtime** is the in-process library behind the CLI. It validates work,
+  reconciles Jira/Git/GitHub/ledger state, runs readiness checks, and records
+  lifecycle state.
 - **Executors** are execution modes: local live agent thread or hands-off
   background run.
 - **Ledger** stores durable work envelopes, events, executor progress, results,
@@ -92,8 +94,9 @@ Durable state lives outside Pi chat history under:
 .context/flow/
 ```
 
-Work Runtime owns workflow decisions. The native Flow JSONL ledger is the
-default durable workflow store; legacy adapters can be enabled explicitly.
+The CLI path owns workflow decisions through Work Runtime. The native Flow JSONL
+ledger is the default durable workflow store; legacy adapters can be enabled
+explicitly.
 
 ## Contracts
 

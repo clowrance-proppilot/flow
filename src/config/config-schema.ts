@@ -77,7 +77,6 @@ export const runtimeConfigSchema = z.object({
   eventLedgerPath: z.string().min(1).optional(),
   workflowLedgerPath: z.string().min(1).optional(),
   defaultSessionId: z.string().min(1).optional(),
-  workRuntime: serviceEndpointConfigSchema.optional(),
   dashboard: dashboardRuntimeConfigSchema.optional(),
 }).catchall(z.unknown());
 

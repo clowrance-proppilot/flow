@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { createServer } from "node:http";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,50 +11,29 @@ const flowRoot = join(scriptDir, "..");
 const repoRoot = flowRoot;
 const host = "127.0.0.1";
 const dashboardPort = 8877;
-const workRuntimePort = 8878;
 const dashboardUrl = `http://${host}:${dashboardPort}`;
-const workRuntimeUrl = `http://${host}:${workRuntimePort}`;
-let inspectRequests = 0;
-const runtimeMethods = [];
-
-const workRuntime = createServer(async (req, res) => {
-  if (req.url === "/healthz") {
-    json(res, 200, { ok: true });
-    return;
-  }
-  if (req.url === "/v1/work-runtime" && req.method === "POST") {
-    let body = "";
-    for await (const chunk of req) body += String(chunk);
-    const payload = JSON.parse(body || "{}");
-    runtimeMethods.push(payload.method);
-    if (payload.method !== "inspectQueue" && payload.method !== "inspectDashboardQueue") {
-      json(res, 200, { ok: true, result: { id: "session-dashboard-smoke" } });
-      return;
-    }
-    inspectRequests += 1;
-    if (inspectRequests === 1) {
-      await delay(1500);
-    }
-    json(res, 200, {
-      ok: true,
-      result: [
-        {
-          ref: "ISSUE-1",
-          title: "Dashboard smoke",
-          repoKeys: ["main"],
-          workflowState: "queued",
-          issueStatus: "Open",
-          issueUrl: "https://github.com/example/flow/issues/1",
-          metadata: {},
-        },
-      ],
-    });
-    return;
-  }
-  json(res, 404, { ok: false, error: "not found" });
-});
-
-await listen(workRuntime, workRuntimePort, host);
+const tmp = await mkdtemp(join(tmpdir(), "flow-dashboard-smoke-"));
+const callsPath = join(tmp, "calls.jsonl");
+const mockFlowBin = join(tmp, "flow");
+await writeFile(mockFlowBin, `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+const method = process.argv[3] ?? "";
+appendFileSync(${JSON.stringify(callsPath)}, JSON.stringify({ method }) + "\\n");
+if (method === "inspectDashboardQueue") {
+  console.log(JSON.stringify([{
+    ref: "ISSUE-1",
+    title: "Dashboard smoke",
+    repoKeys: ["main"],
+    workflowState: "queued",
+    issueStatus: "Open",
+    issueUrl: "https://github.com/example/flow/issues/1",
+    metadata: {},
+  }]));
+} else {
+  console.log(JSON.stringify({ id: "session-dashboard-smoke" }));
+}
+`);
+await chmod(mockFlowBin, 0o755);
 
 const child = spawn(
   process.execPath,
@@ -66,7 +46,7 @@ const child = spawn(
       FLOW_DASHBOARD_HOST: host,
       FLOW_DASHBOARD_PORT: String(dashboardPort),
       FLOW_DASHBOARD_URL: dashboardUrl,
-      FLOW_WORK_RUNTIME_URL: workRuntimeUrl,
+      FLOW_BIN: mockFlowBin,
       FLOW_DASHBOARD_LIVE_REFRESH_TIMEOUT_MS: "5000",
       FLOW_DASHBOARD_REQUEST_TIMEOUT_MS: "500",
     },
@@ -85,8 +65,8 @@ try {
   if (!html.includes("root")) throw new Error("dashboard HTML did not render app root");
 
   const initialPayload = await fetchJson(`${dashboardUrl}/api/dashboard`);
-  if (initialPayload.snapshot?.source !== "work_runtime") {
-    throw new Error(`dashboard should wait for initial Work Runtime refresh: ${JSON.stringify(initialPayload)}`);
+  if (initialPayload.snapshot?.source !== "flow_cli") {
+    throw new Error(`dashboard should wait for initial Flow CLI refresh: ${JSON.stringify(initialPayload)}`);
   }
 
   const payload = initialPayload;
@@ -104,6 +84,10 @@ try {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ issueRef: "ISSUE-1", issue: payload.issues[0] }),
   });
+  const runtimeMethods = (await fetchText(`file://${callsPath}`).catch(async () => "")).trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line).method);
   if (!runtimeMethods.includes("bootstrapIssue") || !runtimeMethods.includes("autoFlowIssue")) {
     throw new Error(`dashboard autoflow should bootstrap the issue before invoking autoflow: ${JSON.stringify(runtimeMethods)}`);
   }
@@ -111,24 +95,12 @@ try {
   console.log("dashboard smoke: ok");
 } finally {
   child.kill("SIGTERM");
-  workRuntime.close();
+  await rm(tmp, { recursive: true, force: true });
   await delay(100);
 }
 
 if (child.exitCode && child.exitCode !== 0) {
   throw new Error(`dashboard exited early: ${child.exitCode}\nstdout:\n${stdout}\nstderr:\n${stderr}`);
-}
-
-function listen(server, port, hostname) {
-  return new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(port, hostname, resolve);
-  });
-}
-
-function json(res, status, payload) {
-  res.writeHead(status, { "content-type": "application/json" });
-  res.end(JSON.stringify(payload));
 }
 
 async function waitForServer(url, retries) {
@@ -142,18 +114,6 @@ async function waitForServer(url, retries) {
   throw new Error(`server did not become healthy at ${url}`);
 }
 
-async function waitForDashboardSource(url, source, retries) {
-  let last;
-  for (let i = 0; i < retries; i += 1) {
-    try {
-      last = await fetchJson(url);
-      if (last.snapshot?.source === source) return last;
-    } catch {}
-    await delay(250);
-  }
-  throw new Error(`dashboard did not reach source ${source}; last=${JSON.stringify(last)}`);
-}
-
 async function fetchJson(url, init) {
   const response = await fetch(url, init);
   if (!response.ok) throw new Error(`request failed ${response.status} ${response.statusText}`);
@@ -161,6 +121,10 @@ async function fetchJson(url, init) {
 }
 
 async function fetchText(url) {
+  if (url.startsWith("file://")) {
+    const { readFile } = await import("node:fs/promises");
+    return await readFile(new URL(url), "utf8");
+  }
   const response = await fetch(url);
   if (!response.ok) throw new Error(`request failed ${response.status} ${response.statusText}`);
   return await response.text();
