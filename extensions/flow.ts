@@ -21,7 +21,7 @@ function flowRoot() {
 
 function workRuntime() {
   const repoRoot = flowRoot();
-  const root = join(repoRoot, ".context", "flow", "flow-runtime");
+  const root = join(repoRoot, ".flow", "runtime");
   // TODO(flow-contracts): Route tool response payloads through a dedicated
   // contract adapter layer so external shapes are decoupled from workRuntime internals.
   return new FlowWorkRuntime({

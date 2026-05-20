@@ -1,12 +1,12 @@
 # Flow
 
 Flow is a durable coordination and workflow orchestration engine for
-agent-assisted developer work. Projects bring a `flow.config.yaml`; Flow brings
+agent-assisted developer work. Projects bring a `.flow/config.yaml`; Flow brings
 the runtime, workflow ledger, reconciliation, readiness checks, executor tracking,
 CLI, and operator dashboard.
 
 Flow is a standalone package that can be plugged into multiple host repos. The
-consuming architecture owns its `flow.config.yaml`; Flow owns the reusable
+consuming architecture owns its `.flow/config.yaml`; Flow owns the reusable
 runtime. See [Host Repo Integration](docs/host-integration.md).
 
 ## Runtime Shape
@@ -34,10 +34,10 @@ npm run start:all:watch
 ## Host Repo Integration
 
 Use the checked-in example as a starting shape for the host repo's
-`flow.config.yaml`:
+`.flow/config.yaml`:
 
 ```text
-examples/flow.config.yaml
+examples/.flow/config.yaml
 ```
 
 With a sibling checkout:
@@ -56,7 +56,7 @@ npx flow-dashboard
 
 ## Run Flow Against A Project
 
-Run Flow from the project repository that contains `flow.config.yaml`:
+Run Flow from the project repository that contains `.flow/config.yaml`:
 
 ```bash
 FLOW_PROJECT_ROOT=/path/to/project /path/to/flow/bin/flow queue
@@ -99,12 +99,21 @@ executor, record the structured result, and stop asking for a duplicate Worker.
 Durable state lives outside Pi chat history under:
 
 ```text
-.context/flow/
+.flow/
+  config.yaml
+  runtime/
+    sessions/
+  ledger/
+    workflow.jsonl
+    issues/
+      ISSUE-123.json
 ```
 
-The CLI path owns workflow decisions through Work Runtime. The native Flow JSONL
-ledger is the default durable workflow store; legacy adapters can be enabled
-explicitly.
+The host repo owns the human-authored `.flow/config.yaml`. Flow manages the rest
+of `.flow/`: runtime sessions, the append-only JSONL audit log at
+`.flow/ledger/workflow.jsonl`, and per-issue projections under
+`.flow/ledger/issues/` for fast issue-level reads. The CLI path owns workflow
+decisions through Work Runtime; legacy adapters can be enabled explicitly.
 
 ## Contracts
 

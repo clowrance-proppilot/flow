@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
@@ -156,7 +156,8 @@ test("Flow config schema validates topology and adapter declarations", () => {
 
 test("Flow config loader reads YAML and builds topology", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-config-"));
-  await writeFile(join(root, "flow.config.yaml"), [
+  await mkdir(join(root, ".flow"), { recursive: true });
+  await writeFile(join(root, ".flow", "config.yaml"), [
     'version: "1"',
     "project:",
     '  name: "Example"',
@@ -1921,6 +1922,10 @@ test("Flow workflow ledger persists records to local JSONL by default", async ()
   const reloaded = createWorkflowLedger({ cwd: root, env: {} as NodeJS.ProcessEnv });
   assert.equal((await reloaded.readIssue("ISSUE-90"))?.title, "Native ledger");
   assert.equal((await reloaded.listWorkerResults("ISSUE-90"))[0]?.taskId, "worker-90");
+  const projection = JSON.parse(await readFile(join(root, ".flow", "ledger", "issues", "ISSUE-90.json"), "utf8"));
+  assert.equal(projection.issue.title, "Native ledger");
+  assert.equal(projection.workerRuns[0].taskId, "worker-90");
+  assert.equal(projection.workerResults[0].taskId, "worker-90");
 });
 
 test("Workflow ledger upserts typed work jobs and results", async () => {

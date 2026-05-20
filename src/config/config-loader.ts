@@ -36,9 +36,7 @@ export function findFlowConfigPath(options: LoadFlowConfigOptions = {}): string 
   }
   const projectRoot = resolve(options.projectRoot ?? process.cwd());
   const candidates = [
-    join(projectRoot, "flow.config.yaml"),
-    join(projectRoot, "flow.config.yml"),
-    join(projectRoot, "flow.config.json"),
+    join(projectRoot, ".flow", "config.yaml"),
   ];
   return candidates.find((candidate) => existsSync(candidate));
 }

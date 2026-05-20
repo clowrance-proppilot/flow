@@ -112,7 +112,7 @@ and restart the local stack automatically.
 `FLOW_OPEN_DASHBOARD=1` when you want startup to open the dashboard.
 
 Use `--session <id>` to persist CLI sessions under
-`.context/flow/flow-runtime/sessions/`.
+`.flow/runtime/sessions/`.
 
 ## Endpoints
 
@@ -139,8 +139,16 @@ serve stale snapshots.
 ## Flow Ledger
 
 Work Runtime writes to the native Flow JSONL workflow ledger by default:
-`.context/flow/workflow.jsonl`. Set `FLOW_WORKFLOW_LEDGER_PATH` to use a
+`.flow/ledger/workflow.jsonl`. Set `FLOW_WORKFLOW_LEDGER_PATH` to use a
 different local ledger file.
+
+Flow also maintains per-issue projection snapshots under
+`.flow/ledger/issues/<issueRef>.json` so issue-level reads do not need to replay
+the whole JSONL ledger. The JSONL file remains the authoritative audit log and
+can rebuild missing projections.
+
+Consumers should edit only `.flow/config.yaml`; Flow manages `.flow/runtime/`
+and `.flow/ledger/`.
 
 Set `FLOW_LEDGER_ADAPTER=beads` only when intentionally running the legacy
 Beads adapter.

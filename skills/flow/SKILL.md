@@ -21,4 +21,4 @@ explicitly approves recovery in the current thread.
 
 Codex and other local agents should prefer `flow` for
 workflow work. It emits JSON on stdout and keeps sessions in
-`.context/flow/flow-runtime/sessions/`.
+`.flow/runtime/sessions/`.

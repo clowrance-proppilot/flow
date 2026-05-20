@@ -54,7 +54,7 @@ const rawWorkRuntimeMethods = [
 ];
 const flowConfig = await loadFlowConfig({ projectRoot: repoRoot });
 const runtime = new FlowWorkRuntime({
-  store: new FlowStore({ root: join(repoRoot, ".context", "flow", "runtime") }),
+  store: new FlowStore({ root: join(repoRoot, ".flow", "runtime") }),
   ledger: createWorkflowLedger({ cwd: repoRoot }),
   github: new GhGitHubAdapter({ cwd: repoRoot, owner: configString(flowConfig?.collaboration, "owner") }),
   issueTracker: createIssueTracker(),
@@ -99,6 +99,7 @@ program
       rawWorkRuntimeMethods,
       stdout: manifest.stdout,
       stderr: manifest.stderr,
+      layout: manifest.layout,
       manifest,
     });
   });
@@ -505,6 +506,15 @@ function commandManifest() {
     manifestVersion: 1,
     stdout: "json",
     stderr: "diagnostics",
+    layout: {
+      config: ".flow/config.yaml",
+      managed: {
+        runtime: ".flow/runtime",
+        sessions: ".flow/runtime/sessions",
+        ledger: ".flow/ledger/workflow.jsonl",
+        issueProjections: ".flow/ledger/issues/<issueRef>.json",
+      },
+    },
     commands: program.commands.map((command) => ({
       name: command.name(),
       description: command.description(),

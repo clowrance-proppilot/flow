@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { appendFile, mkdir, readFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 
@@ -101,17 +101,28 @@ type JsonlWorkflowLedgerRecord =
   | { kind: "workJob"; value: WorkJob }
   | { kind: "workJobResult"; value: WorkJobResult };
 
+interface IssueWorkflowProjection {
+  issue?: WorkItem;
+  workerRuns: WorkerRunRecord[];
+  workerResults: WorkerTaskResult[];
+  workJobs: WorkJob[];
+  workJobResults: WorkJobResult[];
+  updatedAt: string;
+}
+
 export interface JsonlWorkflowLedgerOptions {
   path: string;
 }
 
 export class JsonlWorkflowLedger implements WorkflowLedger {
   private readonly path: string;
+  private readonly projections: IssueProjectionStore;
   private readonly memory = new MemoryWorkflowLedger();
   private loaded = false;
 
   constructor(options: JsonlWorkflowLedgerOptions) {
     this.path = options.path;
+    this.projections = new IssueProjectionStore(join(dirname(options.path), "issues"));
   }
 
   async listIssues(limit?: number): Promise<WorkItem[]> {
@@ -120,13 +131,31 @@ export class JsonlWorkflowLedger implements WorkflowLedger {
   }
 
   async readIssue(ref: string): Promise<WorkItem | undefined> {
+    const projected = await this.projections.read(ref);
+    if (projected?.issue) return projected.issue;
     await this.load();
-    return this.memory.readIssue(ref);
+    const issue = await this.memory.readIssue(ref);
+    if (issue) await this.writeProjection(ref);
+    return issue;
   }
 
   async readIssues(refs: string[]): Promise<Map<string, WorkItem>> {
+    const projected = await this.projections.readMany(refs);
+    const issues = new Map<string, WorkItem>();
+    const missing: string[] = [];
+    for (const ref of refs) {
+      const issue = projected.get(ref)?.issue;
+      if (issue) issues.set(ref, issue);
+      else missing.push(ref);
+    }
+    if (missing.length === 0) return issues;
     await this.load();
-    return this.memory.readIssues(refs);
+    const replayed = await this.memory.readIssues(missing);
+    for (const [ref, issue] of replayed) {
+      issues.set(ref, issue);
+      await this.writeProjection(ref);
+    }
+    return issues;
   }
 
   async ensureIssue(issue: WorkItem): Promise<WorkItem> {
@@ -137,23 +166,33 @@ export class JsonlWorkflowLedger implements WorkflowLedger {
     await this.load();
     const stored = await this.memory.writeIssue(issue);
     await this.append({ kind: "issue", value: stored });
+    await this.writeProjection(stored.ref);
     return stored;
   }
 
   async listWorkerRuns(issueRef: string): Promise<WorkerRunRecord[]> {
+    const projected = await this.projections.read(issueRef);
+    if (projected) return projected.workerRuns;
     await this.load();
-    return this.memory.listWorkerRuns(issueRef);
+    const runs = await this.memory.listWorkerRuns(issueRef);
+    if (runs.length || await this.memory.readIssue(issueRef)) await this.writeProjection(issueRef);
+    return runs;
   }
 
   async recordWorkerRun(run: WorkerRunRecord): Promise<void> {
     await this.load();
     await this.memory.recordWorkerRun(run);
     await this.append({ kind: "workerRun", value: workerRunRecordSchema.parse(run) });
+    await this.writeProjection(run.issueRef);
   }
 
   async listWorkerResults(issueRef: string): Promise<WorkerTaskResult[]> {
+    const projected = await this.projections.read(issueRef);
+    if (projected) return projected.workerResults;
     await this.load();
-    return this.memory.listWorkerResults(issueRef);
+    const results = await this.memory.listWorkerResults(issueRef);
+    if (results.length || await this.memory.readIssue(issueRef)) await this.writeProjection(issueRef);
+    return results;
   }
 
   async recordWorkerResult(result: WorkerTaskResult): Promise<void> {
@@ -161,11 +200,16 @@ export class JsonlWorkflowLedger implements WorkflowLedger {
     const parsed = workerTaskResultSchema.parse(result);
     await this.memory.recordWorkerResult(parsed);
     await this.append({ kind: "workerResult", value: parsed });
+    await this.writeProjection(parsed.issueRef);
   }
 
   async listWorkJobs(issueRef: string): Promise<WorkJob[]> {
+    const projected = await this.projections.read(issueRef);
+    if (projected) return projected.workJobs;
     await this.load();
-    return this.memory.listWorkJobs(issueRef);
+    const jobs = await this.memory.listWorkJobs(issueRef);
+    if (jobs.length || await this.memory.readIssue(issueRef)) await this.writeProjection(issueRef);
+    return jobs;
   }
 
   async recordWorkJob(job: WorkJob): Promise<void> {
@@ -173,11 +217,16 @@ export class JsonlWorkflowLedger implements WorkflowLedger {
     const parsed = workJobSchema.parse(job);
     await this.memory.recordWorkJob(parsed);
     await this.append({ kind: "workJob", value: parsed });
+    await this.writeProjection(parsed.issueRef);
   }
 
   async listWorkJobResults(issueRef: string): Promise<WorkJobResult[]> {
+    const projected = await this.projections.read(issueRef);
+    if (projected) return projected.workJobResults;
     await this.load();
-    return this.memory.listWorkJobResults(issueRef);
+    const results = await this.memory.listWorkJobResults(issueRef);
+    if (results.length || await this.memory.readIssue(issueRef)) await this.writeProjection(issueRef);
+    return results;
   }
 
   async recordWorkJobResult(result: WorkJobResult): Promise<void> {
@@ -185,6 +234,7 @@ export class JsonlWorkflowLedger implements WorkflowLedger {
     const parsed = workJobResultSchema.parse(result);
     await this.memory.recordWorkJobResult(parsed);
     await this.append({ kind: "workJobResult", value: parsed });
+    await this.writeProjection(parsed.issueRef);
   }
 
   private async load(): Promise<void> {
@@ -207,6 +257,49 @@ export class JsonlWorkflowLedger implements WorkflowLedger {
     await mkdir(dirname(this.path), { recursive: true });
     await appendFile(this.path, `${JSON.stringify(record)}\n`, "utf8");
   }
+
+  private async writeProjection(issueRef: string): Promise<void> {
+    await this.projections.write(issueRef, {
+      issue: await this.memory.readIssue(issueRef),
+      workerRuns: await this.memory.listWorkerRuns(issueRef),
+      workerResults: await this.memory.listWorkerResults(issueRef),
+      workJobs: await this.memory.listWorkJobs(issueRef),
+      workJobResults: await this.memory.listWorkJobResults(issueRef),
+      updatedAt: nowIso(),
+    });
+  }
+}
+
+class IssueProjectionStore {
+  constructor(private readonly root: string) {}
+
+  async read(issueRef: string): Promise<IssueWorkflowProjection | undefined> {
+    const path = this.pathForIssue(issueRef);
+    if (!existsSync(path)) return undefined;
+    const raw = await readFile(path, "utf8");
+    return parseIssueProjection(JSON.parse(raw));
+  }
+
+  async readMany(issueRefs: string[]): Promise<Map<string, IssueWorkflowProjection>> {
+    const projections = new Map<string, IssueWorkflowProjection>();
+    await Promise.all(issueRefs.map(async (ref) => {
+      const projection = await this.read(ref);
+      if (projection) projections.set(ref, projection);
+    }));
+    return projections;
+  }
+
+  async write(issueRef: string, projection: IssueWorkflowProjection): Promise<void> {
+    await mkdir(this.root, { recursive: true });
+    const path = this.pathForIssue(issueRef);
+    const tempPath = `${path}.${process.pid}.${Date.now()}.tmp`;
+    await writeFile(tempPath, `${JSON.stringify(projection, null, 2)}\n`, "utf8");
+    await rename(tempPath, path);
+  }
+
+  private pathForIssue(issueRef: string): string {
+    return join(this.root, `${safeIssueFileName(issueRef)}.json`);
+  }
 }
 
 export interface BeadsWorkflowLedgerOptions {
@@ -225,7 +318,7 @@ export function createWorkflowLedger(options: WorkflowLedgerFactoryOptions): Wor
   const adapter = options.adapter ?? env.FLOW_LEDGER_ADAPTER;
   if (adapter === "beads") return new BeadsWorkflowLedger({ cwd: options.cwd });
   return new JsonlWorkflowLedger({
-    path: options.path ?? env.FLOW_WORKFLOW_LEDGER_PATH ?? join(options.cwd, ".context", "flow", "workflow.jsonl"),
+    path: options.path ?? env.FLOW_WORKFLOW_LEDGER_PATH ?? join(options.cwd, ".flow", "ledger", "workflow.jsonl"),
   });
 }
 
@@ -741,6 +834,22 @@ function parseStringArrayMetadata(value: unknown): string[] | undefined {
 function formatTemplateMissingHeadings(value: unknown): string {
   if (Array.isArray(value)) return value.length ? JSON.stringify(value.map(String).filter(Boolean)) : "";
   return typeof value === "string" ? value : "";
+}
+
+function parseIssueProjection(value: unknown): IssueWorkflowProjection {
+  if (!isRecord(value)) throw new Error("Invalid Flow issue projection.");
+  return {
+    issue: value.issue === undefined ? undefined : workItemSchema.parse(value.issue),
+    workerRuns: workerRunRecordSchema.array().parse(value.workerRuns ?? []),
+    workerResults: workerTaskResultSchema.array().parse(value.workerResults ?? []),
+    workJobs: workJobSchema.array().parse(value.workJobs ?? []),
+    workJobResults: workJobResultSchema.array().parse(value.workJobResults ?? []),
+    updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : nowIso(),
+  };
+}
+
+function safeIssueFileName(issueRef: string): string {
+  return issueRef.replace(/[^a-zA-Z0-9._-]/g, "_") || "issue";
 }
 
 function workerResultToRun(result: WorkerTaskResult): WorkerRunRecord {

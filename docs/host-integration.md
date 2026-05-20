@@ -7,10 +7,10 @@ skills, and default adapters.
 The intended integration contract is:
 
 1. Add Flow as a dependency or keep a sibling checkout.
-2. Add `flow.config.yaml` at the host repo root.
+2. Add `.flow/config.yaml` at the host repo root.
 3. Run Flow from the host repo root, or set `FLOW_PROJECT_ROOT`.
 4. Keep host-specific repo topology, branch policy, PR URL patterns, issue
-   routing keywords, work types, and executors in `flow.config.yaml`.
+   routing keywords, work types, and executors in `.flow/config.yaml`.
 
 ## Package Surface
 
@@ -37,17 +37,17 @@ npx flow-dashboard
 
 ## Host-Owned Config
 
-The consuming architecture owns the real `flow.config.yaml`. Start from the
+The consuming architecture owns the real `.flow/config.yaml`. Start from the
 generic shape:
 
 ```text
-examples/flow.config.yaml
+examples/.flow/config.yaml
 ```
 
 Copy it to the host repo:
 
 ```text
-/path/to/host-repo/flow.config.yaml
+/path/to/host-repo/.flow/config.yaml
 ```
 
 Then update:
@@ -62,10 +62,12 @@ Then update:
 
 ## Boundaries
 
-Host repos should own configuration and local state only:
+Host repos should own configuration and let Flow manage local workflow state:
 
-- `flow.config.yaml`
-- `.context/flow/`
+- Humans edit `.flow/config.yaml`.
+- Flow writes `.flow/runtime/`.
+- Flow writes `.flow/ledger/workflow.jsonl`.
+- Flow writes `.flow/ledger/issues/`.
 - optional host scripts that call `flow`
 
 Flow should own reusable implementation:
@@ -77,5 +79,5 @@ Flow should own reusable implementation:
 - skills, prompts, hooks, and guard assets
 
 Avoid adding host-specific repo names or routing rules to Flow source code unless
-they are part of a deliberate built-in default. Prefer `flow.config.yaml` for
+they are part of a deliberate built-in default. Prefer `.flow/config.yaml` for
 new host repo behavior.
