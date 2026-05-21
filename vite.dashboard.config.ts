@@ -7,7 +7,7 @@ export default defineConfig({
   base: "/dashboard/",
   plugins: [react()],
   build: {
-    outDir: "../../.tmp/dashboard",
+    outDir: "../../dist/dashboard",
     emptyOutDir: true,
     sourcemap: false,
     rollupOptions: {

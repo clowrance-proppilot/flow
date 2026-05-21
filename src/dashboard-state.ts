@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { join } from "node:path";
+import { existsSync } from "node:fs";
+import { extname, join } from "node:path";
 import { promisify } from "node:util";
 import { flowRoot } from "./flow-runtime.js";
 
@@ -113,12 +114,21 @@ export async function callFlowCli(
   debugLog: (event: string, details: Record<string, unknown>) => void = () => undefined,
 ): Promise<unknown> {
   const bin = process.env.FLOW_BIN ?? join(flowRoot, "bin", "flow");
-  const { stdout, stderr } = await execFileAsync(bin, ["call", method, JSON.stringify(params)], {
+  const args = ["call", method, JSON.stringify(params)];
+  const command = shouldRunWithNode(bin) ? process.execPath : bin;
+  const commandArgs = shouldRunWithNode(bin) ? [bin, ...args] : args;
+  const { stdout, stderr } = await execFileAsync(command, commandArgs, {
     cwd: repoRoot,
     maxBuffer: 20 * 1024 * 1024,
   });
   if (stderr.trim()) debugLog("dashboard.flow_cli_stderr", { method, stderr: stderr.trim().slice(0, 1000) });
   return JSON.parse(stdout) as unknown;
+}
+
+function shouldRunWithNode(bin: string): boolean {
+  if (!existsSync(bin)) return false;
+  const extension = extname(bin).toLowerCase();
+  return extension === "" || extension === ".js" || extension === ".mjs" || extension === ".cjs";
 }
 
 function dashboardLiveRefreshTimeoutMs(): number {

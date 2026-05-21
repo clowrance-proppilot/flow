@@ -217,6 +217,7 @@ function shutdown(server: Server, signal: NodeJS.Signals): void {
 function resolveDashboardFilePath(): string {
   const here = dirname(fileURLToPath(import.meta.url));
   const candidates = [
+    join(flowRoot, "dist", "dashboard", "index.html"),
     join(here, "..", "..", "dashboard", "index.html"),
     join(flowRoot, ".tmp", "dashboard", "index.html"),
   ];

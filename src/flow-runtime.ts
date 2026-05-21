@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { config as loadDotenv } from "dotenv";
@@ -147,7 +147,7 @@ function sdkModulePath(): string {
 }
 
 async function loadPiSdk(modulePath: string): Promise<any> {
-  const resolved = modulePath.startsWith("/") ? pathToFileURL(modulePath).href : modulePath;
+  const resolved = isAbsolute(modulePath) ? pathToFileURL(modulePath).href : modulePath;
   return await import(resolved);
 }
 

@@ -18,8 +18,8 @@ The package exposes:
 
 - `flow` and `flow-dashboard` binaries.
 - `flow` module exports from `src/index.ts` after build.
-- Codex/Pi extension, prompt, skill, hook, and dashboard assets through the
-  package files list.
+- Optional agent extension, prompt, skill, hook, and dashboard assets through
+  the package files list.
 
 For a sibling checkout:
 
@@ -27,10 +27,10 @@ For a sibling checkout:
 FLOW_PROJECT_ROOT=/path/to/host-repo /path/to/flow/bin/flow queue
 ```
 
-For an npm dependency in a host repo:
+For an npm dependency in a host repo after package publication:
 
 ```bash
-npm install --save-dev ../flow
+npm install --save-dev @camden-lowrance/flow
 npx flow queue
 npx flow-dashboard
 ```
@@ -42,7 +42,7 @@ draft from local folder and Git metadata:
 
 ```bash
 cd /path/to/host-repo
-npx flow bootstrap
+/path/to/flow/bin/flow bootstrap
 ```
 
 Or start from the generic shape:

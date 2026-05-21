@@ -1,17 +1,28 @@
 {
-  "name": "flow",
+  "name": "@camden-lowrance/flow",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "description": "Flow durable coordination and workflow orchestration engine.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/camden-lowrance/flow.git"
+  },
+  "homepage": "https://github.com/camden-lowrance/flow#readme",
+  "bugs": {
+    "url": "https://github.com/camden-lowrance/flow/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "bin": {
-    "flow": "./bin/flow",
-    "flow-dashboard": "./bin/flow-dashboard"
+    "flow": "bin/flow",
+    "flow-dashboard": "bin/flow-dashboard"
   },
   "exports": {
     ".": {
-      "types": "./.tmp/bin/src/index.d.ts",
-      "default": "./.tmp/bin/src/index.js"
+      "types": "./dist/bin/src/index.d.ts",
+      "default": "./dist/bin/src/index.js"
     },
     "./package.json": "./package.json"
   },
@@ -23,6 +34,8 @@
     "extensions",
     "prompts",
     "skills",
+    "dist/bin/src",
+    "dist/dashboard",
     "src",
     "vite.dashboard.config.ts",
     "postcss.config.mjs",
@@ -35,8 +48,10 @@
     "build:flow": "tsc -p tsconfig.json",
     "build:dashboard": "vite build --config vite.dashboard.config.ts",
     "build": "npm run build:flow && npm run build:dashboard",
+    "prepack": "npm run build",
     "smoke:flow": "node scripts/smoke-flow.mjs",
     "smoke:dashboard": "node scripts/smoke-dashboard.mjs",
+    "readiness:public": "node scripts/public-readiness.mjs",
     "start": "node bin/flow",
     "start:all": "node scripts/start-all.mjs",
     "start:all:watch": "node --watch --watch-path=src scripts/start-all.mjs",
@@ -67,6 +82,7 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "lucide-react": "^1.16.0",
+    "pathe": "^2.0.3",
     "postcss": "^8.5.15",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
@@ -78,6 +94,11 @@
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/express": "^5.0.6",

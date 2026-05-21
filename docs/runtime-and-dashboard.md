@@ -5,9 +5,9 @@ agent-assisted work. It is not part of any product application runtime and is no
 required for manual development.
 
 Use it when an operator-facing agent needs durable workflow coordination across
-Jira, Git, GitHub, local worktrees, executor attempts, acceptance evidence, and PR
-handoff. Skip it for ordinary manual edits, component build/test loops, or
-explicit direct-tooling recovery.
+an issue tracker, Git, code review, local worktrees, executor attempts,
+acceptance evidence, and PR handoff. Skip it for ordinary manual edits,
+component build/test loops, or explicit direct-tooling recovery.
 
 ## Runtime Roles
 
@@ -15,10 +15,10 @@ The active local stack has one long-running role plus the CLI:
 
 - **Readiness checks** evaluates Work Runtime-reconciled state and returns blockers or
   readiness.
-- **Work Runtime** is the workflow authority. It reconciles Jira, Git/worktree,
-  GitHub, Executor output, and ledger state before deciding the next valid
-  action.
-- **CLI** is the operator surface used by Codex, Claude, Quad, and other agents.
+- **Work Runtime** is the workflow authority. It reconciles issue tracker,
+  Git/worktree, code review, executor output, and ledger state before deciding
+  the next valid action.
+- **CLI** is the operator surface used by local coding agents.
   It emits stable JSON and persists Work Runtime sessions.
 - **Dashboard** is the browser operator console. It presents CLI-reconciled Flow
   state and routes any dashboard actions back through `flow call`.
@@ -28,7 +28,7 @@ adopted by Work Runtime, or a bounded background agent launched for a
 narrow task. Executors are not long-running services.
 
 The live agent thread is the normal interactive work surface for complex sprint
-issues. One live thread can coordinate multiple Jira efforts, but each effort
+issues. One live thread can coordinate multiple issue-tracker efforts, but each effort
 keeps separate Flow state: issue, routed repos, worktrees, evidence, PR
 state, blockers, and closeout. Chat history is not the workflow ledger.
 
@@ -36,17 +36,18 @@ state, blockers, and closeout. Chat history is not the workflow ledger.
 
 Operator-facing agents talk to the CLI for workflow actions. The CLI is the
 protocol boundary that turns JSON command input into Work Runtime-owned workflow
-calls. This keeps Jira/GitHub/ledger/native Flow writes, readiness gates, evidence, PR
-handoff, approval closeout, and post-merge Jira verification in one authority path.
+calls. This keeps issue tracker, code review, ledger, native Flow writes,
+readiness gates, evidence, PR handoff, approval closeout, and post-merge
+verification in one authority path.
 
 ```mermaid
 flowchart LR
-  Live["Live agent thread: Codex / Quad / Claude"]
+  Live["Live agent thread"]
   CLI["CLI: JSON command surface"]
   Coord["Work Runtime: workflow authority"]
   Gate["Readiness checks: readiness"]
   Executor["Background Executor: optional"]
-  Systems["Jira / GitHub / ledger"]
+  Systems["Issue tracker / code review / ledger"]
   Tree["Prepared worktree"]
 
   Live --> CLI
@@ -63,7 +64,7 @@ flowchart LR
 ```
 
 Dashboard is a separate operator console over CLI-reconciled state. It does not
-own Jira, GitHub, ledger, branch, PR, work envelope, or executor decisions.
+own issue tracker, code review, ledger, branch, PR, work envelope, or executor decisions.
 
 ## Start Commands
 
@@ -174,15 +175,15 @@ or times out, it returns `degraded=true` with the error and an empty issue list.
 
 ## Authority Boundary
 
-Dashboard must not write Jira, GitHub, ledger, branch state, PR state, work
-envelopes, or executor orchestration directly. The Flow CLI is the only blessed
-workflow write/control surface; Work Runtime remains the in-process library
-behind it.
+Dashboard must not write issue tracker, code review, ledger, branch state, PR
+state, work envelopes, or executor orchestration directly. The Flow CLI is the
+only blessed workflow write/control surface; Work Runtime remains the
+in-process library behind it.
 
 If Dashboard and Flow disagree, use the Flow CLI to reconcile the
 issue, then refresh Dashboard. Do not treat Dashboard card text as more
-authoritative than CLI output, Readiness checks, Jira, GitHub, or the prepared
-worktree.
+authoritative than CLI output, Readiness checks, provider state, or the
+prepared worktree.
 
 ## Validation
 

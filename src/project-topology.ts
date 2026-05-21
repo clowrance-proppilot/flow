@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { join } from "pathe";
 import type { WorkItem } from "./contracts.js";
 
 export interface TopologyIssueHint {

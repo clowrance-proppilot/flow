@@ -187,7 +187,7 @@ test("Flow config loader reads YAML and builds topology", async () => {
   assert.ok(config);
   const topology = configToProjectTopology(config);
   assert.equal(topology.repoName("api"), "example-api");
-  assert.equal(topology.repoPath(root, "api"), join(root, "services/api"));
+  assert.equal(topology.repoPath(root, "api"), `${root.replace(/\\/g, "/")}/services/api`);
   assert.equal(topology.defaultBaseBranch("api"), "develop");
   assert.equal(topology.pullRequestUrl("example-api", 42), "https://github.com/example/example-api/pull/42");
   assert.deepEqual(topology.inferRepoKeysFromIssue({ title: "Fix backend endpoint", labels: [] }), ["api"]);
@@ -2544,7 +2544,10 @@ test("Work Runtime routes and prepares main work in the project root", async () 
 
   assert.deepEqual(routed.repoKeys, ["main"]);
   assert.equal(prepared.metadata["workflow.repos.main.base_branch"], "main");
-  assert.equal(prepared.metadata["workflow.repos.main.worktree_path"], `${projectRoot}/.worktrees/feature-issue-31-flow-root-work`);
+  assert.equal(
+    prepared.metadata["workflow.repos.main.worktree_path"],
+    `${projectRoot.replace(/\\/g, "/")}/.worktrees/feature-issue-31-flow-root-work`,
+  );
 });
 
 test("Work Runtime autoflow can approve, run Worker, and stop on Readiness blocker", async () => {

@@ -21,7 +21,7 @@ try {
   process.env.FLOW_MODEL = "";
   process.env.FLOW_PROJECT_ROOT = repoRoot;
   process.env.FLOW_FLOW_SMOKE_STATE_PATH = statePath;
-  const flowRuntimeEntry = join(flowRoot, ".tmp", "bin", "src", "flow-runtime.js");
+  const flowRuntimeEntry = join(flowRoot, "dist", "bin", "src", "flow-runtime.js");
   const { runFlowPrompt } = await import(`${pathToFileURL(flowRuntimeEntry).href}?t=${Date.now()}`);
   const result = await runFlowPrompt({ noSession: true, prompt: "Reply with exactly: OK" });
   if (result.text !== "OK") {

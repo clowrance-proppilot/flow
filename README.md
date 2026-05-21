@@ -14,8 +14,8 @@ runtime. See [Host Repo Integration](docs/host-integration.md).
 - **CLI** is the only blessed operator write/control surface and emits stable
   JSON.
 - **Work Runtime** is the in-process library behind the CLI. It validates work,
-  reconciles Jira/Git/GitHub/ledger state, runs readiness checks, and records
-  lifecycle state.
+  reconciles issue tracker, Git, code review, and ledger state, runs readiness
+  checks, and records lifecycle state.
 - **Executors** are execution modes: local live agent thread or hands-off
   background run.
 - **Ledger** stores durable work envelopes, events, executor progress, results,
@@ -38,7 +38,7 @@ metadata:
 
 ```bash
 cd /path/to/host-repo
-npx flow bootstrap
+/path/to/flow/bin/flow bootstrap
 ```
 
 Or use the checked-in example as a starting shape for the host repo's
@@ -54,10 +54,10 @@ With a sibling checkout:
 FLOW_PROJECT_ROOT=/path/to/host-repo /path/to/flow/bin/flow queue
 ```
 
-With Flow installed as a host repo dependency:
+With Flow installed as a host repo dependency after package publication:
 
 ```bash
-npm install --save-dev ../flow
+npm install --save-dev @camden-lowrance/flow
 npx flow queue
 npx flow-dashboard
 ```
@@ -105,7 +105,7 @@ executor, record the structured result, and stop asking for a duplicate Worker.
 
 ## State
 
-Durable state lives outside Pi chat history under:
+Durable state lives outside agent chat history under:
 
 ```text
 .flow/

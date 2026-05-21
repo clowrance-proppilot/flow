@@ -3,18 +3,25 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import ts from "typescript";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(scriptDir, "..");
 
-buildRuntime();
-buildDashboard();
-
-const entry = resolveEntry([
+const entryCandidates = [
+  join(rootDir, "dist", "bin", "src", "dashboard-server.js"),
+  join(rootDir, "dist", "bin", "dashboard-server.js"),
   join(rootDir, ".tmp", "bin", "src", "dashboard-server.js"),
   join(rootDir, ".tmp", "bin", "dashboard-server.js"),
-]);
+];
+const dashboardCandidates = [
+  join(rootDir, "dist", "dashboard", "index.html"),
+  join(rootDir, ".tmp", "dashboard", "index.html"),
+];
+
+if (!resolveEntry(entryCandidates)) await buildRuntime();
+if (!resolveEntry(dashboardCandidates)) buildDashboard();
+
+const entry = resolveEntry(entryCandidates);
 if (!entry) {
   console.error("Flow Dashboard entry not found.");
   process.exit(1);
@@ -22,7 +29,8 @@ if (!entry) {
 
 await import(`${pathToFileURL(entry).href}?t=${Date.now()}`);
 
-function buildRuntime() {
+async function buildRuntime() {
+  const ts = await import("typescript");
   const configPath = ts.findConfigFile(rootDir, ts.sys.fileExists, "tsconfig.json");
   if (!configPath) {
     console.error(`Flow Dashboard could not find tsconfig.json under ${rootDir}`);
@@ -31,13 +39,13 @@ function buildRuntime() {
 
   const config = ts.readConfigFile(configPath, ts.sys.readFile);
   if (config.error) {
-    reportDiagnostics([config.error]);
+    reportDiagnostics(ts, [config.error]);
     process.exit(1);
   }
 
   const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, rootDir, undefined, configPath);
   if (parsed.errors.length) {
-    reportDiagnostics(parsed.errors);
+    reportDiagnostics(ts, parsed.errors);
     process.exit(1);
   }
 
@@ -45,7 +53,7 @@ function buildRuntime() {
   const emit = program.emit();
   const diagnostics = ts.getPreEmitDiagnostics(program).concat(emit.diagnostics);
   if (diagnostics.length) {
-    reportDiagnostics(diagnostics);
+    reportDiagnostics(ts, diagnostics);
     process.exit(1);
   }
   if (emit.emitSkipped) {
@@ -71,7 +79,7 @@ function buildDashboard() {
   }
 }
 
-function reportDiagnostics(diagnostics) {
+function reportDiagnostics(ts, diagnostics) {
   const host = {
     getCanonicalFileName: (fileName) => fileName,
     getCurrentDirectory: () => rootDir,

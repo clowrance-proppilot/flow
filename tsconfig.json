@@ -6,7 +6,8 @@
     "strict": true,
     "target": "ES2022",
     "types": ["node"],
-    "outDir": ".tmp/bin",
+    "declaration": true,
+    "outDir": "dist/bin",
     "rootDir": "."
   },
   "include": ["src/**/*.ts", "test/**/*.ts"]

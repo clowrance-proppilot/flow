@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { join } from "pathe";
 import type { WorkItem } from "../contracts.js";
 import type { ProjectTopology, TopologyIssueHint } from "../project-topology.js";
 import type { FlowConfig } from "./config-schema.js";

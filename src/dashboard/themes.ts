@@ -13,7 +13,7 @@ export const defaultThemes: FlowTheme[] = [
   { id: "forest", name: "Forest", primary: "#64a844", primaryDark: "#35661e", primaryFg: "#0c1a05" },
   { id: "ocean", name: "Ocean", primary: "#0ea5e9", primaryDark: "#0369a1", primaryFg: "#ffffff" },
   { id: "ember", name: "Ember", primary: "#f97316", primaryDark: "#c2410c", primaryFg: "#ffffff" },
-  { id: "farmserver", name: "FARMserver", primary: "#6fb143", primaryDark: "#3f6f24", primaryFg: "#102108" },
+  { id: "pine", name: "Pine", primary: "#6fb143", primaryDark: "#3f6f24", primaryFg: "#102108" },
 ];
 
 const THEME_KEY = "flow.theme";

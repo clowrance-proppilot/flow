@@ -36,7 +36,7 @@ import {
 } from "./contracts.js";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { join } from "pathe";
 import { GitAdapter, type GitRepoStatus, type WorktreePlan } from "./adapters/git.js";
 import { type PullRequestMergeResult, type PullRequestStatus } from "./adapters/github.js";
 import type { JiraIssue, JiraSprintMoveResult } from "./adapters/jira.js";

@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
@@ -339,7 +339,7 @@ export function createDefaultWorkerSpawner(options: DefaultWorkerSpawnerOptions 
 }
 
 async function loadPiSdk(modulePath: string): Promise<PiSdkLike> {
-  const resolved = modulePath.startsWith("/") ? pathToFileURL(modulePath).href : modulePath;
+  const resolved = isAbsolute(modulePath) ? pathToFileURL(modulePath).href : modulePath;
   const sdk = await import(resolved);
   return sdk as PiSdkLike;
 }

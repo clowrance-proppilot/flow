@@ -10,8 +10,8 @@ const flowRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
 const program = new Command()
   .name("flow-autoflow")
-  .description("Run Flow autoflow against one Jira issue through the Flow CLI.")
-  .argument("<issue-ref>", "Jira issue key, for example ISSUE-123")
+  .description("Run Flow autoflow against one issue through the Flow CLI.")
+  .argument("<issue-ref>", "issue key or ref, for example ISSUE-123")
   .option(
     "--flow-bin <path>",
     "Flow CLI path",

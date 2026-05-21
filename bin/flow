@@ -3,7 +3,6 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import dotenv from "dotenv";
-import ts from "typescript";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(scriptDir, "..");
@@ -13,14 +12,18 @@ loadEnv(join(rootDir, ".env"));
 loadEnv(join(rootDir, ".env.local"));
 
 const entry = resolveEntry([
+  join(rootDir, "dist", "bin", "src", "flow.js"),
+  join(rootDir, "dist", "bin", "flow.js"),
   join(rootDir, ".tmp", "bin", "src", "flow.js"),
   join(rootDir, ".tmp", "bin", "flow.js"),
 ]);
 if (!entry || needsBuild(entry)) {
-  buildFlow();
+  await buildFlow();
 }
 
 const builtEntry = resolveEntry([
+  join(rootDir, "dist", "bin", "src", "flow.js"),
+  join(rootDir, "dist", "bin", "flow.js"),
   join(rootDir, ".tmp", "bin", "src", "flow.js"),
   join(rootDir, ".tmp", "bin", "flow.js"),
 ]);
@@ -36,7 +39,8 @@ function loadEnv(path) {
   dotenv.config({ path, override: false });
 }
 
-function buildFlow() {
+async function buildFlow() {
+  const ts = await import("typescript");
   const configPath = ts.findConfigFile(rootDir, ts.sys.fileExists, "tsconfig.json");
   if (!configPath) {
     console.error(`Flow could not find tsconfig.json under ${rootDir}`);
@@ -45,13 +49,13 @@ function buildFlow() {
 
   const config = ts.readConfigFile(configPath, ts.sys.readFile);
   if (config.error) {
-    reportDiagnostics([config.error]);
+    reportDiagnostics(ts, [config.error]);
     process.exit(1);
   }
 
   const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, rootDir, undefined, configPath);
   if (parsed.errors.length) {
-    reportDiagnostics(parsed.errors);
+    reportDiagnostics(ts, parsed.errors);
     process.exit(1);
   }
 
@@ -59,7 +63,7 @@ function buildFlow() {
   const emit = program.emit();
   const diagnostics = ts.getPreEmitDiagnostics(program).concat(emit.diagnostics);
   if (diagnostics.length) {
-    reportDiagnostics(diagnostics);
+    reportDiagnostics(ts, diagnostics);
     process.exit(1);
   }
   if (emit.emitSkipped) {
@@ -68,7 +72,7 @@ function buildFlow() {
   }
 }
 
-function reportDiagnostics(diagnostics) {
+function reportDiagnostics(ts, diagnostics) {
   const host = {
     getCanonicalFileName: (fileName) => fileName,
     getCurrentDirectory: () => rootDir,
@@ -86,6 +90,7 @@ function resolveEntry(candidates) {
 
 function needsBuild(entry) {
   if (process.env.FLOW_FORCE_BUILD === "1") return true;
+  if (entry.includes(`${join("dist", "bin")}`)) return false;
   const entryMtime = statSync(entry).mtimeMs;
   return latestSourceMtime(join(rootDir, "src")) > entryMtime;
 }
