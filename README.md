@@ -33,7 +33,15 @@ npm run start:all:watch
 
 ## Host Repo Integration
 
-Use the checked-in example as a starting shape for the host repo's
+Let Flow create the initial host repo config from the current folder and Git
+metadata:
+
+```bash
+cd /path/to/host-repo
+npx flow bootstrap
+```
+
+Or use the checked-in example as a starting shape for the host repo's
 `.flow/config.yaml`:
 
 ```text
@@ -75,6 +83,7 @@ Common commands:
 ```text
 flow commands
 flow manifest
+flow bootstrap
 flow queue
 flow create-issue --type Bug --summary "Fix provider parquet schema" --description "Follow-up from ISSUE-15461." --repo app_api
 flow select ISSUE-123 --session codex-issue-123

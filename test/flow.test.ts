@@ -22,6 +22,7 @@ import {
   PiWorkerSpawner,
   createDefaultWorkerSpawner,
   createWorkflowLedger,
+  bootstrapFlowConfig,
   configToProjectTopology,
   configToWorkTypeRegistry,
   flowConfigSchema,
@@ -197,6 +198,29 @@ test("Flow config loader reads YAML and builds topology", async () => {
     state: "queued",
     metadata: { jiraIssueType: "Bug" },
   }), "bug/abc-123-fix-backend-endpoint");
+});
+
+test("Flow config bootstrap creates .flow/config.yaml from folder metadata", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-bootstrap-"));
+  const result = await bootstrapFlowConfig({ projectRoot: root });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.created, true);
+  assert.equal(result.path, join(root, ".flow", "config.yaml"));
+  assert.equal(result.repoName, result.projectName);
+
+  const config = await loadFlowConfig({ projectRoot: root });
+  assert.ok(config);
+  assert.equal(config.project.name, result.projectName);
+  assert.equal(config.topology.repos.main.name, result.repoName);
+  assert.equal(config.topology.repos.main.baseBranch, "main");
+  assert.equal(config.sourceControl?.type, "git");
+  assert.equal(config.ledger?.type, "flow");
+
+  await assert.rejects(
+    () => bootstrapFlowConfig({ projectRoot: root }),
+    /Flow config already exists/,
+  );
 });
 
 test("Flow config builds default and custom work type registries", () => {

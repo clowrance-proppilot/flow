@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   AcliJiraAdapter,
   assessIssue,
+  bootstrapFlowConfig,
   createDefaultWorkerSpawner,
   createWorkflowLedger,
   configToProjectTopology,
@@ -108,6 +109,14 @@ program
   .command("manifest")
   .description("Emit the machine-readable CLI command contract derived from registered commands.")
   .action(() => writeJson(commandManifest()));
+
+program
+  .command("bootstrap")
+  .description("Create .flow/config.yaml for this project from local repo metadata.")
+  .option("--force", "overwrite an existing .flow/config.yaml")
+  .action(async (options: { force?: boolean }) => {
+    writeJson(await bootstrapFlowConfig({ projectRoot: repoRoot, force: Boolean(options.force) }));
+  });
 
 program
   .command("session")

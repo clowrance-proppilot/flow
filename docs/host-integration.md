@@ -7,7 +7,7 @@ skills, and default adapters.
 The intended integration contract is:
 
 1. Add Flow as a dependency or keep a sibling checkout.
-2. Add `.flow/config.yaml` at the host repo root.
+2. Run `flow bootstrap` at the host repo root to create `.flow/config.yaml`.
 3. Run Flow from the host repo root, or set `FLOW_PROJECT_ROOT`.
 4. Keep host-specific repo topology, branch policy, PR URL patterns, issue
    routing keywords, work types, and executors in `.flow/config.yaml`.
@@ -37,8 +37,15 @@ npx flow-dashboard
 
 ## Host-Owned Config
 
-The consuming architecture owns the real `.flow/config.yaml`. Start from the
-generic shape:
+The consuming architecture owns the real `.flow/config.yaml`. Create the first
+draft from local folder and Git metadata:
+
+```bash
+cd /path/to/host-repo
+npx flow bootstrap
+```
+
+Or start from the generic shape:
 
 ```text
 examples/.flow/config.yaml
