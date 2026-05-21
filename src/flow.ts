@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { Command, CommanderError } from "commander";
-import { join } from "node:path";
 
 import {
   AcliJiraAdapter,
@@ -14,6 +13,8 @@ import {
   FlowWorkRuntime,
   GhGitHubAdapter,
   IssueStateValue,
+  flowLayout,
+  flowRuntimePath,
   loadFlowConfig,
   terminalWorkerStatusValues,
   type CreateIssueOptions,
@@ -41,6 +42,7 @@ const rawWorkRuntimeMethods = [
   "createJiraIssue",
   "routeIssue",
   "prepareWorkspace",
+  "adoptWorkspace",
   "advanceIssue",
   "diagnoseIssue",
   "autoFlowIssue",
@@ -55,7 +57,7 @@ const rawWorkRuntimeMethods = [
 ];
 const flowConfig = await loadFlowConfig({ projectRoot: repoRoot });
 const runtime = new FlowWorkRuntime({
-  store: new FlowStore({ root: join(repoRoot, ".flow", "runtime") }),
+  store: new FlowStore({ root: flowRuntimePath(repoRoot) }),
   ledger: createWorkflowLedger({ cwd: repoRoot }),
   github: new GhGitHubAdapter({ cwd: repoRoot, owner: configString(flowConfig?.collaboration, "owner") }),
   issueTracker: createIssueTracker(),
@@ -176,6 +178,23 @@ program
       description: options.description,
       repoKeys: asStringArray(options.repo),
       select: options.select,
+    }));
+  });
+
+program
+  .command("adopt-workspace")
+  .description("Record an existing worktree as the prepared workspace for an issue.")
+  .argument("<issue-ref>", "issue key or ref")
+  .requiredOption("--path <path>", "existing worktree path")
+  .option("--repo <key>", "repo key")
+  .option("--base-branch <branch>", "base branch")
+  .option("-s, --session <id>", "session id", defaultSessionId)
+  .action(async (issueRef: string, options: { path: string; repo?: string; baseBranch?: string; session: string }) => {
+    await ensureSession(options.session);
+    writeJson(await runtime.adoptWorkspace(options.session, issueRef, {
+      repoKey: options.repo,
+      worktreePath: options.path,
+      baseBranch: options.baseBranch,
     }));
   });
 
@@ -416,6 +435,16 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
         String(params.issueRef),
         params.options ?? {},
       );
+    case "adoptWorkspace":
+      return runtime.adoptWorkspace(
+        String(params.sessionId ?? defaultSessionId),
+        String(params.issueRef),
+        {
+          repoKey: typeof params.repoKey === "string" ? params.repoKey : undefined,
+          worktreePath: String(params.worktreePath),
+          baseBranch: typeof params.baseBranch === "string" ? params.baseBranch : undefined,
+        },
+      );
     case "advanceIssue":
       return runtime.advanceIssue(String(params.sessionId ?? defaultSessionId), typeof params.approveConfirmationId === "string" ? params.approveConfirmationId : undefined);
     case "adoptPendingLocalThread":
@@ -515,15 +544,7 @@ function commandManifest() {
     manifestVersion: 1,
     stdout: "json",
     stderr: "diagnostics",
-    layout: {
-      config: ".flow/config.yaml",
-      managed: {
-        runtime: ".flow/runtime",
-        sessions: ".flow/runtime/sessions",
-        ledger: ".flow/ledger/workflow.jsonl",
-        issueProjections: ".flow/ledger/issues/<issueRef>.json",
-      },
-    },
+    layout: flowLayout,
     commands: program.commands.map((command) => ({
       name: command.name(),
       description: command.description(),

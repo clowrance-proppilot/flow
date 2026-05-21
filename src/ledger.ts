@@ -17,6 +17,7 @@ import {
   workerRunRecordSchema,
   workerTaskResultSchema,
 } from "./contracts.js";
+import { flowIssueProjectionFileName, flowWorkflowLedgerPath } from "./flow-layout.js";
 import type { WorkflowLedger, WorkflowLedgerMirror } from "./engine/ledger-contracts.js";
 export type { WorkflowLedger, WorkflowLedgerMirror } from "./engine/ledger-contracts.js";
 
@@ -298,7 +299,7 @@ class IssueProjectionStore {
   }
 
   private pathForIssue(issueRef: string): string {
-    return join(this.root, `${safeIssueFileName(issueRef)}.json`);
+    return join(this.root, `${flowIssueProjectionFileName(issueRef)}.json`);
   }
 }
 
@@ -318,7 +319,7 @@ export function createWorkflowLedger(options: WorkflowLedgerFactoryOptions): Wor
   const adapter = options.adapter ?? env.FLOW_LEDGER_ADAPTER;
   if (adapter === "beads") return new BeadsWorkflowLedger({ cwd: options.cwd });
   return new JsonlWorkflowLedger({
-    path: options.path ?? env.FLOW_WORKFLOW_LEDGER_PATH ?? join(options.cwd, ".flow", "ledger", "workflow.jsonl"),
+    path: options.path ?? env.FLOW_WORKFLOW_LEDGER_PATH ?? flowWorkflowLedgerPath(options.cwd),
   });
 }
 
@@ -846,10 +847,6 @@ function parseIssueProjection(value: unknown): IssueWorkflowProjection {
     workJobResults: workJobResultSchema.array().parse(value.workJobResults ?? []),
     updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : nowIso(),
   };
-}
-
-function safeIssueFileName(issueRef: string): string {
-  return issueRef.replace(/[^a-zA-Z0-9._-]/g, "_") || "issue";
 }
 
 function workerResultToRun(result: WorkerTaskResult): WorkerRunRecord {

@@ -32,6 +32,8 @@ export interface PullRequestStatus {
   autoReviewMustFixDetail?: string;
   autoReviewNeedsConfirmation?: boolean;
   autoReviewNeedsConfirmationDetail?: string;
+  reviewCommentCount?: number;
+  reviewCommentAuthors?: string[];
 }
 
 export interface GitHubAdapterOptions {
@@ -151,7 +153,7 @@ export class GhGitHubAdapter implements CodeCollaborationProvider {
         "--repo",
         this.repoSpecifier(repo),
         "--json",
-        "number,title,url,headRefName,state,mergedAt,mergeCommit,isDraft,mergeable,mergeStateStatus,reviewDecision,body,statusCheckRollup",
+        "number,title,url,headRefName,state,mergedAt,mergeCommit,isDraft,mergeable,mergeStateStatus,reviewDecision,body,statusCheckRollup,reviews",
         ],
         { cwd: this.cwd, maxBuffer: 20 * 1024 * 1024 },
       )
@@ -521,6 +523,7 @@ function parseSinglePullRequest(value: unknown, repo: string): PullRequestStatus
   const templateMissingHeadings = missingPullRequestTemplateHeadings(
     typeof record.body === "string" ? record.body : "",
   );
+  const reviewComments = reviewCommentSummary(record.reviews);
   return {
     repo,
     number,
@@ -538,7 +541,27 @@ function parseSinglePullRequest(value: unknown, repo: string): PullRequestStatus
     templateMissingHeadings: templateMissingHeadings.length ? templateMissingHeadings : undefined,
     checksPassing: checksPassing(record.statusCheckRollup),
     autoReviewStatus: autoReviewStatus(record.statusCheckRollup),
+    reviewCommentCount: reviewComments.count || undefined,
+    reviewCommentAuthors: reviewComments.authors.length ? reviewComments.authors : undefined,
   };
+}
+
+function reviewCommentSummary(value: unknown): { count: number; authors: string[] } {
+  if (!Array.isArray(value)) return { count: 0, authors: [] };
+  const authors = new Set<string>();
+  let count = 0;
+  for (const item of value) {
+    if (!isRecord(item)) continue;
+    if (String(item.state ?? "").toUpperCase() !== "COMMENTED") continue;
+    count += 1;
+    const author = isRecord(item.author) && typeof item.author.login === "string"
+      ? item.author.login
+      : typeof item.author === "string"
+        ? item.author
+        : undefined;
+    if (author) authors.add(author);
+  }
+  return { count, authors: [...authors] };
 }
 
 function mergeMethodFlag(method: "merge" | "squash" | "rebase"): "--merge" | "--squash" | "--rebase" {
@@ -682,6 +705,8 @@ export function normalizePullRequest(pr: PullRequestStatus): UnifiedCodeReview {
     autoReviewMustFixDetail: pr.autoReviewMustFixDetail,
     autoReviewNeedsConfirmation: pr.autoReviewNeedsConfirmation === true,
     autoReviewNeedsConfirmationDetail: pr.autoReviewNeedsConfirmationDetail,
+    reviewCommentCount: pr.reviewCommentCount,
+    reviewCommentAuthors: pr.reviewCommentAuthors,
     autoReviewNeedsConfirmationDisposition: undefined,
     autoReviewNeedsConfirmationPostedUrl: undefined,
     mergedAt: pr.mergedAt,

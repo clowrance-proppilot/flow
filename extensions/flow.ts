@@ -1,4 +1,3 @@
-import { join } from "node:path";
 import { Type } from "typebox";
 import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
@@ -8,6 +7,10 @@ import {
   WorkerStatusValue,
   createDefaultWorkerSpawner,
   createWorkflowLedger,
+  configToProjectTopology,
+  configToWorkTypeRegistry,
+  flowRuntimePath,
+  loadFlowConfig,
   terminalWorkerStatusValues,
   workerExecutorValues,
   workerStatusValues,
@@ -19,16 +22,22 @@ function flowRoot() {
   return process.env.FLOW_ROOT ?? process.cwd();
 }
 
-function workRuntime() {
+async function workRuntime() {
   const repoRoot = flowRoot();
-  const root = join(repoRoot, ".flow", "runtime");
+  const flowConfig = await loadFlowConfig({ projectRoot: repoRoot });
   // TODO(flow-contracts): Route tool response payloads through a dedicated
   // contract adapter layer so external shapes are decoupled from workRuntime internals.
   return new FlowWorkRuntime({
-    store: new FlowStore({ root }),
+    store: new FlowStore({ root: flowRuntimePath(repoRoot) }),
     ledger: createWorkflowLedger({ cwd: repoRoot }),
     github: new GhGitHubAdapter({ cwd: repoRoot }),
     jira: new AcliJiraAdapter({ cwd: repoRoot }),
+    ...(flowConfig
+      ? {
+        topology: configToProjectTopology(flowConfig),
+        workTypes: configToWorkTypeRegistry(flowConfig),
+      }
+      : {}),
     projectRoot: repoRoot,
   });
 }
@@ -61,7 +70,7 @@ export default function (pi: ExtensionAPI) {
       limit: Type.Optional(Type.Number()),
     }),
     async execute(_toolCallId, params) {
-      const issues = await workRuntime().inspectQueue(params.limit ?? 10);
+      const issues = await (await workRuntime()).inspectQueue(params.limit ?? 10);
       const text = issues.map((issue) => {
         const repos = issue.repoKeys.length ? issue.repoKeys.join(", ") : "unrouted";
         return `${issue.ref}: ${issue.title} (repo_keys: ${repos})`;
@@ -78,7 +87,7 @@ export default function (pi: ExtensionAPI) {
       limit: Type.Optional(Type.Number()),
     }),
     async execute(_toolCallId, params) {
-      const issues = await workRuntime().inspectBacklog(params.limit ?? 10);
+      const issues = await (await workRuntime()).inspectBacklog(params.limit ?? 10);
       const text = issues.map((issue) => {
         const repos = issue.repoKeys.length ? issue.repoKeys.join(", ") : "unrouted";
         return `${issue.ref}: ${issue.title} (repo_keys: ${repos})`;
@@ -93,7 +102,7 @@ export default function (pi: ExtensionAPI) {
     description: "Create an Flow Work Runtime session.",
     parameters: Type.Object({ id: Type.Optional(Type.String()) }),
     async execute(_toolCallId, params) {
-      const session = await workRuntime().createSession(params.id);
+      const session = await (await workRuntime()).createSession(params.id);
       return { content: [{ type: "text", text: `Created session ${session.id}` }], details: session };
     },
   });
@@ -109,7 +118,7 @@ export default function (pi: ExtensionAPI) {
       repoKeys: Type.Optional(Type.Array(Type.String())),
     }),
     async execute(_toolCallId, params) {
-      const session = await workRuntime().selectIssue(params.sessionId, {
+      const session = await (await workRuntime()).selectIssue(params.sessionId, {
         ref: params.ref,
         title: params.title,
         repoKeys: params.repoKeys ?? [],
@@ -135,7 +144,7 @@ export default function (pi: ExtensionAPI) {
       select: Type.Optional(Type.Boolean()),
     }),
     async execute(_toolCallId, params) {
-      const issue = await workRuntime().bootstrapJiraIssue(params.sessionId, params.issueRef, {
+      const issue = await (await workRuntime()).bootstrapJiraIssue(params.sessionId, params.issueRef, {
         repoKeys: params.repoKeys,
         branch: params.branch,
         branchKind: params.branchKind,
@@ -165,7 +174,7 @@ export default function (pi: ExtensionAPI) {
       select: Type.Optional(Type.Boolean()),
     }),
     async execute(_toolCallId, params) {
-      const issue = await workRuntime().createJiraIssue(params.sessionId, {
+      const issue = await (await workRuntime()).createJiraIssue(params.sessionId, {
         summary: params.summary,
         description: params.description,
         issueType: params.issueType,
@@ -192,7 +201,7 @@ export default function (pi: ExtensionAPI) {
       sprintId: Type.Optional(Type.Number()),
     }),
     async execute(_toolCallId, params) {
-      const moved = await workRuntime().moveIssuesToActiveSprint(params.sessionId, params.issueRefs, {
+      const moved = await (await workRuntime()).moveIssuesToActiveSprint(params.sessionId, params.issueRefs, {
         projectKey: params.projectKey,
         boardId: params.boardId,
         sprintId: params.sprintId,
@@ -217,7 +226,7 @@ export default function (pi: ExtensionAPI) {
       repoKeys: Type.Array(Type.String()),
     }),
     async execute(_toolCallId, params) {
-      const issue = await workRuntime().routeIssue(params.sessionId, params.issueRef, params.repoKeys);
+      const issue = await (await workRuntime()).routeIssue(params.sessionId, params.issueRef, params.repoKeys);
       return {
         content: [{ type: "text", text: `Routed ${params.issueRef} to ${issue.repoKeys.join(", ")}\n${formatIssueProjection(issue)}` }],
         details: { issue },
@@ -236,7 +245,7 @@ export default function (pi: ExtensionAPI) {
       baseBranch: Type.Optional(Type.String()),
     }),
     async execute(_toolCallId, params) {
-      const issue = await workRuntime().prepareWorkspace(params.sessionId, params.issueRef, {
+      const issue = await (await workRuntime()).prepareWorkspace(params.sessionId, params.issueRef, {
         repoKey: params.repoKey,
         baseBranch: params.baseBranch,
       });
@@ -258,6 +267,37 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    name: "flow_adopt_workspace",
+    label: "Flow Adopt Workspace",
+    description: "Record an existing worktree as the prepared workspace for an issue.",
+    parameters: Type.Object({
+      sessionId: Type.String(),
+      issueRef: Type.String(),
+      worktreePath: Type.String(),
+      repoKey: Type.Optional(Type.String()),
+      baseBranch: Type.Optional(Type.String()),
+    }),
+    async execute(_toolCallId, params) {
+      const issue = await (await workRuntime()).adoptWorkspace(params.sessionId, params.issueRef, {
+        repoKey: params.repoKey,
+        worktreePath: params.worktreePath,
+        baseBranch: params.baseBranch,
+      });
+      const selectedRepoKey = params.repoKey ?? issue.repoKeys[0] ?? "";
+      const branch = typeof issue.metadata[`workflow.repos.${selectedRepoKey}.branch`] === "string"
+        ? issue.metadata[`workflow.repos.${selectedRepoKey}.branch`]
+        : issue.metadata.branch;
+      return {
+        content: [{
+          type: "text",
+          text: `Adopted workspace for ${params.issueRef}; branch=${String(branch ?? "")}; work_dir=${params.worktreePath}\n${formatIssueProjection(issue)}`,
+        }],
+        details: { issue, branch, workDir: params.worktreePath, repoKey: selectedRepoKey },
+      };
+    },
+  });
+
+  pi.registerTool({
     name: "flow_advance_issue",
     label: "Flow Advance Issue",
     description: "Reconcile, consult Readiness, and advance the selected issue.",
@@ -266,7 +306,7 @@ export default function (pi: ExtensionAPI) {
       approveConfirmationId: Type.Optional(Type.String()),
     }),
     async execute(_toolCallId, params) {
-      const result = await workRuntime().advanceIssue(params.sessionId, params.approveConfirmationId);
+      const result = await (await workRuntime()).advanceIssue(params.sessionId, params.approveConfirmationId);
       const issueProjection = result.issue ? `\n${formatIssueProjection(result.issue)}` : "";
       return { content: [{ type: "text", text: `${result.message}${issueProjection}` }], details: result };
     },
@@ -278,7 +318,7 @@ export default function (pi: ExtensionAPI) {
     description: "Summarize current Flow Work Runtime session state.",
     parameters: Type.Object({ sessionId: Type.String() }),
     async execute(_toolCallId, params) {
-      const summary = await workRuntime().summarizeHandoff(params.sessionId);
+      const summary = await (await workRuntime()).summarizeHandoff(params.sessionId);
       return { content: [{ type: "text", text: summary }], details: { summary } };
     },
   });
@@ -300,7 +340,7 @@ export default function (pi: ExtensionAPI) {
       }))),
     }),
     async execute(_toolCallId, params) {
-      const issue = await workRuntime().recordEvidence(params.sessionId, {
+      const issue = await (await workRuntime()).recordEvidence(params.sessionId, {
         issueRef: params.issueRef,
         summary: params.summary,
         source: params.source,
@@ -319,7 +359,7 @@ export default function (pi: ExtensionAPI) {
       issueRef: Type.Optional(Type.String()),
     }),
     async execute(_toolCallId, params) {
-      const issue = await workRuntime().recordAcceptanceWriteback(params.sessionId, params.issueRef);
+      const issue = await (await workRuntime()).recordAcceptanceWriteback(params.sessionId, params.issueRef);
       return {
         content: [{ type: "text", text: `Recorded acceptance evidence in Jira for ${issue.ref}\n${formatIssueProjection(issue)}` }],
         details: { issue },
@@ -339,7 +379,7 @@ export default function (pi: ExtensionAPI) {
       jiraPollIntervalMs: Type.Optional(Type.Number()),
     }),
     async execute(_toolCallId, params) {
-      const result = await workRuntime().closeoutAfterApproval(params.sessionId, {
+      const result = await (await workRuntime()).closeoutAfterApproval(params.sessionId, {
         issueRef: params.issueRef,
         mergeMethod: params.mergeMethod,
         jiraPollAttempts: params.jiraPollAttempts,
@@ -368,7 +408,7 @@ export default function (pi: ExtensionAPI) {
       githubCommentUrl: Type.Optional(Type.String()),
     }),
     async execute(_toolCallId, params) {
-      const issue = await workRuntime().recordReviewConfirmation(params.sessionId, params);
+      const issue = await (await workRuntime()).recordReviewConfirmation(params.sessionId, params);
       return {
         content: [{ type: "text", text: `Recorded review confirmation for ${params.issueRef}\n${formatIssueProjection(issue)}` }],
         details: { issue },
@@ -387,7 +427,7 @@ export default function (pi: ExtensionAPI) {
       summary: Type.String(),
     }),
     async execute(_toolCallId, params) {
-      const issue = await workRuntime().recordDocumentation(params.sessionId, {
+      const issue = await (await workRuntime()).recordDocumentation(params.sessionId, {
         issueRef: params.issueRef,
         disposition: params.disposition,
         summary: params.summary,
@@ -412,7 +452,7 @@ export default function (pi: ExtensionAPI) {
       supportUrl: Type.Optional(Type.String()),
     }),
     async execute(_toolCallId, params) {
-      const issue = await workRuntime().recordProviderEscalation(params.sessionId, params);
+      const issue = await (await workRuntime()).recordProviderEscalation(params.sessionId, params);
       return {
         content: [{ type: "text", text: `Recorded provider escalation for ${params.issueRef}\n${formatIssueProjection(issue)}` }],
         details: { issue },
@@ -434,7 +474,7 @@ export default function (pi: ExtensionAPI) {
       checksPassing: Type.Optional(Type.Boolean()),
     }),
     async execute(_toolCallId, params) {
-      const issue = await workRuntime().recordPullRequest(params.sessionId, params);
+      const issue = await (await workRuntime()).recordPullRequest(params.sessionId, params);
       return { content: [{ type: "text", text: `Recorded PR for ${params.issueRef}\n${formatIssueProjection(issue)}` }], details: { issue } };
     },
   });
@@ -448,7 +488,7 @@ export default function (pi: ExtensionAPI) {
       issueRef: Type.Optional(Type.String()),
     }),
     async execute(_toolCallId, params) {
-      const runs = await workRuntime().observeExecutors(params.sessionId, params.issueRef);
+      const runs = await (await workRuntime()).observeExecutors(params.sessionId, params.issueRef);
       const text = runs.length
         ? runs.map((run) => `${run.taskId}: ${run.status}${run.summary ? ` - ${run.summary}` : ""}`).join("\n")
         : "No executor runs recorded.";
@@ -465,7 +505,7 @@ export default function (pi: ExtensionAPI) {
       issueRef: Type.Optional(Type.String()),
     }),
     async execute(_toolCallId, params) {
-      const jobs = await workRuntime().listWorkJobs(params.sessionId, params.issueRef);
+      const jobs = await (await workRuntime()).listWorkJobs(params.sessionId, params.issueRef);
       const text = jobs.length
         ? jobs.map((job) => `${job.id}: ${job.workType} ${job.status} in ${job.repoKey}`).join("\n")
         : "No typed work jobs recorded.";
@@ -482,7 +522,7 @@ export default function (pi: ExtensionAPI) {
       envelope: Type.String(),
     }),
     async execute(_toolCallId, params) {
-      const job = await workRuntime().submitWorkEnvelope(params.sessionId, params.envelope);
+      const job = await (await workRuntime()).submitWorkEnvelope(params.sessionId, params.envelope);
       return {
         content: [{ type: "text", text: `Submitted ${job.workType} job ${job.id} for ${job.issueRef}.` }],
         details: { job },
@@ -545,7 +585,7 @@ export default function (pi: ExtensionAPI) {
       summary: Type.Optional(Type.String()),
     }),
     async execute(_toolCallId, params) {
-      const request = await workRuntime().adoptLocalThread(
+      const request = await (await workRuntime()).adoptLocalThread(
         params.sessionId,
         {
           id: params.id,
@@ -579,7 +619,7 @@ export default function (pi: ExtensionAPI) {
       summary: Type.Optional(Type.String()),
     }),
     async execute(_toolCallId, params) {
-      const request = await workRuntime().adoptPendingLocalThread(
+      const request = await (await workRuntime()).adoptPendingLocalThread(
         params.sessionId,
         { adopter: params.adopter, summary: params.summary },
       );
@@ -615,7 +655,7 @@ export default function (pi: ExtensionAPI) {
       completedAt: Type.Optional(Type.String()),
     }),
     async execute(_toolCallId, params) {
-      const session = await workRuntime().recordExecutorResult(params.sessionId, {
+      const session = await (await workRuntime()).recordExecutorResult(params.sessionId, {
         taskId: params.taskId,
         issueRef: params.issueRef,
         repoKey: params.repoKey,
@@ -653,7 +693,7 @@ export default function (pi: ExtensionAPI) {
       createdAt: Type.String(),
     }),
     async execute(_toolCallId, params) {
-      const result = await workRuntime().runBackgroundExecutor(
+      const result = await (await workRuntime()).runBackgroundExecutor(
         params.sessionId,
         {
           id: params.id,
@@ -682,7 +722,7 @@ export default function (pi: ExtensionAPI) {
       maxSteps: Type.Optional(Type.Number()),
     }),
     async execute(_toolCallId, params) {
-      const result = await workRuntime().autoFlowIssue(
+      const result = await (await workRuntime()).autoFlowIssue(
         params.sessionId,
         createDefaultWorkerSpawner({ flowRoot: flowRoot() }),
         {
@@ -708,7 +748,7 @@ export default function (pi: ExtensionAPI) {
       issueRefs: Type.Optional(Type.Array(Type.String())),
     }),
     async execute(_toolCallId, params) {
-      const issues = await workRuntime().resetAutoflowState(params.sessionId, params.issueRefs);
+      const issues = await (await workRuntime()).resetAutoflowState(params.sessionId, params.issueRefs);
       return {
         content: [{ type: "text", text: `Reset Autoflow state for ${issues.map((issue) => issue.ref).join(", ")}` }],
         details: { issues },

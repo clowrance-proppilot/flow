@@ -366,6 +366,8 @@ export interface PullRequestMetadataSnapshot {
   autoReviewMustFixDetail?: string;
   autoReviewNeedsConfirmation?: boolean;
   autoReviewNeedsConfirmationDetail?: string;
+  reviewCommentCount?: number;
+  reviewCommentAuthors?: string[];
   autoReviewNeedsConfirmationDisposition?: string;
   autoReviewNeedsConfirmationPostedUrl?: string;
   recordedAt?: string;
@@ -405,6 +407,8 @@ export function collectPullRequestSnapshots(
       autoReviewMustFixDetail: existingString(metadata[`${prefix}_auto_review_must_fix_detail`]),
       autoReviewNeedsConfirmation: metadataBoolean(metadata[`${prefix}_auto_review_needs_confirmation`]),
       autoReviewNeedsConfirmationDetail: existingString(metadata[`${prefix}_auto_review_needs_confirmation_detail`]),
+      reviewCommentCount: metadataNumber(metadata[`${prefix}_review_comment_count`]),
+      reviewCommentAuthors: metadataStringArray(metadata[`${prefix}_review_comment_authors`]),
       autoReviewNeedsConfirmationDisposition: existingString(metadata[`${prefix}_auto_review_needs_confirmation_disposition`]),
       autoReviewNeedsConfirmationPostedUrl: existingString(metadata[`${prefix}_auto_review_needs_confirmation_posted_url`]),
       recordedAt: existingString(metadata[`${prefix}_recorded_at`]),
@@ -434,6 +438,8 @@ export function collectPullRequestSnapshots(
       autoReviewMustFixDetail: existingString(metadata.prAutoReviewMustFixDetail),
       autoReviewNeedsConfirmation: metadataBoolean(metadata.prAutoReviewNeedsConfirmation),
       autoReviewNeedsConfirmationDetail: existingString(metadata.prAutoReviewNeedsConfirmationDetail),
+      reviewCommentCount: metadataNumber(metadata.prReviewCommentCount),
+      reviewCommentAuthors: metadataStringArray(metadata.prReviewCommentAuthors),
       autoReviewNeedsConfirmationDisposition: existingString(metadata.prAutoReviewNeedsConfirmationDisposition),
       autoReviewNeedsConfirmationPostedUrl: existingString(metadata.prAutoReviewNeedsConfirmationPostedUrl),
       recordedAt: existingString(metadata.prRecordedAt),
@@ -520,6 +526,8 @@ export function pullRequestMetadata(repoKeyOrName: string, pr: PullRequestStatus
     autoReviewMustFixDetail: pr.autoReviewMustFixDetail,
     autoReviewNeedsConfirmation: pr.autoReviewNeedsConfirmation,
     autoReviewNeedsConfirmationDetail: pr.autoReviewNeedsConfirmationDetail,
+    reviewCommentCount: pr.reviewCommentCount,
+    reviewCommentAuthors: pr.reviewCommentAuthors,
     recordedAt: nowIso(),
   });
   const prefix = `workflow.repos.${normalizedRepoKey}.pr`;
@@ -543,6 +551,8 @@ export function pullRequestMetadata(repoKeyOrName: string, pr: PullRequestStatus
     [`${prefix}_auto_review_must_fix_detail`]: pr.autoReviewMustFixDetail,
     [`${prefix}_auto_review_needs_confirmation`]: pr.autoReviewNeedsConfirmation,
     [`${prefix}_auto_review_needs_confirmation_detail`]: pr.autoReviewNeedsConfirmationDetail,
+    [`${prefix}_review_comment_count`]: pr.reviewCommentCount,
+    [`${prefix}_review_comment_authors`]: pr.reviewCommentAuthors,
     [`${prefix}_recorded_at`]: global.prRecordedAt,
   };
 }
@@ -568,6 +578,8 @@ export function globalPullRequestMetadata(pr: PullRequestMetadataSnapshot): Reco
     prAutoReviewMustFixDetail: pr.autoReviewMustFixDetail,
     prAutoReviewNeedsConfirmation: pr.autoReviewNeedsConfirmation,
     prAutoReviewNeedsConfirmationDetail: pr.autoReviewNeedsConfirmationDetail,
+    prReviewCommentCount: pr.reviewCommentCount,
+    prReviewCommentAuthors: pr.reviewCommentAuthors,
     prAutoReviewNeedsConfirmationDisposition: pr.autoReviewNeedsConfirmationDisposition,
     prAutoReviewNeedsConfirmationPostedUrl: pr.autoReviewNeedsConfirmationPostedUrl,
     prRecordedAt: pr.recordedAt ?? nowIso(),
@@ -600,6 +612,8 @@ export function pullRequestStatusSnapshot(
     autoReviewMustFixDetail: pr.autoReviewMustFixDetail,
     autoReviewNeedsConfirmation: pr.autoReviewNeedsConfirmation,
     autoReviewNeedsConfirmationDetail: pr.autoReviewNeedsConfirmationDetail,
+    reviewCommentCount: pr.reviewCommentCount,
+    reviewCommentAuthors: pr.reviewCommentAuthors,
     recordedAt: nowIso(),
   };
 }

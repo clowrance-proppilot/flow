@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -25,6 +25,8 @@ import {
   bootstrapFlowConfig,
   configToProjectTopology,
   configToWorkTypeRegistry,
+  flowConfigPath,
+  flowIssueProjectionPath,
   flowConfigSchema,
   loadFlowConfig,
   LocalThreadExecutor,
@@ -157,8 +159,8 @@ test("Flow config schema validates topology and adapter declarations", () => {
 
 test("Flow config loader reads YAML and builds topology", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-config-"));
-  await mkdir(join(root, ".flow"), { recursive: true });
-  await writeFile(join(root, ".flow", "config.yaml"), [
+  await mkdir(dirname(flowConfigPath(root)), { recursive: true });
+  await writeFile(flowConfigPath(root), [
     'version: "1"',
     "project:",
     '  name: "Example"',
@@ -206,7 +208,7 @@ test("Flow config bootstrap creates .flow/config.yaml from folder metadata", asy
 
   assert.equal(result.ok, true);
   assert.equal(result.created, true);
-  assert.equal(result.path, join(root, ".flow", "config.yaml"));
+  assert.equal(result.path, flowConfigPath(root));
   assert.equal(result.repoName, result.projectName);
 
   const config = await loadFlowConfig({ projectRoot: root });
@@ -433,6 +435,9 @@ test("Readiness treats retryable Worker timeout after success as warning", () =>
       checksPassing: true,
       autoReviewStatus: "passed",
       humanReviewRequired: true,
+      reviewDecision: "REVIEW_REQUIRED",
+      reviewCommentCount: 2,
+      reviewCommentAuthors: ["khwiri", "developer-hla"],
     },
     evidenceRecorded: true,
     documentationRecorded: true,
@@ -442,6 +447,10 @@ test("Readiness treats retryable Worker timeout after success as warning", () =>
   assert.equal(assessment.reviewReady, true);
   assert.equal(assessment.findings.some((finding) => finding.severity === "blocker"), false);
   assert.equal(assessment.findings.some((finding) => finding.summary.includes("timed out")), true);
+  const approvalFinding = assessment.findings.find((finding) => finding.summary === "Approval review is required.");
+  assert.match(approvalFinding?.detail ?? "", /Comment-only reviews do not satisfy approval-required review policy/);
+  const commentFinding = assessment.findings.find((finding) => finding.summary === "Review comments are present.");
+  assert.match(commentFinding?.detail ?? "", /khwiri, developer-hla/);
 });
 
 test("Readiness ignores obsolete undraft executor blockers once PR is ready", () => {
@@ -876,7 +885,7 @@ test("Readiness ignores empty auto-review must-fix text from stale metadata", ()
   assert.equal(assessment.findings.some((finding) => finding.summary === "Auto review has must-fix feedback."), false);
 });
 
-test("Readiness requires auto-review confirmations to be posted to GitHub", () => {
+test("Readiness requires auto-review confirmations to be posted to the code review", () => {
   const base = {
     issue: {
       ref: "ISSUE-23",
@@ -916,7 +925,7 @@ test("Readiness requires auto-review confirmations to be posted to GitHub", () =
   });
 
   assert.equal(missingPost.reviewReady, false);
-  assert.equal(missingPost.findings[0].summary, "Auto review confirmation has not been posted to GitHub.");
+  assert.equal(missingPost.findings[0].summary, "Auto review confirmation has not been posted to the code review.");
 
   const posted = assessIssue({
     ...base,
@@ -1118,6 +1127,87 @@ test("Work Runtime prepares workspace before Worker confirmation", async () => {
   assert.equal(result.session.pendingConfirmation?.payload.repoKey, "app_api");
   assert.equal(approved.workerRequest?.workspacePath, "/repo/app-api/.worktrees/feature-issue-21-prepare-workspace");
   assert.match(approved.workerRequest?.prompt ?? "", /Prepared workspace: \/repo\/app-api\/.worktrees/);
+});
+
+test("Work Runtime records actual existing worktree path returned by source control", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    projectRoot: "/repo",
+    git: {
+      async inspect() {
+        throw new Error("unused");
+      },
+      async prepareWorktree(plan) {
+        return {
+          branch: plan.branch,
+          headSha: "existing-sha",
+          dirty: false,
+          entries: [],
+          worktreePath: "/repo/app-api/.worktrees/existing-branch-worktree",
+        };
+      },
+    },
+  });
+  const session = await workRuntime.createSession("session-existing-worktree");
+  await workRuntime.selectIssue(session.id, {
+    ref: "ISSUE-210",
+    title: "Existing workspace",
+    repoKeys: ["app_api"],
+    state: "queued",
+    metadata: { branchKind: "feature" },
+  });
+
+  const prepared = await workRuntime.prepareWorkspace(session.id, "ISSUE-210", { repoKey: "app_api" });
+
+  assert.equal(
+    prepared.metadata["workflow.repos.app_api.worktree_path"],
+    "/repo/app-api/.worktrees/existing-branch-worktree",
+  );
+  assert.equal(prepared.metadata.work_dir, "/repo/app-api/.worktrees/existing-branch-worktree");
+});
+
+test("Work Runtime adopts an existing worktree into issue metadata", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    projectRoot: "/repo",
+    git: {
+      async inspect(repoPath) {
+        assert.equal(repoPath, "/repo/app-api/.worktrees/feature-issue-3026");
+        return {
+          branch: "feature/issue-3026",
+          headSha: "adopted-sha",
+          dirty: true,
+          entries: [" M src/app.ts"],
+        };
+      },
+    },
+  });
+  const session = await workRuntime.createSession("session-adopt-workspace");
+  await workRuntime.selectIssue(session.id, {
+    ref: "ISSUE-3026",
+    title: "Adopt workspace",
+    repoKeys: ["app_api"],
+    state: "queued",
+    metadata: { branchKind: "feature" },
+  });
+
+  const adopted = await workRuntime.adoptWorkspace(session.id, "ISSUE-3026", {
+    repoKey: "app_api",
+    worktreePath: "/repo/app-api/.worktrees/feature-issue-3026",
+  });
+  const advanced = await workRuntime.advanceIssue(session.id);
+
+  assert.equal(adopted.metadata["workflow.repos.app_api.worktree_path"], "/repo/app-api/.worktrees/feature-issue-3026");
+  assert.equal(adopted.metadata["workflow.repos.app_api.branch"], "feature/issue-3026");
+  assert.equal(adopted.metadata["workflow.repos.app_api.head_sha"], "adopted-sha");
+  assert.equal(adopted.metadata["workflow.repos.app_api.dirty"], true);
+  assert.notEqual(advanced.message, "Prepare workspace for ISSUE-3026 in app_api.");
 });
 
 test("Work Runtime inspects queue from workflow ledger", async () => {
@@ -1946,7 +2036,7 @@ test("Flow workflow ledger persists records to local JSONL by default", async ()
   const reloaded = createWorkflowLedger({ cwd: root, env: {} as NodeJS.ProcessEnv });
   assert.equal((await reloaded.readIssue("ISSUE-90"))?.title, "Native ledger");
   assert.equal((await reloaded.listWorkerResults("ISSUE-90"))[0]?.taskId, "worker-90");
-  const projection = JSON.parse(await readFile(join(root, ".flow", "ledger", "issues", "ISSUE-90.json"), "utf8"));
+  const projection = JSON.parse(await readFile(flowIssueProjectionPath(root, "ISSUE-90"), "utf8"));
   assert.equal(projection.issue.title, "Native ledger");
   assert.equal(projection.workerRuns[0].taskId, "worker-90");
   assert.equal(projection.workerResults[0].taskId, "worker-90");
@@ -3359,11 +3449,79 @@ test("Work Runtime doctor reports visibility, blockers, and next action", async 
   assert.equal(result.visibility.pullRequest, true);
   assert.equal(result.visibility.preparedWorktree, false);
   assert.equal(result.review?.prUrl, "https://github.com/ExampleOrg/public-api/pull/3026");
-  assert.equal(result.nextAction.type, "prepare_workspace");
+  assert.equal(result.nextAction.type, "adopt_workspace");
+  assert.match(result.nextAction.command ?? "", /flow adopt-workspace ISSUE-15397 --repo public_api/);
   assert.equal(
     result.findings.some((finding) => finding.summary === "Auto review has must-fix feedback."),
     true,
   );
+});
+
+test("Work Runtime doctor prioritizes present review comments before approval wait", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  const session = await workRuntime.createSession("session-doctor-review-comments");
+  await workRuntime.selectIssue(session.id, {
+    ref: "ISSUE-3026",
+    title: "Review comments",
+    repoKeys: ["public_api"],
+    state: "awaiting_review",
+    metadata: {
+      "workflow.repos.public_api.worktree_path": "/repo/public-api/.worktrees/feature-issue-3026",
+      prUrl: "https://github.com/ExampleOrg/public-api/pull/3026",
+      prReviewDecision: "REVIEW_REQUIRED",
+      humanReviewRequired: true,
+      prReviewCommentCount: 3,
+      prReviewCommentAuthors: ["khwiri", "developer-hla"],
+      prChecksPassing: true,
+      prIsDraft: false,
+      prMergeable: "MERGEABLE",
+      prMergeStateStatus: "BLOCKED",
+    },
+  });
+
+  const result = await workRuntime.diagnoseIssue(session.id);
+
+  assert.equal(result.nextAction.type, "address_review_comments");
+  assert.equal(
+    result.findings.some((finding) => finding.summary === "Review comments are present."),
+    true,
+  );
+  assert.equal(
+    result.findings.some((finding) => finding.summary === "Approval review is required."),
+    true,
+  );
+});
+
+test("Work Runtime doctor reports no next action for merged Done issue", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  const session = await workRuntime.createSession("session-doctor-done");
+  await workRuntime.selectIssue(session.id, {
+    ref: "ISSUE-15397",
+    title: "Merged and done",
+    repoKeys: ["public_api"],
+    state: "awaiting_review",
+    metadata: {
+      "workflow.repos.public_api.worktree_path": "/repo/public-api/.worktrees/feature-issue-15397",
+      prUrl: "https://github.com/ExampleOrg/public-api/pull/3026",
+      prState: "MERGED",
+      prMergedAt: "2026-05-21T13:00:00Z",
+      prChecksPassing: true,
+      prIsDraft: false,
+      jiraStatus: "Done",
+      jiraStatusCategory: "Done",
+      jiraResolution: "Done",
+    },
+  });
+
+  const result = await workRuntime.diagnoseIssue(session.id);
+
+  assert.equal(result.status, "ok");
+  assert.equal(result.nextAction.type, "done");
+  assert.match(result.nextAction.summary, /complete/);
 });
 
 test("Work Runtime reconciliation adopts open issue PR when branch has changed", async () => {
@@ -4184,6 +4342,11 @@ None.`,
           { status: "COMPLETED", conclusion: "SUCCESS" },
           { status: "COMPLETED", conclusion: "NEUTRAL" },
         ],
+        reviews: [
+          { state: "COMMENTED", author: { login: "khwiri" } },
+          { state: "COMMENTED", author: { login: "developer-hla" } },
+          { state: "APPROVED", author: { login: "approver" } },
+        ],
       },
     ],
     "app-api",
@@ -4197,6 +4360,8 @@ None.`,
   assert.equal(prs[0].mergeStateStatus, "CLEAN");
   assert.equal(prs[0].reviewDecision, "REVIEW_REQUIRED");
   assert.equal(prs[0].templateMissingHeadings, undefined);
+  assert.equal(prs[0].reviewCommentCount, 2);
+  assert.deepEqual(prs[0].reviewCommentAuthors, ["khwiri", "developer-hla"]);
 });
 
 test("GitHub issue tracker parses issue list JSON", () => {

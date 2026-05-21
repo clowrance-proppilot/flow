@@ -33,6 +33,8 @@ export interface UnifiedCodeReview {
   autoReviewMustFixDetail?: string;
   autoReviewNeedsConfirmation: boolean;
   autoReviewNeedsConfirmationDetail?: string;
+  reviewCommentCount?: number;
+  reviewCommentAuthors?: string[];
   autoReviewNeedsConfirmationDisposition?: string;
   autoReviewNeedsConfirmationPostedUrl?: string;
   mergedAt?: string;
@@ -46,6 +48,7 @@ export interface UnifiedWorkspaceStatus {
   branch: string;
   entries: string[];                   // Raw status lines to preserve zero parsing risk
   structuredEntries?: { path: string; status: string }[];
+  worktreePath?: string;
 }
 
 export interface IssueTrackerCapabilities {

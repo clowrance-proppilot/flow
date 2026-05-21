@@ -116,6 +116,7 @@ const flowToolNames = [
   "flow_move_issues_to_active_sprint",
   "flow_route_issue",
   "flow_prepare_workspace",
+  "flow_adopt_workspace",
   "flow_advance_issue",
   "flow_handoff_summary",
   "flow_record_evidence",

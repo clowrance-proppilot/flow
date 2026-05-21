@@ -808,6 +808,61 @@ export class FlowWorkRuntime {
       existingString(issue.metadata[`workflow.repos.${repoKey}.base_branch`]) ??
       this.topology.defaultBaseBranch(repoKey);
     const status = await this.sourceControl.prepareWorktree({ repoPath, worktreePath, branch, baseRef });
+    const preparedWorktreePath = existingString(status.worktreePath) ?? worktreePath;
+    const session = await this.requireSession(sessionId);
+    if (session.selectedIssueRef === issue.ref) {
+      await this.store.writeSession({
+        ...session,
+        selectedRepoKey: repoKey,
+        pendingConfirmation: undefined,
+      });
+    }
+    const updated = await this.ledger.writeIssue({
+      ...issue,
+      state: "selected",
+      metadata: {
+        ...issue.metadata,
+        work_dir: preparedWorktreePath,
+        branch,
+        [`workflow.repos.${repoKey}.base_branch`]: baseRef,
+        [`workflow.repos.${repoKey}.branch`]: status.branch || branch,
+        [`workflow.repos.${repoKey}.head_sha`]: status.headSha,
+        [`workflow.repos.${repoKey}.dirty`]: status.dirty,
+        [`workflow.repos.${repoKey}.worktree_path`]: preparedWorktreePath,
+      },
+    });
+    await this.store.appendEvent({
+      sessionId,
+      type: "workspace.prepared",
+      issueRef,
+      message: `Prepared ${repoKey} workspace for ${issueRef}.`,
+      payload: { repoKey, repoPath, worktreePath: preparedWorktreePath, branch, baseRef },
+    });
+    return await this.transitionJiraWorkStarted(sessionId, updated);
+  }
+
+  async adoptWorkspace(
+    sessionId: string,
+    issueRef: string,
+    options: { repoKey?: string; worktreePath: string; baseBranch?: string },
+  ): Promise<WorkItem> {
+    const issue = await this.reconcileIssue(sessionId, issueRef);
+    const repoKey = normalizeRepoKey(options.repoKey ?? issue.repoKeys[0] ?? "");
+    if (!repoKey) throw new Error("Repo routing is missing.");
+    if (!issue.repoKeys.includes(repoKey)) {
+      throw new Error(`${repoKey} is not routed for ${issueRef}.`);
+    }
+
+    const worktreePath = options.worktreePath;
+    if (!worktreePath) throw new Error("Workspace path is required.");
+    const status = await this.sourceControl.inspect(worktreePath);
+    const branch = existingString(status.branch) ??
+      existingString(issue.metadata[`workflow.repos.${repoKey}.branch`]) ??
+      existingString(issue.metadata.branch) ??
+      this.topology.branchName(issue);
+    const baseRef = options.baseBranch ??
+      existingString(issue.metadata[`workflow.repos.${repoKey}.base_branch`]) ??
+      this.topology.defaultBaseBranch(repoKey);
     const session = await this.requireSession(sessionId);
     if (session.selectedIssueRef === issue.ref) {
       await this.store.writeSession({
@@ -824,7 +879,7 @@ export class FlowWorkRuntime {
         work_dir: worktreePath,
         branch,
         [`workflow.repos.${repoKey}.base_branch`]: baseRef,
-        [`workflow.repos.${repoKey}.branch`]: status.branch || branch,
+        [`workflow.repos.${repoKey}.branch`]: branch,
         [`workflow.repos.${repoKey}.head_sha`]: status.headSha,
         [`workflow.repos.${repoKey}.dirty`]: status.dirty,
         [`workflow.repos.${repoKey}.worktree_path`]: worktreePath,
@@ -832,10 +887,10 @@ export class FlowWorkRuntime {
     });
     await this.store.appendEvent({
       sessionId,
-      type: "workspace.prepared",
+      type: "workspace.adopted",
       issueRef,
-      message: `Prepared ${repoKey} workspace for ${issueRef}.`,
-      payload: { repoKey, repoPath, worktreePath, branch, baseRef },
+      message: `Adopted ${repoKey} workspace for ${issueRef}.`,
+      payload: { repoKey, worktreePath, branch, baseRef },
     });
     return await this.transitionJiraWorkStarted(sessionId, updated);
   }
@@ -2722,6 +2777,7 @@ function gitStatusFromUnified(status: UnifiedWorkspaceStatus): GitRepoStatus {
     headSha: status.headSha,
     dirty: status.dirty,
     entries: status.entries,
+    worktreePath: status.worktreePath,
   };
 }
 
@@ -2842,6 +2898,9 @@ function reviewMetadata(issue: WorkItem) {
         : undefined,
     checkedAt: typeof metadata.prRecordedAt === "string" ? metadata.prRecordedAt : undefined,
     humanReviewRequired: metadata.humanReviewRequired === true,
+    reviewDecision: typeof metadata.prReviewDecision === "string" ? metadata.prReviewDecision : undefined,
+    reviewCommentCount: metadataNumber(metadata.prReviewCommentCount),
+    reviewCommentAuthors: metadataStringArray(metadata.prReviewCommentAuthors),
   };
 }
 
@@ -2869,7 +2928,7 @@ function pullRequestCloseoutBlockers(issue: WorkItem, pr: PullRequestStatus): st
   if (isPullRequestStatusMerged(pr)) return [];
   const blockers: string[] = [];
   if (pr.isDraft) blockers.push("Pull request is still draft.");
-  if (pr.reviewDecision !== "APPROVED") blockers.push("Pull request is not approved.");
+  if (pr.reviewDecision !== "APPROVED") blockers.push("Pull request approval review is missing.");
   if (pr.checksPassing !== true) blockers.push("Pull request checks are not passing.");
   if (isPullRequestConflicted(pr)) blockers.push("Pull request is not mergeable.");
   if (pr.templateMissingHeadings && pr.templateMissingHeadings.length > 0) {
@@ -2893,6 +2952,12 @@ function doctorNextAction(
   findings: ReadinessFinding[],
   visibility: FlowDoctorResult["visibility"],
 ): FlowDoctorResult["nextAction"] {
+  if (isFlowTerminal(issue)) {
+    return {
+      type: "done",
+      summary: "The issue is complete: the pull request is merged and Jira is Done.",
+    };
+  }
   const blockerSummaries = findings
     .filter((finding) => finding.severity === "blocker")
     .map((finding) => finding.summary);
@@ -2904,6 +2969,18 @@ function doctorNextAction(
     };
   }
   if (blockerSummaries.includes("Prepared worktree is missing.")) {
+    if (visibility.pullRequest) {
+      const repoKey = issue.repoKeys[0] ?? "<repo_key>";
+      const branch = existingString(issue.metadata[`workflow.repos.${repoKey}.branch`]) ??
+        existingString(issue.metadata.prHeadRefName) ??
+        existingString(issue.metadata.branch);
+      const pathHint = branch ? `<path-to-worktree-for-${branch.replace(/\//g, "-")}>` : "<worktree_path>";
+      return {
+        type: "adopt_workspace",
+        command: `flow adopt-workspace ${issue.ref} --repo ${repoKey} --path ${pathHint}`,
+        summary: "Adopt the existing PR worktree into Flow, or let Flow prepare a new routed workspace.",
+      };
+    }
     return {
       type: "prepare_workspace",
       command: `flow advance ${issue.ref}`,
@@ -2922,7 +2999,7 @@ function doctorNextAction(
   }
   if (
     blockerSummaries.includes("Auto review requires confirmation.") ||
-    blockerSummaries.includes("Auto review confirmation has not been posted to GitHub.")
+    blockerSummaries.includes("Auto review confirmation has not been posted to the code review.")
   ) {
     return {
       type: "record_review_confirmation",
@@ -2935,10 +3012,16 @@ function doctorNextAction(
       summary: "Inspect failing GitHub checks and remediate through the PR worktree.",
     };
   }
-  if (findings.some((finding) => finding.summary === "Human review is required.")) {
+  if (findings.some((finding) => finding.summary === "Approval review is required.")) {
+    if (findings.some((finding) => finding.summary === "Review comments are present.")) {
+      return {
+        type: "address_review_comments",
+        summary: "Inspect and address any actionable PR review comments, then request an approval review.",
+      };
+    }
     return {
-      type: "wait_for_human_review",
-      summary: "The PR is waiting for human GitHub review.",
+      type: "wait_for_approval_review",
+      summary: "The PR is waiting for an approval review; review comments alone do not satisfy approval-required review policy.",
     };
   }
   if (visibility.pullRequest) {
@@ -2953,6 +3036,24 @@ function doctorNextAction(
     command: `flow advance ${issue.ref}`,
     summary: "Run Flow advance to choose the next valid orchestration action.",
   };
+}
+
+function isFlowTerminal(issue: WorkItem): boolean {
+  const review = reviewMetadata(issue);
+  const pullRequestMerged = !review?.prUrl || isPullRequestMetadataMerged(review);
+  return isWorkItemJiraDone(issue) && pullRequestMerged;
+}
+
+function isWorkItemJiraDone(issue: WorkItem): boolean {
+  return isJiraDone({
+    key: issue.ref,
+    summary: issue.title,
+    issueType: "Task",
+    status: existingString(issue.metadata.jiraStatus),
+    statusCategory: existingString(issue.metadata.jiraStatusCategory),
+    resolution: existingString(issue.metadata.jiraResolution),
+    labels: [],
+  });
 }
 
 function isJiraCloseoutStatus(issue: JiraIssue): boolean {

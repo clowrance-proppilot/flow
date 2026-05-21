@@ -9,3 +9,5 @@ dist/
 .env
 .env.local
 *.log
+.flow/runtime/
+.flow/ledger/

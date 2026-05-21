@@ -3,6 +3,7 @@ export * from "./adapters/github.js";
 export * from "./adapters/jira.js";
 export * from "./adapters/provider-contracts.js";
 export * from "./contracts.js";
+export * from "./flow-layout.js";
 export * from "./project-topology.js";
 export * from "./runtime-utils.js";
 export * from "./reconciliation.js";

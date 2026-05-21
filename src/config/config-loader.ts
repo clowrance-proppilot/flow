@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { readFile, mkdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { promisify } from "node:util";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import type { ProjectTopology } from "../project-topology.js";
@@ -12,6 +12,7 @@ import {
   WorkTypeRegistry,
 } from "../work-registry.js";
 import type { WorkJobExecutor } from "../contracts.js";
+import { flowConfigPath } from "../flow-layout.js";
 import { ConfigDrivenTopology } from "./config-topology.js";
 import { flowConfigSchema, type FlowConfig } from "./config-schema.js";
 
@@ -37,6 +38,14 @@ export interface BootstrapFlowConfigResult {
   owner?: string;
 }
 
+interface BootstrapFlowConfigDraft {
+  config: FlowConfig;
+  projectName: string;
+  repoName: string;
+  baseBranch: string;
+  owner?: string;
+}
+
 export async function loadFlowConfig(options: LoadFlowConfigOptions = {}): Promise<FlowConfig | undefined> {
   const configPath = findFlowConfigPath(options);
   if (!configPath) return undefined;
@@ -54,28 +63,71 @@ export function findFlowConfigPath(options: LoadFlowConfigOptions = {}): string 
     return explicit;
   }
   const projectRoot = resolve(options.projectRoot ?? process.cwd());
-  const candidates = [
-    join(projectRoot, ".flow", "config.yaml"),
-  ];
-  return candidates.find((candidate) => existsSync(candidate));
+  const candidate = flowConfigPath(projectRoot);
+  return existsSync(candidate) ? candidate : undefined;
 }
 
 export async function bootstrapFlowConfig(options: BootstrapFlowConfigOptions = {}): Promise<BootstrapFlowConfigResult> {
   const projectRoot = resolve(options.projectRoot ?? process.cwd());
-  const configDir = join(projectRoot, ".flow");
-  const configPath = join(configDir, "config.yaml");
+  const configPath = flowConfigPath(projectRoot);
   if (existsSync(configPath) && !options.force) {
     throw new Error(`Flow config already exists at ${configPath}. Pass --force to overwrite it.`);
   }
 
+  const draft = await inferBootstrapFlowConfig(projectRoot);
+
+  await mkdir(dirname(configPath), { recursive: true });
+  await writeFile(configPath, stringifyYaml(draft.config), "utf8");
+  return {
+    ok: true,
+    created: true,
+    path: configPath,
+    projectName: draft.projectName,
+    repoName: draft.repoName,
+    baseBranch: draft.baseBranch,
+    owner: draft.owner,
+  };
+}
+
+export function configToProjectTopology(config: FlowConfig): ProjectTopology {
+  return new ConfigDrivenTopology(config);
+}
+
+export function configToWorkTypeRegistry(config: FlowConfig): WorkTypeRegistry {
+  if (!config.workTypes?.length) return createDefaultFlowWorkTypeRegistry();
+
+  const definitions: WorkTypeDefinition[] = config.workTypes.map((workType) => ({
+    workType: workType.name,
+    category: workType.category,
+    requiredCapabilities: workType.requiredCapabilities,
+    allowedExecutors: workType.allowedExecutors,
+    outputType: workType.outputType,
+  }));
+  const executors: ExecutorCapabilityDefinition[] = (config.executors?.length
+    ? config.executors
+    : [{
+      name: "live_agent_thread",
+      capabilities: ["repo.worktree.prepare", "code.edit", "test.run", "review.remediate", "evidence.record"],
+      outputs: ["workspace_result", "worker_result", "blocked_result", "evidence_result"],
+    }]).map((executor) => ({
+      executor: executor.name as WorkJobExecutor,
+      capabilities: executor.capabilities,
+      canSubmit: definitions
+        .filter((definition) => definition.allowedExecutors.includes(executor.name))
+        .map((definition) => definition.workType),
+      outputs: executor.outputs,
+    }));
+
+  return new WorkTypeRegistry(definitions, executors);
+}
+
+async function inferBootstrapFlowConfig(projectRoot: string): Promise<BootstrapFlowConfigDraft> {
   const remote = await gitOutput(projectRoot, ["config", "--get", "remote.origin.url"]);
   const github = parseGithubRemote(remote);
-  const folderName = basename(projectRoot);
-  const repoName = github?.repo ?? folderName;
+  const repoName = github?.repo ?? basename(projectRoot);
   const projectName = repoName;
   const baseBranch = await inferBaseBranch(projectRoot);
-
-  const config: FlowConfig = flowConfigSchema.parse({
+  const config = flowConfigSchema.parse({
     version: "1",
     project: {
       name: projectName,
@@ -116,49 +168,13 @@ export async function bootstrapFlowConfig(options: BootstrapFlowConfigOptions = 
     },
   });
 
-  await mkdir(configDir, { recursive: true });
-  await writeFile(configPath, stringifyYaml(config), "utf8");
   return {
-    ok: true,
-    created: true,
-    path: configPath,
+    config,
     projectName,
     repoName,
     baseBranch,
     owner: github?.owner,
   };
-}
-
-export function configToProjectTopology(config: FlowConfig): ProjectTopology {
-  return new ConfigDrivenTopology(config);
-}
-
-export function configToWorkTypeRegistry(config: FlowConfig): WorkTypeRegistry {
-  if (!config.workTypes?.length) return createDefaultFlowWorkTypeRegistry();
-
-  const definitions: WorkTypeDefinition[] = config.workTypes.map((workType) => ({
-    workType: workType.name,
-    category: workType.category,
-    requiredCapabilities: workType.requiredCapabilities,
-    allowedExecutors: workType.allowedExecutors,
-    outputType: workType.outputType,
-  }));
-  const executors: ExecutorCapabilityDefinition[] = (config.executors?.length
-    ? config.executors
-    : [{
-      name: "live_agent_thread",
-      capabilities: ["repo.worktree.prepare", "code.edit", "test.run", "review.remediate", "evidence.record"],
-      outputs: ["workspace_result", "worker_result", "blocked_result", "evidence_result"],
-    }]).map((executor) => ({
-      executor: executor.name as WorkJobExecutor,
-      capabilities: executor.capabilities,
-      canSubmit: definitions
-        .filter((definition) => definition.allowedExecutors.includes(executor.name))
-        .map((definition) => definition.workType),
-      outputs: executor.outputs,
-    }));
-
-  return new WorkTypeRegistry(definitions, executors);
 }
 
 async function inferBaseBranch(projectRoot: string): Promise<string> {

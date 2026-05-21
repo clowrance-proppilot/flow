@@ -15,6 +15,7 @@ export interface GitRepoStatus {
   headSha: string;
   dirty: boolean;
   entries: string[];
+  worktreePath?: string;
 }
 
 export interface WorktreePlan {
@@ -30,6 +31,7 @@ export function normalizeGitStatus(status: GitRepoStatus): UnifiedWorkspaceStatu
     headSha: status.headSha,
     branch: status.branch,
     entries: status.entries,
+    worktreePath: status.worktreePath,
   };
 }
 
@@ -51,6 +53,7 @@ export class GitAdapter implements SourceControlProvider {
       headSha: headSha.trim(),
       dirty: entries.length > 0,
       entries,
+      worktreePath: repoPath,
     };
   }
 
@@ -78,7 +81,8 @@ export class GitAdapter implements SourceControlProvider {
       }
       throw error;
     });
-    return this.inspectWorkspace(inspectPath);
+    const status = await this.inspectWorkspace(inspectPath);
+    return { ...status, worktreePath: inspectPath };
   }
 }
 

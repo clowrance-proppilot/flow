@@ -27,6 +27,9 @@ export interface ReadinessAssessmentInput {
     autoReviewNeedsConfirmationPostedUrl?: string;
     checkedAt?: string;
     humanReviewRequired?: boolean;
+    reviewDecision?: string;
+    reviewCommentCount?: number;
+    reviewCommentAuthors?: string[];
   };
   evidenceRecorded?: boolean;
   documentationRecorded?: boolean;
@@ -150,7 +153,7 @@ export function assessIssue(input: ReadinessAssessmentInput): ReadinessAssessmen
     if (disposition && postedUrl) {
       findings.push(finding(input.issue.ref, "info", `Auto review needs-confirmation resolved as ${disposition}.`, detail));
     } else if (disposition) {
-      findings.push(finding(input.issue.ref, "blocker", "Auto review confirmation has not been posted to GitHub.", detail));
+      findings.push(finding(input.issue.ref, "blocker", "Auto review confirmation has not been posted to the code review.", detail));
     } else {
       findings.push(finding(input.issue.ref, "blocker", "Auto review requires confirmation.", detail));
     }
@@ -182,7 +185,26 @@ export function assessIssue(input: ReadinessAssessmentInput): ReadinessAssessmen
   }
 
   if (!pullRequestMerged && input.review?.humanReviewRequired) {
-    findings.push(finding(input.issue.ref, "info", "Human review is required."));
+    if ((input.review.reviewCommentCount ?? 0) > 0) {
+      const authors = input.review.reviewCommentAuthors?.length
+        ? ` from ${input.review.reviewCommentAuthors.join(", ")}`
+        : "";
+      findings.push(finding(
+        input.issue.ref,
+        "info",
+        "Review comments are present.",
+        `Inspect and address any actionable PR review comments${authors} before requesting approval.`,
+      ));
+    }
+    const reviewDecision = input.review.reviewDecision
+      ? ` Review decision is ${input.review.reviewDecision}.`
+      : "";
+    findings.push(finding(
+      input.issue.ref,
+      "info",
+      "Approval review is required.",
+      `No approving review is recorded.${reviewDecision} Comment-only reviews do not satisfy approval-required review policy.`,
+    ));
   }
 
   const hasBlocker = findings.some((item) => item.severity === "blocker");
