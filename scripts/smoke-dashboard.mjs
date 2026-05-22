@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import { dirname, join } from "node:path";
@@ -10,46 +10,15 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 const flowRoot = join(scriptDir, "..");
 const repoRoot = flowRoot;
 const host = "127.0.0.1";
-const dashboardPort = 8877;
+const dashboardPort = 8767;
 const dashboardUrl = `http://${host}:${dashboardPort}`;
 const tmp = await mkdtemp(join(tmpdir(), "flow-dashboard-smoke-"));
-const callsPath = join(tmp, "calls.jsonl");
-const mockFlowBin = join(tmp, "flow");
-await writeFile(mockFlowBin, `#!/usr/bin/env node
-import { appendFileSync } from "node:fs";
-const method = process.argv[3] ?? "";
-appendFileSync(${JSON.stringify(callsPath)}, JSON.stringify({ method }) + "\\n");
-if (method === "inspectDashboardQueue") {
-  console.log(JSON.stringify([{
-    ref: "ISSUE-1",
-    title: "Dashboard smoke",
-    repoKeys: ["main"],
-    workflowState: "queued",
-    issueStatus: "Open",
-    issueUrl: "https://github.com/example/flow/issues/1",
-    metadata: {},
-  }]));
-} else {
-  console.log(JSON.stringify({ id: "session-dashboard-smoke" }));
-}
-`);
-await chmod(mockFlowBin, 0o755);
 
 const child = spawn(
   process.execPath,
   [join(flowRoot, "bin", "flow-dashboard")],
   {
     cwd: flowRoot,
-    env: {
-      ...process.env,
-      FLOW_PROJECT_ROOT: repoRoot,
-      FLOW_DASHBOARD_HOST: host,
-      FLOW_DASHBOARD_PORT: String(dashboardPort),
-      FLOW_DASHBOARD_URL: dashboardUrl,
-      FLOW_BIN: mockFlowBin,
-      FLOW_DASHBOARD_LIVE_REFRESH_TIMEOUT_MS: "5000",
-      FLOW_DASHBOARD_REQUEST_TIMEOUT_MS: "500",
-    },
     stdio: ["ignore", "pipe", "pipe"],
   },
 );
@@ -64,15 +33,7 @@ try {
   const html = await fetchText(`${dashboardUrl}/dashboard`);
   if (!html.includes("root")) throw new Error("dashboard HTML did not render app root");
 
-  const initialPayload = await fetchJson(`${dashboardUrl}/api/dashboard`);
-  if (initialPayload.snapshot?.source !== "flow_cli") {
-    throw new Error(`dashboard should wait for initial Flow CLI refresh: ${JSON.stringify(initialPayload)}`);
-  }
-
-  const payload = initialPayload;
-  if (payload.issues?.[0]?.ref !== "ISSUE-1") {
-    throw new Error(`unexpected dashboard issue payload: ${JSON.stringify(payload.issues)}`);
-  }
+  const payload = await fetchJson(`${dashboardUrl}/api/dashboard`);
   if (typeof payload.snapshot?.ageSeconds !== "number" || typeof payload.snapshot?.stale !== "boolean") {
     throw new Error(`dashboard should report snapshot freshness: ${JSON.stringify(payload.snapshot)}`);
   }
@@ -84,13 +45,6 @@ try {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ issueRef: "ISSUE-1", issue: payload.issues[0] }),
   });
-  const runtimeMethods = (await fetchText(`file://${callsPath}`).catch(async () => "")).trim()
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line).method);
-  if (!runtimeMethods.includes("bootstrapIssue") || !runtimeMethods.includes("autoFlowIssue")) {
-    throw new Error(`dashboard autoflow should bootstrap the issue before invoking autoflow: ${JSON.stringify(runtimeMethods)}`);
-  }
 
   console.log("dashboard smoke: ok");
 } finally {

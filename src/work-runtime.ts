@@ -100,6 +100,9 @@ export interface WorkRuntimeOptions {
   jira?: JiraInspector;
   projectRoot?: string;
   defaultJiraProjectKey?: string;
+  autoflowBlockedThreshold?: number;
+  workerTimeoutMs?: number;
+  debugEnabled?: boolean;
   readiness?: ReadinessEvaluator;
 }
 export interface ReadinessEvaluator {
@@ -165,7 +168,7 @@ export interface JiraInspector {
     sprintId?: number;
   }): Promise<JiraSprintMoveResult>;
   createIssue?(input: {
-    projectKey: string;
+    projectKey?: string;
     issueType: string;
     summary: string;
     description?: string;
@@ -327,6 +330,9 @@ export class FlowWorkRuntime {
   private readonly workTypes: WorkTypeRegistry;
   private readonly projectRoot: string;
   private readonly defaultJiraProjectKey?: string;
+  private readonly autoflowBlockedThreshold: number;
+  private readonly workerTimeoutMs: number;
+  private readonly debugEnabled: boolean;
   private readonly readiness: ReadinessEvaluator;
   private readonly reconciliation: ReconciliationEngine;
   private readonly issueMutationQueues = new Map<string, Promise<unknown>>();
@@ -340,7 +346,10 @@ export class FlowWorkRuntime {
     this.issueTracker = normalizeIssueTrackerIntegration(options.issueTracker ?? options.jira);
     this.workTypes = options.workTypes ?? createDefaultFlowWorkTypeRegistry();
     this.projectRoot = options.projectRoot ?? process.cwd();
-    this.defaultJiraProjectKey = options.defaultJiraProjectKey ?? process.env.FLOW_JIRA_PROJECT_KEY ?? process.env.JIRA_PROJECT_KEY;
+    this.defaultJiraProjectKey = options.defaultJiraProjectKey;
+    this.autoflowBlockedThreshold = positiveNumber(options.autoflowBlockedThreshold, 3);
+    this.workerTimeoutMs = positiveNumber(options.workerTimeoutMs, 20 * 60 * 1000);
+    this.debugEnabled = options.debugEnabled ?? false;
     this.readiness = options.readiness ?? { assess: assessIssue };
     this.reconciliation = new ReconciliationEngine({
       topology: this.topology,
@@ -352,8 +361,8 @@ export class FlowWorkRuntime {
   }
 
   private debug(event: string, details: Record<string, unknown>): void {
-    if (!piDebugEnabled()) return;
-    console.error(`[flow-pi debug] ${event} ${JSON.stringify(details)}`);
+    if (!this.debugEnabled) return;
+    console.error(`[flow debug] ${event} ${JSON.stringify(details)}`);
   }
 
   async createSession(id?: string): Promise<WorkRuntimeSession> {
@@ -553,7 +562,7 @@ export class FlowWorkRuntime {
     if (!options.summary?.trim()) throw new Error("Issue summary is required.");
     const issueType = options.issueType ?? "Bug";
     const createdIssue = await this.issueTracker.createIssue({
-      projectKey: options.projectKey ?? this.requireDefaultJiraProjectKey(),
+      projectKey: options.projectKey ?? this.defaultJiraProjectKey,
       issueType,
       summary: options.summary.trim(),
       description: options.description?.trim(),
@@ -704,7 +713,7 @@ export class FlowWorkRuntime {
         .filter((finding) => finding.severity === "blocker" || finding.severity === "warning")
         .map((finding) => finding.summary);
       const autoflowAttempts = metadataNumber(issue.metadata["workflow.autoflow.attempts"]) ?? 0;
-      const autoflowAttemptLimit = autoflowBlockedThreshold();
+      const autoflowAttemptLimit = this.autoflowBlockedThreshold;
       const activeWorkerRun = await this.latestActiveWorkerRun(issue.ref);
       const workflowState = activeWorkerRun ? "running" : issue.state;
       const autoflowExhausted = blockers.length > 0 && (hasHardAutoflowBlocker(blockers) || autoflowAttempts >= autoflowAttemptLimit);
@@ -1693,7 +1702,7 @@ export class FlowWorkRuntime {
       workspacePath: request.workspacePath,
       taskId: request.id,
     });
-    const workerTimeoutMs = workRuntimeWorkerTimeoutMs();
+    const workerTimeoutMs = this.workerTimeoutMs;
     const result = await withPromiseTimeout(
       spawner.run(requestWithJob, async (event) => {
         if (!this.shouldRecordProgress(request.id, event.summary)) return;
@@ -1717,15 +1726,15 @@ export class FlowWorkRuntime {
         repoKey: request.repoKey,
         executor,
         status: WorkerStatusValue.Blocked,
-        summary: `Pi Worker timed out or was interrupted before returning a structured result (${Math.round(workerTimeoutMs / 1000)}s workRuntime timeout).`,
+        summary: `Background worker timed out or was interrupted before returning a structured result (${Math.round(workerTimeoutMs / 1000)}s workRuntime timeout).`,
         changedFiles: [],
         testsRun: [],
-        blockers: ["Pi Worker timed out or was interrupted before returning a structured result."],
+        blockers: ["Background worker timed out or was interrupted before returning a structured result."],
         nextPickup: "Retry worker run. If this repeats, inspect worker runtime/debug logs.",
         handoffPrompt: buildLiveWorkerHandoffPrompt(sessionId, request, {
           status: WorkerStatusValue.Blocked,
-          summary: "Pi Worker timed out or was interrupted before returning a structured result.",
-          blockers: ["Pi Worker timed out or was interrupted before returning a structured result."],
+          summary: "Background worker timed out or was interrupted before returning a structured result.",
+          blockers: ["Background worker timed out or was interrupted before returning a structured result."],
         }),
         completedAt: nowIso(),
       }),
@@ -2395,7 +2404,7 @@ export class FlowWorkRuntime {
 
   private requireDefaultJiraProjectKey(): string {
     if (this.defaultJiraProjectKey) return this.defaultJiraProjectKey;
-    throw new Error("Jira project key is required. Provide projectKey or set FLOW_JIRA_PROJECT_KEY.");
+    throw new Error("Jira project key is required. Configure issueTracker.projectKey in .flow/config.yaml or pass projectKey.");
   }
 
   private resolveJiraQueueRepoKeys(jiraIssue: JiraIssue, existing?: WorkItem): string[] {
@@ -3166,17 +3175,8 @@ function stableHash(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
-function autoflowBlockedThreshold(): number {
-  const parsed = Number(process.env.FLOW_AUTOFLOW_BLOCKED_THRESHOLD ?? "3");
-  return Number.isFinite(parsed) && parsed >= 1 ? parsed : 3;
-}
-
 function hasHardAutoflowBlocker(blockers: string[]): boolean {
   return blockers.some((blocker) => /credential|provider/i.test(blocker));
-}
-
-function piDebugEnabled(): boolean {
-  return process.env.FLOW_PI_DEBUG === "1";
 }
 
 function parseNeedsConfirmationDisposition(value: unknown): "accept" | "reject" | "defer" | undefined {
@@ -3401,9 +3401,8 @@ function stringFromRecord(record: unknown, key: string): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
 }
 
-function workRuntimeWorkerTimeoutMs(): number {
-  const value = Number(process.env.FLOW_EXECUTOR_TIMEOUT_MS ?? 20 * 60 * 1000);
-  return Number.isFinite(value) && value > 0 ? value : 20 * 60 * 1000;
+function positiveNumber(value: number | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
 async function withPromiseTimeout<T>(promise: Promise<T>, timeoutMs: number, onTimeout: () => T): Promise<T> {

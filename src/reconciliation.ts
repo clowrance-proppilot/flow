@@ -744,12 +744,9 @@ function externallyDrivenState(current: WorkItem["state"], metadata: Record<stri
 }
 
 function autoReviewNeedsConfirmationDefaultDisposition(): "accept" | "reject" | "defer" | undefined {
-  const raw = process.env.FLOW_AUTO_REVIEW_NEEDS_CONFIRMATION_DEFAULT_DISPOSITION?.toLowerCase();
-  if (raw === "accept" || raw === "reject" || raw === "defer") return raw;
   return undefined;
 }
 
 function staleWorkerRunMs(): number {
-  const value = Number(process.env.FLOW_WORKER_STALE_MS ?? 20 * 60 * 1000);
-  return Number.isFinite(value) && value > 0 ? value : 20 * 60 * 1000;
+  return 20 * 60 * 1000;
 }

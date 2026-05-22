@@ -65,6 +65,5 @@ export async function mapWithConcurrency<T, R>(
 }
 
 export function workRuntimeQueueConcurrency(): number {
-  const parsed = Number(process.env.FLOW_WORK_RUNTIME_QUEUE_CONCURRENCY ?? "4");
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : 4;
+  return 4;
 }

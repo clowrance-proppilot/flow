@@ -2,25 +2,25 @@
 import express, { type NextFunction, type Request, type Response } from "express";
 import type { Server } from "node:http";
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DashboardState } from "./dashboard-state.js";
 import { FlowEventStream } from "./event-stream.js";
-import { flowRoot, loadFlowEnv, repoRoot } from "./flow-runtime.js";
+import { flowRoot, repoRoot } from "./flow-runtime.js";
 import { loadFlowConfig } from "./config/config-loader.js";
 import type { FlowConfig } from "./config/config-schema.js";
-
-loadFlowEnv();
 
 const flowConfig = await loadFlowConfig({ projectRoot: repoRoot });
 const host = resolveDashboardHost(flowConfig);
 const port = resolveDashboardPort(flowConfig);
 const publicUrl = resolveDashboardUrl(flowConfig);
 const themeConfig = resolveThemeConfig(flowConfig);
+const customCssPath = resolveCustomCssPath(flowConfig);
+const customAssetsPath = customCssPath ? dirname(customCssPath) : undefined;
 const dashboardFilePath = resolveDashboardFilePath();
 const dashboardAssetsPath = join(dirname(dashboardFilePath), "assets");
 const serviceStartedAt = new Date();
-const debugEnabled = process.env.FLOW_DASHBOARD_DEBUG === "1";
+const debugEnabled = flowConfig?.runtime?.debug === true;
 const events = new FlowEventStream("dashboard");
 
 const dashboardState = new DashboardState({
@@ -74,6 +74,16 @@ app.post("/api/actions/:action", async (req, res) => {
 
 app.get("/", (_req, res) => res.redirect("/dashboard"));
 app.use("/dashboard/assets", express.static(dashboardAssetsPath));
+if (customAssetsPath) {
+  app.use("/dashboard/custom-assets", express.static(customAssetsPath));
+}
+app.get("/dashboard/custom.css", (_req, res) => {
+  if (!customCssPath) {
+    res.type("css").send("");
+    return;
+  }
+  res.type("css").send(readFileSync(customCssPath, "utf8"));
+});
 app.get("/dashboard", (_req, res) => {
   if (!existsSync(dashboardFilePath)) {
     res.status(404).type("text/plain").send("Dashboard file not found.");
@@ -104,6 +114,8 @@ const server = app.listen(port, host, () => {
     repoRoot,
     dashboardFilePath,
     dashboardExists: existsSync(dashboardFilePath),
+    customCssPath,
+    customAssetsPath,
   });
 });
 server.on("error", (error: NodeJS.ErrnoException) => {
@@ -224,22 +236,13 @@ function resolveDashboardFilePath(): string {
   return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0];
 }
 
-function parsePort(value: string): number {
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
-    throw new Error(`FLOW_DASHBOARD_PORT must be an integer from 1 to 65535; got ${value}.`);
-  }
-  return parsed;
-}
-
 function resolveDashboardHost(config: FlowConfig | undefined): string {
-  const host = process.env.FLOW_DASHBOARD_HOST?.trim() ?? config?.runtime?.dashboard?.host?.trim();
-  if (!host) throw new Error("Missing required config value: runtime.dashboard.host");
-  return host;
+  const host = config?.runtime?.dashboard?.host?.trim();
+  return host || "127.0.0.1";
 }
 
 function resolveDashboardPort(config: FlowConfig | undefined): number {
-  const port = process.env.FLOW_DASHBOARD_PORT ? parsePort(process.env.FLOW_DASHBOARD_PORT) : config?.runtime?.dashboard?.port;
+  const port = config?.runtime?.dashboard?.port ?? 8767;
   if (port === undefined || !Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error("Missing required config value: runtime.dashboard.port");
   }
@@ -247,9 +250,18 @@ function resolveDashboardPort(config: FlowConfig | undefined): number {
 }
 
 function resolveDashboardUrl(config: FlowConfig | undefined): string {
-  const url = process.env.FLOW_DASHBOARD_URL?.trim() ?? config?.runtime?.dashboard?.url?.trim();
-  if (!url) throw new Error("Missing required config value: runtime.dashboard.url");
-  return url;
+  const url = config?.runtime?.dashboard?.url?.trim();
+  return url || `http://${host}:${port}`;
+}
+
+function resolveCustomCssPath(config: FlowConfig | undefined): string | undefined {
+  const configured = config?.runtime?.dashboard?.customCssPath?.trim();
+  const candidate = configured
+    ? isAbsolute(configured)
+      ? configured
+      : resolve(repoRoot, configured)
+    : join(repoRoot, ".flow", "dashboard.css");
+  return existsSync(candidate) ? candidate : undefined;
 }
 
 function resolveThemeConfig(config: FlowConfig | undefined): Record<string, unknown> {

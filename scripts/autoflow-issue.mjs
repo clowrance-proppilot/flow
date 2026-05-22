@@ -15,19 +15,19 @@ const program = new Command()
   .option(
     "--flow-bin <path>",
     "Flow CLI path",
-    process.env.FLOW_BIN ?? join(flowRoot, "bin", "flow"),
+    join(flowRoot, "bin", "flow"),
   )
   .option(
     "--cycles <count>",
     "maximum autoflow cycles",
     parsePositiveInteger,
-    Number(process.env.FLOW_AUTOFLOW_CYCLES ?? 4),
+    4,
   )
   .option(
     "--steps <count>",
     "maximum autoflow steps per cycle",
     parsePositiveInteger,
-    Number(process.env.FLOW_AUTOFLOW_STEPS ?? 20),
+    20,
   );
 
 program.parse();
@@ -78,7 +78,7 @@ console.log(JSON.stringify(output, null, 2));
 
 async function call(method, params) {
   const { stdout, stderr } = await execFileAsync(flowBin, ["call", method, JSON.stringify(params)], {
-    cwd: process.env.FLOW_PROJECT_ROOT ?? process.cwd(),
+    cwd: process.cwd(),
     maxBuffer: 20 * 1024 * 1024,
   });
   if (stderr.trim()) process.stderr.write(stderr);

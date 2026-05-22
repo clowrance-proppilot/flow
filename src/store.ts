@@ -14,6 +14,14 @@ export interface StorePaths {
   root: string;
 }
 
+/**
+ * Session-local runtime scratch store.
+ *
+ * This store is intentionally separate from Flow's durable workflow ledger.
+ * Use the workflow ledger for authoritative issue, worker, job, and evidence
+ * state; use FlowStore for CLI/session selection state and transient runtime
+ * traces that can be rebuilt from the ledger and provider state.
+ */
 export class FlowStore {
   readonly root: string;
 

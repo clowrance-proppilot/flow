@@ -8,6 +8,11 @@
     --th-primary: #6366f1;
     --th-primary-dark: #4338ca;
     --th-primary-fg: #ffffff;
+    --th-font-sans: "Open Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --th-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --th-icon-color: currentColor;
+    --th-icon-stroke-width: 2;
+    --th-brand-icon-image: none;
 
     --th-app: color-mix(in srgb, #070a0f 90%, var(--th-primary) 10%);
     --th-surface: color-mix(in srgb, #0d1218 88%, var(--th-primary) 12%);
@@ -49,7 +54,7 @@
       radial-gradient(circle at 88% 0%, color-mix(in srgb, var(--th-primary-dark) 18%, transparent), transparent 38%),
       var(--th-app);
     color: var(--th-fg);
-    font-family: theme("fontFamily.sans");
+    font-family: var(--th-font-sans);
     -webkit-font-smoothing: antialiased;
     transition: background-color 0.2s, color 0.2s;
   }
@@ -57,6 +62,10 @@
   button,
   input {
     font: inherit;
+  }
+
+  svg {
+    stroke-width: var(--th-icon-stroke-width);
   }
 }
 
@@ -103,6 +112,18 @@
 .accent-spinner {
   border-color: var(--th-border);
   border-top-color: var(--th-primary);
+}
+.brand-mark {
+  background-image: var(--th-brand-icon-image);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 62%;
+}
+.brand-mark-icon {
+  color: var(--th-icon-color);
+}
+.font-mono {
+  font-family: var(--th-font-mono);
 }
 
 /* ---- Settings dropdown ---- */

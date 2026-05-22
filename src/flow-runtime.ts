@@ -1,10 +1,10 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { homedir } from "node:os";
 import { pathToFileURL } from "node:url";
-import { config as loadDotenv } from "dotenv";
 
-import { configuredPiValue, DEFAULT_PI_MODEL, DEFAULT_PI_PROVIDER } from "./pi-defaults.js";
+import { DEFAULT_AGENT_MODEL, DEFAULT_AGENT_PROVIDER } from "./pi-defaults.js";
+import { loadFlowConfig } from "./config/config-loader.js";
+import type { WorkerRuntimeConfig } from "./config/config-schema.js";
 
 export interface RunFlowPromptOptions {
   prompt: string;
@@ -22,10 +22,6 @@ export interface RunFlowPromptResult {
 const runtimeDir = resolve(import.meta.dirname);
 
 function resolveFlowRoot(): string {
-  const explicit = process.env.FLOW_PACKAGE_ROOT;
-  if (explicit && existsSync(join(explicit, "package.json")) && existsSync(join(explicit, "src"))) {
-    return resolve(explicit);
-  }
   let cursor = runtimeDir;
   for (let depth = 0; depth < 8; depth += 1) {
     const candidate = resolve(cursor);
@@ -38,25 +34,19 @@ function resolveFlowRoot(): string {
 }
 
 export const flowRoot = resolveFlowRoot();
-export const repoRoot = resolve(process.env.FLOW_PROJECT_ROOT ?? process.cwd());
-
-export function loadFlowEnv(): void {
-  loadEnv(join(process.env.HOME ?? "", ".config", "flow", "env"));
-  loadEnv(join(flowRoot, ".env"));
-  loadEnv(join(flowRoot, ".env.local"));
-  if (!process.env.FLOW_ROOT) process.env.FLOW_ROOT = repoRoot;
-}
+export const repoRoot = resolve(process.cwd());
 
 export async function runFlowPrompt(options: RunFlowPromptOptions): Promise<RunFlowPromptResult> {
-  loadFlowEnv();
+  const flowConfig = await loadFlowConfig({ projectRoot: repoRoot });
+  const workerConfig = flowConfig?.runtime?.worker;
 
-  const sdk = await loadPiSdk(sdkModulePath());
-  const extensionPath = defaultExtensionPath();
-  if (!extensionPath) throw new Error("Flow could not find the Flow Pi extension.");
+  const sdk = await loadPiSdk(sdkModulePath(workerConfig));
+  const extensionPath = workerConfig?.extensionPath ?? defaultExtensionPath();
+  if (!extensionPath) throw new Error("Flow could not find the Flow agent extension.");
 
   const authStorage = sdk.AuthStorage.create();
   const modelRegistry = sdk.ModelRegistry.create(authStorage);
-  const model = resolveConfiguredModel(modelRegistry);
+  const model = resolveConfiguredModel(modelRegistry, workerConfig);
   const noSession = Boolean(options.noSession);
   if (!noSession && options.sessionFile) {
     mkdirSync(dirname(options.sessionFile), { recursive: true });
@@ -66,7 +56,7 @@ export async function runFlowPrompt(options: RunFlowPromptOptions): Promise<RunF
     : options.sessionFile
       ? sdk.SessionManager.open(options.sessionFile, dirname(options.sessionFile), repoRoot)
       : sdk.SessionManager.create(repoRoot);
-  const agentDir = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
+  const agentDir = workerConfig?.agentDir ?? join(repoRoot, ".flow", "agent");
   const additionalSystemPrompts = options.additionalSystemPrompts?.filter(Boolean) ?? [];
   const appendSystemPrompt = [readFlowPrompt(), ...additionalSystemPrompts].filter(Boolean);
   const loader = new sdk.DefaultResourceLoader({
@@ -137,14 +127,8 @@ const flowToolNames = [
   "flow_reset_autoflow_state",
 ];
 
-function loadEnv(path: string): void {
-  if (!path || !existsSync(path)) return;
-  loadDotenv({ path, override: false });
-}
-
-function sdkModulePath(): string {
-  return process.env.FLOW_PI_SDK_MODULE_PATH ??
-    "/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/dist/index.js";
+function sdkModulePath(config: WorkerRuntimeConfig | undefined): string {
+  return config?.sdkModulePath ?? "/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/dist/index.js";
 }
 
 async function loadPiSdk(modulePath: string): Promise<any> {
@@ -168,13 +152,9 @@ function readFlowPrompt(): string {
   return readFileSync(path, "utf8");
 }
 
-function resolveConfiguredModel(modelRegistry: any): unknown {
-  const provider = configuredPiValue(process.env.FLOW_FLOW_PROVIDER) ??
-    configuredPiValue(process.env.FLOW_PROVIDER) ??
-    DEFAULT_PI_PROVIDER;
-  const modelId = configuredPiValue(process.env.FLOW_FLOW_MODEL) ??
-    configuredPiValue(process.env.FLOW_MODEL) ??
-    DEFAULT_PI_MODEL;
+function resolveConfiguredModel(modelRegistry: any, config: WorkerRuntimeConfig | undefined): unknown {
+  const provider = config?.provider ?? DEFAULT_AGENT_PROVIDER;
+  const modelId = config?.model ?? DEFAULT_AGENT_MODEL;
   const model = modelRegistry.find(provider, modelId);
   if (!model) throw new Error(`Flow could not resolve model ${provider}/${modelId}.`);
   return model;

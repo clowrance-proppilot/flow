@@ -5,9 +5,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const flowRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const dashboardHost = process.env.FLOW_DASHBOARD_HOST ?? "127.0.0.1";
-const dashboardPort = process.env.FLOW_DASHBOARD_PORT ?? "8767";
-const dashboardUrl = process.env.FLOW_DASHBOARD_URL ?? `http://${dashboardHost}:${dashboardPort}`;
+const dashboardHost = "127.0.0.1";
+const dashboardPort = "8767";
+const dashboardUrl = `http://${dashboardHost}:${dashboardPort}`;
 const children = [];
 
 await cleanListeningPorts([dashboardPort]);
@@ -15,9 +15,7 @@ buildFrontendAndRuntime();
 
 console.log("Starting Flow Dashboard. Workflow actions are routed through the Flow CLI.");
 
-const dashboard = startRole("Dashboard", resolveEntry("dashboard-server.js"), {
-  FLOW_DASHBOARD_URL: dashboardUrl,
-});
+const dashboard = startRole("Dashboard", resolveEntry("dashboard-server.js"));
 await waitForHealth(`${dashboardUrl}/healthz`, "Dashboard");
 
 openDashboard(`${dashboardUrl}/dashboard`);
@@ -53,11 +51,10 @@ function buildFrontendAndRuntime() {
   }
 }
 
-function startRole(name, entry, env = {}) {
+function startRole(name, entry) {
   console.log(`Starting Flow ${name}.`);
   const child = spawn(process.execPath, [entry], {
     cwd: flowRoot,
-    env: { ...process.env, ...env },
     stdio: "inherit",
   });
   children.push(child);
@@ -158,7 +155,7 @@ function isRunning(pid) {
 }
 
 function openDashboard(url) {
-  if (process.env.FLOW_OPEN_DASHBOARD !== "1") return;
+  return;
   const opener = process.platform === "darwin"
     ? "open"
     : process.platform === "win32"

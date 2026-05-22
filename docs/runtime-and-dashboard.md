@@ -23,14 +23,21 @@ The active local stack has one long-running role plus the CLI:
 - **Dashboard** is the browser operator console. It presents CLI-reconciled Flow
   state and routes any dashboard actions back through `flow call`.
 
-Executors are assigned per issue. An executor may be the current live agent thread
-adopted by Work Runtime, or a bounded background agent launched for a
-narrow task. Executors are not long-running services.
+Executors are assigned per issue. An executor may be the current live agent
+thread adopted by Work Runtime, a bundled background executor, or a host/plugin
+adapter launched for a narrow task. Executors are not long-running services.
+Flow treats concrete SDKs, CLIs, and model providers as adapters behind the
+executor contract, not as workflow policy.
 
 The live agent thread is the normal interactive work surface for complex sprint
 issues. One live thread can coordinate multiple issue-tracker efforts, but each effort
 keeps separate Flow state: issue, routed repos, worktrees, evidence, PR
 state, blockers, and closeout. Chat history is not the workflow ledger.
+
+`.flow/runtime` stores session-local CLI/runtime scratch state only. Treat
+`.flow/ledger/workflow.jsonl` as the durable workflow ledger and
+`.flow/ledger/issues/*.json` as generated projections that can be rebuilt from
+the ledger.
 
 ## Communication Protocol
 
@@ -109,8 +116,7 @@ want the browser operator console.
 `flow/`. Use it while editing Flow runtime code so file changes rebuild
 and restart the local stack automatically.
 
-`start:all` prints the dashboard URL but does not open a browser by default. Set
-`FLOW_OPEN_DASHBOARD=1` when you want startup to open the dashboard.
+`start:all` prints the dashboard URL but does not open a browser by default.
 
 Use `--session <id>` to persist CLI sessions under
 `.flow/runtime/sessions/`.
@@ -135,13 +141,13 @@ serve stale snapshots.
 - Every `/api/dashboard` request performs a `flow call inspectDashboardQueue`
   inspection
 - Manual Refresh performs the same live read immediately
-- Live refresh timeout: `FLOW_DASHBOARD_LIVE_REFRESH_TIMEOUT_MS`, default 60 seconds
+- Live refresh timeout: 60 seconds
 
 ## Flow Ledger
 
 Work Runtime writes to the native Flow JSONL workflow ledger by default:
-`.flow/ledger/workflow.jsonl`. Set `FLOW_WORKFLOW_LEDGER_PATH` to use a
-different local ledger file.
+`.flow/ledger/workflow.jsonl`. Configure `runtime.workflowLedgerPath` in
+`.flow/config.yaml` to use a different local ledger file.
 
 Flow also maintains per-issue projection snapshots under
 `.flow/ledger/issues/<issueRef>.json` so issue-level reads do not need to replay
@@ -151,8 +157,8 @@ can rebuild missing projections.
 Consumers should edit only `.flow/config.yaml`; Flow manages `.flow/runtime/`
 and `.flow/ledger/`.
 
-Set `FLOW_LEDGER_ADAPTER=beads` only when intentionally running the legacy
-Beads adapter.
+Set `ledger.type: beads` in `.flow/config.yaml` only when intentionally running
+the legacy Beads adapter.
 
 The dashboard API includes snapshot freshness:
 
@@ -198,3 +204,41 @@ npm run smoke:dashboard
 
 For dashboard-only changes, `npm run build` and `npm run smoke:dashboard` are
 the minimum useful checks.
+
+## Dashboard styling
+
+The dashboard loads `/dashboard/custom.css` after the bundled stylesheet. By
+default that endpoint serves `.flow/dashboard.css` from the host repo when the
+file exists. Hosts can point at a different file with:
+
+```yaml
+runtime:
+  dashboard:
+    customCssPath: "ui/flow-dashboard.css"
+```
+
+Use that CSS file for broad visual customization: color variables, fonts, icon
+stroke weight, and brand mark overrides. For example:
+
+```css
+:root {
+  --th-primary: #0f766e;
+  --th-primary-dark: #115e59;
+  --th-primary-fg: #ffffff;
+  --th-font-sans: Inter, system-ui, sans-serif;
+  --th-font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --th-icon-stroke-width: 1.75;
+}
+
+.brand-mark-icon {
+  display: none;
+}
+
+.brand-mark {
+  --th-brand-icon-image: url("/dashboard/custom-assets/company-mark.svg");
+}
+```
+
+Files beside the active custom CSS file are served under
+`/dashboard/custom-assets/`, so a host can keep icons, font files, and other
+dashboard-only assets next to its stylesheet.

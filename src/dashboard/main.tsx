@@ -184,6 +184,7 @@ function App() {
   }, [applyDashboardPayload]);
 
   useEffect(() => {
+    ensureCustomStylesheet();
     void refresh(false);
     const interval = window.setInterval(() => void refresh(false), 5000);
     return () => window.clearInterval(interval);
@@ -853,8 +854,8 @@ function SectionLabel({ children, className }: { children: React.ReactNode; clas
 
 function BrandMark({ className, iconClassName }: { className: string; iconClassName: string }) {
   return (
-    <span className={cx("accent-bg grid place-items-center shadow-sm", className)} aria-hidden="true">
-      <Leaf className={iconClassName} />
+    <span className={cx("brand-mark accent-bg grid place-items-center shadow-sm", className)} aria-hidden="true">
+      <Leaf className={cx("brand-mark-icon", iconClassName)} />
     </span>
   );
 }
@@ -926,6 +927,16 @@ function parseEventPayload(data: string): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+function ensureCustomStylesheet(): void {
+  const id = "flow-dashboard-custom-css";
+  if (document.getElementById(id)) return;
+  const link = document.createElement("link");
+  link.id = id;
+  link.rel = "stylesheet";
+  link.href = "/dashboard/custom.css";
+  document.head.appendChild(link);
 }
 
 function formatSnapshotTime(snapshot: DashboardPayload["snapshot"]): string {

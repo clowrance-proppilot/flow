@@ -34,9 +34,7 @@ ledger:
 
 runtime:
   dashboard:
-    host: "127.0.0.1"
-    port: 8867
-    url: "http://127.0.0.1:8867"
+    customCssPath: ".flow/dashboard.css"
     defaultThemeId: "forest"
     defaultMode: "dark"
     themes:
@@ -45,35 +43,3 @@ runtime:
         primary: "#6fb143"
         primaryDark: "#3f6f24"
         primaryFg: "#102108"
-
-workTypes:
-  - name: "flow.prepare_workspace"
-    category: "prepare"
-    requiredCapabilities: ["repo.worktree.prepare"]
-    allowedExecutors: ["live_agent_thread"]
-    outputType: "workspace_result"
-  - name: "flow.implement"
-    category: "implement"
-    requiredCapabilities: ["code.edit", "test.run"]
-    allowedExecutors: ["live_agent_thread", "codex_worker"]
-    outputType: "worker_result"
-  - name: "flow.remediate"
-    category: "remediate"
-    requiredCapabilities: ["code.edit", "review.remediate", "test.run"]
-    allowedExecutors: ["live_agent_thread", "codex_worker"]
-    outputType: "worker_result"
-  - name: "flow.verify"
-    category: "verify"
-    requiredCapabilities: ["test.run", "evidence.record"]
-    allowedExecutors: ["live_agent_thread"]
-    outputType: "evidence_result"
-
-executors:
-  - name: "codex_worker"
-    executionMode: "background"
-    capabilities: ["code.edit", "test.run", "review.remediate"]
-    outputs: ["worker_result", "blocked_result"]
-  - name: "live_agent_thread"
-    executionMode: "local_thread"
-    capabilities: ["repo.worktree.prepare", "code.edit", "test.run", "review.remediate", "evidence.record"]
-    outputs: ["workspace_result", "worker_result", "blocked_result", "evidence_result"]

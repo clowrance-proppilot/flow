@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -7,20 +7,29 @@ import ts from "typescript";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const flowRoot = join(scriptDir, "..");
-const repoRoot = flowRoot;
 const stateDir = mkdtempSync(join(tmpdir(), "flow-smoke-"));
+const repoRoot = join(stateDir, "project");
 const statePath = join(stateDir, "state.json");
 
 try {
   buildFlow();
 
-  process.env.FLOW_PI_SDK_MODULE_PATH = join(flowRoot, "test-runtime", "pi-sdk-mock.mjs");
-  process.env.FLOW_FLOW_PROVIDER = "";
-  process.env.FLOW_FLOW_MODEL = "";
-  process.env.FLOW_PROVIDER = "";
-  process.env.FLOW_MODEL = "";
-  process.env.FLOW_PROJECT_ROOT = repoRoot;
-  process.env.FLOW_FLOW_SMOKE_STATE_PATH = statePath;
+  mkdirSync(join(repoRoot, ".flow"), { recursive: true });
+  writeFileSync(join(repoRoot, ".flow", "config.yaml"), [
+    'version: "1"',
+    "project:",
+    '  name: "smoke"',
+    "topology:",
+    "  repos:",
+    "    main:",
+    '      name: "smoke"',
+    "runtime:",
+    "  worker:",
+    `    sdkModulePath: "${join(flowRoot, "test-runtime", "pi-sdk-mock.mjs")}"`,
+    "",
+  ].join("\n"));
+  globalThis.flowSmokeStatePath = statePath;
+  process.chdir(repoRoot);
   const flowRuntimeEntry = join(flowRoot, "dist", "bin", "src", "flow-runtime.js");
   const { runFlowPrompt } = await import(`${pathToFileURL(flowRuntimeEntry).href}?t=${Date.now()}`);
   const result = await runFlowPrompt({ noSession: true, prompt: "Reply with exactly: OK" });

@@ -2,14 +2,9 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { existsSync, readdirSync, statSync } from "node:fs";
-import dotenv from "dotenv";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(scriptDir, "..");
-
-loadEnv(join(process.env.HOME ?? "", ".config", "flow", "env"));
-loadEnv(join(rootDir, ".env"));
-loadEnv(join(rootDir, ".env.local"));
 
 const entry = resolveEntry([
   join(rootDir, "dist", "bin", "src", "flow.js"),
@@ -33,11 +28,6 @@ if (!builtEntry) {
 }
 
 await import(`${pathToFileURL(builtEntry).href}?t=${Date.now()}`);
-
-function loadEnv(path) {
-  if (!path || !existsSync(path)) return;
-  dotenv.config({ path, override: false });
-}
 
 async function buildFlow() {
   const ts = await import("typescript");
@@ -89,7 +79,6 @@ function resolveEntry(candidates) {
 }
 
 function needsBuild(entry) {
-  if (process.env.FLOW_FORCE_BUILD === "1") return true;
   if (entry.includes(`${join("dist", "bin")}`)) return false;
   const entryMtime = statSync(entry).mtimeMs;
   return latestSourceMtime(join(rootDir, "src")) > entryMtime;

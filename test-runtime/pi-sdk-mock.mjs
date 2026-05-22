@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
-const statePath = process.env.FLOW_FLOW_SMOKE_STATE_PATH;
+const statePath = globalThis.flowSmokeStatePath;
 let activePrompts = 0;
 let maxActivePrompts = 0;
 

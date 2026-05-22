@@ -38,6 +38,20 @@ export interface BootstrapFlowConfigResult {
   owner?: string;
 }
 
+export interface ValidateFlowConfigResult {
+  ok: boolean;
+  path?: string;
+  projectName?: string;
+  version?: string;
+  repoCount?: number;
+  issueTrackerType?: string;
+  collaborationType?: string;
+  sourceControlType?: string;
+  ledgerType?: string;
+  errors: string[];
+  config?: FlowConfig;
+}
+
 interface BootstrapFlowConfigDraft {
   config: FlowConfig;
   projectName: string;
@@ -54,6 +68,51 @@ export async function loadFlowConfig(options: LoadFlowConfigOptions = {}): Promi
     ? JSON.parse(raw)
     : parseYaml(raw);
   return flowConfigSchema.parse(parsed);
+}
+
+export async function validateFlowConfig(options: LoadFlowConfigOptions = {}): Promise<ValidateFlowConfigResult> {
+  let configPath: string | undefined;
+  try {
+    configPath = findFlowConfigPath(options);
+  } catch (error) {
+    return { ok: false, errors: [errorMessage(error)] };
+  }
+  if (!configPath) return { ok: false, errors: ["Flow config not found."] };
+
+  try {
+    const raw = await readFile(configPath, "utf8");
+    const parsed = configPath.endsWith(".json")
+      ? JSON.parse(raw)
+      : parseYaml(raw);
+    const result = flowConfigSchema.safeParse(parsed);
+    if (!result.success) {
+      return {
+        ok: false,
+        path: configPath,
+        errors: result.error.issues.map((issue) => `${issue.path.join(".") || "<root>"}: ${issue.message}`),
+      };
+    }
+    const config = result.data;
+    return {
+      ok: true,
+      path: configPath,
+      projectName: config.project.name,
+      version: config.version,
+      repoCount: Object.keys(config.topology.repos).length,
+      issueTrackerType: config.issueTracker?.type,
+      collaborationType: config.collaboration?.type,
+      sourceControlType: config.sourceControl?.type,
+      ledgerType: config.ledger?.type,
+      errors: [],
+      config,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      path: configPath,
+      errors: [errorMessage(error)],
+    };
+  }
 }
 
 export function findFlowConfigPath(options: LoadFlowConfigOptions = {}): string | undefined {
@@ -147,12 +206,26 @@ async function inferBootstrapFlowConfig(projectRoot: string): Promise<BootstrapF
     },
     ...(github
       ? {
+        issueTracker: {
+          type: "github",
+          owner: github.owner,
+          repo: github.repo,
+        },
         collaboration: {
           type: "github",
           owner: github.owner,
+          repo: github.repo,
         },
       }
-      : {}),
+      : {
+        issueTracker: {
+          type: "local",
+          prefix: normalizeIssuePrefix(projectName),
+        },
+        collaboration: {
+          type: "none",
+        },
+      }),
     sourceControl: {
       type: "git",
     },
@@ -175,6 +248,11 @@ async function inferBootstrapFlowConfig(projectRoot: string): Promise<BootstrapF
     baseBranch,
     owner: github?.owner,
   };
+}
+
+function normalizeIssuePrefix(value: string): string {
+  const normalized = value.toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return normalized || "LOCAL";
 }
 
 async function inferBaseBranch(projectRoot: string): Promise<string> {
@@ -201,4 +279,8 @@ function parseGithubRemote(remote: string | undefined): { owner: string; repo: s
   const ssh = /^git@github\.com:([^/\s]+)\/([^/\s]+?)(?:\.git)?$/i.exec(remote);
   if (ssh) return { owner: ssh[1], repo: ssh[2] };
   return undefined;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

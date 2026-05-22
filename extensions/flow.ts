@@ -19,7 +19,7 @@ import { GhGitHubAdapter } from "../src/adapters/github.js";
 import { AcliJiraAdapter } from "../src/adapters/jira.js";
 
 function flowRoot() {
-  return process.env.FLOW_ROOT ?? process.cwd();
+  return process.cwd();
 }
 
 async function workRuntime() {
@@ -29,9 +29,19 @@ async function workRuntime() {
   // contract adapter layer so external shapes are decoupled from workRuntime internals.
   return new FlowWorkRuntime({
     store: new FlowStore({ root: flowRuntimePath(repoRoot) }),
-    ledger: createWorkflowLedger({ cwd: repoRoot }),
-    github: new GhGitHubAdapter({ cwd: repoRoot }),
-    jira: new AcliJiraAdapter({ cwd: repoRoot }),
+    ledger: createWorkflowLedger({
+      cwd: repoRoot,
+      adapter: configString(flowConfig?.ledger, "type"),
+      path: configString(flowConfig?.runtime, "workflowLedgerPath"),
+    }),
+    github: new GhGitHubAdapter({ cwd: repoRoot, owner: configString(flowConfig?.collaboration, "owner") }),
+    jira: new AcliJiraAdapter({
+      cwd: repoRoot,
+      siteUrl: configString(flowConfig?.issueTracker, "siteUrl"),
+      projectKey: configString(flowConfig?.issueTracker, "projectKey"),
+      email: configString(flowConfig?.issueTracker, "email"),
+      apiToken: configString(flowConfig?.issueTracker, "apiToken"),
+    }),
     ...(flowConfig
       ? {
         topology: configToProjectTopology(flowConfig),
@@ -39,7 +49,38 @@ async function workRuntime() {
       }
       : {}),
     projectRoot: repoRoot,
+    defaultJiraProjectKey: configString(flowConfig?.issueTracker, "projectKey"),
+    autoflowBlockedThreshold: flowConfig?.runtime?.autoflowBlockedThreshold,
+    workerTimeoutMs: flowConfig?.runtime?.worker?.timeoutMs,
+    debugEnabled: flowConfig?.runtime?.debug,
   });
+}
+
+async function configuredWorkerSpawner() {
+  const repoRoot = flowRoot();
+  const flowConfig = await loadFlowConfig({ projectRoot: repoRoot });
+  const worker = flowConfig?.runtime?.worker;
+  return createDefaultWorkerSpawner({
+    flowRoot: repoRoot,
+    executor: parseConfiguredWorkerExecutor(worker?.executor),
+    provider: worker?.provider,
+    model: worker?.model,
+    timeoutMs: worker?.timeoutMs,
+    sdkModulePath: worker?.sdkModulePath,
+    extensionPath: worker?.extensionPath,
+    agentDir: worker?.agentDir,
+    command: worker?.codexCommand,
+  });
+}
+
+function configString(config: Record<string, unknown> | undefined, key: string): string | undefined {
+  const value = config?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function parseConfiguredWorkerExecutor(value: unknown) {
+  if (value === WorkerExecutorValue.Pi || value === WorkerExecutorValue.Codex || value === WorkerExecutorValue.LiveAgentThread) return value;
+  return undefined;
 }
 
 function stringLiteralUnion(values: readonly string[]) {
@@ -704,7 +745,7 @@ export default function (pi: ExtensionAPI) {
           workspacePath: params.workspacePath,
           createdAt: params.createdAt,
         },
-        createDefaultWorkerSpawner({ flowRoot: flowRoot() }),
+        await configuredWorkerSpawner(),
       );
       return { content: [{ type: "text", text: result.summary }], details: result };
     },
@@ -724,7 +765,7 @@ export default function (pi: ExtensionAPI) {
     async execute(_toolCallId, params) {
       const result = await (await workRuntime()).autoFlowIssue(
         params.sessionId,
-        createDefaultWorkerSpawner({ flowRoot: flowRoot() }),
+        await configuredWorkerSpawner(),
         {
           autoPrepareWorkspace: params.autoPrepareWorkspace ?? true,
           autoApproveWorker: params.autoApproveWorker ?? true,

@@ -1,18 +1,19 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync, rmSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   WorkerExecutorValue,
   WorkerStatusValue,
+  type WorkerExecutor,
   type WorkerTaskRequest,
   type WorkerTaskResult,
   nowIso,
   workerTaskResultSchema,
 } from "./contracts.js";
-import { configuredPiValue, DEFAULT_PI_MODEL, DEFAULT_PI_PROVIDER } from "./pi-defaults.js";
+import { DEFAULT_AGENT_MODEL, DEFAULT_AGENT_PROVIDER } from "./pi-defaults.js";
 import type { WorkerProgressSink, WorkerSpawner } from "./executors/worker-contracts.js";
 export type { WorkerProgressEvent, WorkerProgressSink, WorkerSpawner } from "./executors/worker-contracts.js";
 
@@ -23,18 +24,20 @@ export interface PiWorkerSpawnerOptions {
   extensionPath?: string;
   flowRoot?: string;
   sdkModulePath?: string;
+  agentDir?: string;
 }
+
+export interface AgentSdkWorkerSpawnerOptions extends PiWorkerSpawnerOptions {}
 
 export interface CodexWorkerSpawnerOptions {
   command?: string;
   timeoutMs?: number;
   flowRoot?: string;
-  env?: NodeJS.ProcessEnv;
 }
 
 export interface DefaultWorkerSpawnerOptions extends PiWorkerSpawnerOptions {
-  env?: NodeJS.ProcessEnv;
-  codexAvailable?: (command: string, env: NodeJS.ProcessEnv) => boolean;
+  executor?: WorkerExecutor;
+  command?: string;
 }
 
 interface PiSdkLike {
@@ -52,20 +55,16 @@ export class PiWorkerSpawner implements WorkerSpawner {
   private readonly extensionPath?: string;
   private readonly flowRoot?: string;
   private readonly sdkModulePath: string;
+  private readonly agentDir?: string;
 
   constructor(options: PiWorkerSpawnerOptions = {}) {
-    this.provider = configuredPiValue(options.provider) ??
-      configuredPiValue(process.env.FLOW_WORKER_PROVIDER) ??
-      configuredPiValue(process.env.FLOW_PROVIDER) ??
-      DEFAULT_PI_PROVIDER;
-    this.model = configuredPiValue(options.model) ??
-      configuredPiValue(process.env.FLOW_WORKER_MODEL) ??
-      configuredPiValue(process.env.FLOW_MODEL) ??
-      DEFAULT_PI_MODEL;
-    this.timeoutMs = options.timeoutMs ?? Number(process.env.FLOW_PI_WORKER_TIMEOUT_MS ?? 2 * 60 * 1000);
-    this.extensionPath = options.extensionPath ?? process.env.FLOW_PI_EXTENSION_PATH ?? defaultExtensionPath();
-    this.flowRoot = options.flowRoot ?? process.env.FLOW_ROOT;
-    this.sdkModulePath = options.sdkModulePath ?? process.env.FLOW_PI_SDK_MODULE_PATH ?? "/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/dist/index.js";
+    this.provider = options.provider ?? DEFAULT_AGENT_PROVIDER;
+    this.model = options.model ?? DEFAULT_AGENT_MODEL;
+    this.timeoutMs = options.timeoutMs ?? 2 * 60 * 1000;
+    this.extensionPath = options.extensionPath ?? defaultExtensionPath();
+    this.flowRoot = options.flowRoot;
+    this.sdkModulePath = options.sdkModulePath ?? "/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/dist/index.js";
+    this.agentDir = options.agentDir;
   }
 
   async run(request: WorkerTaskRequest, onProgress?: WorkerProgressSink): Promise<WorkerTaskResult> {
@@ -88,7 +87,7 @@ export class PiWorkerSpawner implements WorkerSpawner {
         repoKey: request.repoKey,
         executor: request.executor,
         status: WorkerStatusValue.Succeeded,
-        summary: assistantText || "Pi Worker completed.",
+        summary: assistantText || "Agent SDK worker completed.",
         changedFiles: [],
         testsRun: [],
         blockers: [],
@@ -96,22 +95,6 @@ export class PiWorkerSpawner implements WorkerSpawner {
       });
     } catch (error) {
       const message = errorMessage(error);
-      if (process.env.FLOW_DEBUG_WORKER === "1") {
-        // Debug toggle for local dogfood failures in Worker runtime wiring.
-        console.error("[flow worker debug] run failure", {
-          taskId: request.id,
-          issueRef: request.issueRef,
-          repoKey: request.repoKey,
-          workspacePath: request.workspacePath,
-          provider: this.provider,
-          model: this.model,
-          extensionPath: this.extensionPath,
-          flowRoot: this.flowRoot,
-          sdkModulePath: this.sdkModulePath,
-          message,
-          stack: error instanceof Error ? error.stack : undefined,
-        });
-      }
       return workerTaskResultSchema.parse({
         taskId: request.id,
         issueRef: request.issueRef,
@@ -134,8 +117,8 @@ export class PiWorkerSpawner implements WorkerSpawner {
     const authStorage = sdk.AuthStorage.create();
     const modelRegistry = sdk.ModelRegistry.create(authStorage);
     const model = modelRegistry.find(this.provider, this.model);
-    if (!model) throw new Error(`Pi model not found for provider/model: ${this.provider}/${this.model}`);
-    const agentDir = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
+    if (!model) throw new Error(`Agent SDK model not found for provider/model: ${this.provider}/${this.model}`);
+    const agentDir = this.agentDir ?? join(this.flowRoot ?? request.workspacePath ?? process.cwd(), ".flow", "agent");
 
     const loader = await this.withPhase("resource_loader_init", async () =>
       new sdk.DefaultResourceLoader({
@@ -200,13 +183,6 @@ export class PiWorkerSpawner implements WorkerSpawner {
     return assistantTextFromMessages((session as { messages?: unknown }).messages);
   }
 
-  private workerEnv(): NodeJS.ProcessEnv {
-    return {
-      ...process.env,
-      ...(this.flowRoot ? { FLOW_ROOT: this.flowRoot } : {}),
-    };
-  }
-
   private async withPhase<T>(
     phase: string,
     operation: () => Promise<T> | T,
@@ -226,14 +202,10 @@ export class PiWorkerSpawner implements WorkerSpawner {
 export class CodexWorkerSpawner implements WorkerSpawner {
   private readonly command: string;
   private readonly timeoutMs: number;
-  private readonly flowRoot?: string;
-  private readonly env: NodeJS.ProcessEnv;
 
   constructor(options: CodexWorkerSpawnerOptions = {}) {
-    this.env = options.env ?? process.env;
-    this.command = options.command ?? this.env.FLOW_CODEX_BIN ?? "codex";
-    this.timeoutMs = options.timeoutMs ?? Number(this.env.FLOW_CODEX_WORKER_TIMEOUT_MS ?? 20 * 60 * 1000);
-    this.flowRoot = options.flowRoot ?? this.env.FLOW_ROOT;
+    this.command = options.command ?? "codex";
+    this.timeoutMs = options.timeoutMs ?? 20 * 60 * 1000;
   }
 
   async run(request: WorkerTaskRequest, onProgress?: WorkerProgressSink): Promise<WorkerTaskResult> {
@@ -299,12 +271,7 @@ export class CodexWorkerSpawner implements WorkerSpawner {
       "--dangerously-bypass-approvals-and-sandbox",
       prompt,
     ];
-    const env = {
-      ...this.env,
-      ...(this.flowRoot ? { FLOW_ROOT: this.flowRoot } : {}),
-    };
-
-    const result = await runProcess(this.command, args, { env, timeoutMs: this.timeoutMs });
+    const result = await runProcess(this.command, args, { timeoutMs: this.timeoutMs });
     const fileText = readTextFile(outputPath);
     rmSync(outputPath, { force: true });
     if (result.exitCode !== 0) {
@@ -320,22 +287,21 @@ export class CodexWorkerSpawner implements WorkerSpawner {
   }
 }
 
+export class AgentSdkWorkerSpawner extends PiWorkerSpawner {
+  constructor(options: AgentSdkWorkerSpawnerOptions = {}) {
+    super(options);
+  }
+}
+
 export function createDefaultWorkerSpawner(options: DefaultWorkerSpawnerOptions = {}): WorkerSpawner {
-  const env = options.env ?? process.env;
-  const executor = env.FLOW_WORKER_EXECUTOR?.trim().toLowerCase();
+  const executor = options.executor;
   if (executor === WorkerExecutorValue.Codex) {
-    return new CodexWorkerSpawner({ ...options, env });
+    return new CodexWorkerSpawner(options);
   }
   if (executor === WorkerExecutorValue.Pi) {
-    return new PiWorkerSpawner(options);
+    return new AgentSdkWorkerSpawner(options);
   }
-  const command = env.FLOW_CODEX_BIN ?? "codex";
-  const hasPiProviderCredentials = Boolean(env.OPENROUTER_API_KEY || env.OPENAI_API_KEY || env.ANTHROPIC_API_KEY);
-  const isCodexAvailable = options.codexAvailable ?? codexCommandAvailable;
-  if (!hasPiProviderCredentials && isCodexAvailable(command, env)) {
-    return new CodexWorkerSpawner({ ...options, env, command });
-  }
-  return new PiWorkerSpawner(options);
+  return new AgentSdkWorkerSpawner(options);
 }
 
 async function loadPiSdk(modulePath: string): Promise<PiSdkLike> {
@@ -349,7 +315,7 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, onTimeout:
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutHandle = setTimeout(() => {
       void onTimeout().catch(() => undefined);
-      reject(new Error(`Pi Worker timed out after ${timeoutMs}ms.`));
+      reject(new Error(`Agent SDK worker timed out after ${timeoutMs}ms.`));
     }, timeoutMs);
   });
   try {
@@ -497,17 +463,17 @@ function errorMessage(error: unknown): string {
     const fallback = stringifyUnknown(error);
     return [message, stack, cause, signal, code, killed, timedOut, details, errors, fallback]
       .filter((part) => typeof part === "string" && part.trim())
-      .join(" ") || "Pi Worker failed.";
+      .join(" ") || "Agent SDK worker failed.";
   }
   return String(error);
 }
 
 function compactErrorMessage(message: string): string {
   if (/SIGTERM|ETIMEDOUT|timed out/i.test(message)) {
-    return "Pi Worker timed out or was interrupted before returning a structured result.";
+    return "Agent SDK worker timed out or was interrupted before returning a structured result.";
   }
-  if (/No API key found|OPENROUTER_API_KEY is missing/i.test(message)) {
-    return "Pi Worker could not find provider credentials.";
+  if (/No API key found|API key is missing/i.test(message)) {
+    return "Agent SDK worker could not find provider credentials.";
   }
   const lines = message
     .split("\n")
@@ -518,7 +484,7 @@ function compactErrorMessage(message: string): string {
   const flattened = message.replace(/\s+/g, " ").trim();
   const compact = flattened.slice(0, 500);
   if (compact && /[a-zA-Z0-9]/.test(compact) && !/^[\[\]{}(),:;'"`]+$/.test(compact)) return compact;
-  return "Pi Worker failed without a readable error message. Enable FLOW_DEBUG_WORKER=1 and inspect the Flow stderr log for raw diagnostics.";
+  return "Agent SDK worker failed without a readable error message. Enable runtime.debug in .flow/config.yaml and inspect the Flow stderr log for raw diagnostics.";
 }
 
 function stringifyUnknown(value: unknown): string {
@@ -555,8 +521,8 @@ function nextPickupForWorkerError(message: string): string {
   if (/SIGTERM|ETIMEDOUT|timed out/i.test(message)) {
     return "Inspect the Worker lifecycle record, then rerun with a longer timeout or split the task smaller.";
   }
-  if (/No API key found|OPENROUTER_API_KEY is missing/i.test(message)) {
-    return "Configure Pi provider credentials, then rerun the Worker request.";
+  if (/No API key found|API key is missing/i.test(message)) {
+    return "Configure agent provider credentials, then rerun the Worker request.";
   }
   if (/Codex background executor exited|command not found|ENOENT/i.test(message)) {
     return "Inspect the Codex executor error, then retry after fixing the local Codex CLI/runtime configuration.";
@@ -596,11 +562,10 @@ interface ProcessResult {
 function runProcess(
   command: string,
   args: string[],
-  options: { env: NodeJS.ProcessEnv; timeoutMs: number },
+  options: { timeoutMs: number },
 ): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
-      env: options.env,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
@@ -647,14 +612,6 @@ function readTextFile(path: string): string {
 
 function safeFilePart(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]/g, "-").slice(0, 80) || "worker";
-}
-
-function codexCommandAvailable(command: string, env: NodeJS.ProcessEnv): boolean {
-  if (command.includes("/")) return existsSync(command);
-  const pathEntries = (env.PATH ?? "").split(":").filter(Boolean);
-  return pathEntries.some((entry) => existsSync(join(entry, command))) ||
-    existsSync("/opt/homebrew/bin/codex") ||
-    existsSync("/usr/local/bin/codex");
 }
 
 function defaultExtensionPath(): string | undefined {

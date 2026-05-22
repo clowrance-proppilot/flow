@@ -1,6 +1,8 @@
+import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { promisify } from "node:util";
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -22,6 +24,7 @@ import {
   PiWorkerSpawner,
   createDefaultWorkerSpawner,
   createWorkflowLedger,
+  verifyJsonlWorkflowLedger,
   bootstrapFlowConfig,
   configToProjectTopology,
   configToWorkTypeRegistry,
@@ -29,11 +32,18 @@ import {
   flowIssueProjectionPath,
   flowConfigSchema,
   loadFlowConfig,
+  validateFlowConfig,
   LocalThreadExecutor,
+  LocalIssueTrackerAdapter,
+  NoopCodeCollaborationAdapter,
+  ProviderAdapterError,
+  classifyProviderCliError,
 } from "../src/index.js";
 import type { ProjectTopology } from "../src/project-topology.js";
 import { parseGitHubIssues, parsePullRequests } from "../src/adapters/github.js";
-import { currentUserOpenSprintJql, parseJiraCommentUrl, parseJiraIssue, parseJiraSearch } from "../src/adapters/jira.js";
+import { currentUserBacklogJql, currentUserOpenSprintJql, parseJiraCommentUrl, parseJiraIssue, parseJiraSearch } from "../src/adapters/jira.js";
+
+const execFileAsync = promisify(execFile);
 
 const legacyHostConfig = flowConfigSchema.parse({
   version: "1",
@@ -71,8 +81,6 @@ function testWorkRuntime(options: ConstructorParameters<typeof FlowWorkRuntime>[
   });
 }
 
-process.env.FLOW_GITHUB_OWNER = "ExampleOrg";
-
 function configString(config: Record<string, unknown> | undefined, key: string): string | undefined {
   const value = config?.[key];
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
@@ -88,7 +96,6 @@ test("Typed work contracts and registry validate supported jobs", () => {
     workType: "flow.implement",
     status: "queued",
     input: { prompt: "fix it" },
-    requiredCapabilities: ["code.edit", "test.run"],
     createdAt: now,
     updatedAt: now,
   });
@@ -104,6 +111,7 @@ test("Typed work contracts and registry validate supported jobs", () => {
   });
 
   assert.equal(workTypes.get(job.workType)?.outputType, "worker_result");
+  assert.equal(workTypes.executorCanRun("live_agent_thread", job.workType, job.requiredCapabilities), true);
   assert.equal(workTypes.executorCanRun("pi_worker", job.workType, job.requiredCapabilities), true);
   assert.equal(workTypes.executorCanRun("pi_worker", "flow.prepare_workspace"), false);
   assert.equal(result.jobId, job.id);
@@ -145,6 +153,23 @@ test("Flow config schema validates topology and adapter declarations", () => {
   assert.equal(config.project.name, "Example");
   assert.equal(config.issueTracker?.type, "github");
   assert.equal(config.topology.issueInference[0].repo, "main");
+
+  const localConfig = flowConfigSchema.parse({
+    version: "1",
+    project: { name: "Local Example" },
+    topology: {
+      repos: {
+        main: { name: "example", baseBranch: "main" },
+      },
+    },
+    issueTracker: { type: "local", prefix: "LOCAL" },
+    collaboration: { type: "none" },
+    sourceControl: { type: "git" },
+    ledger: { type: "flow" },
+  });
+  assert.equal(localConfig.issueTracker?.type, "local");
+  assert.equal(localConfig.collaboration?.type, "none");
+
   assert.throws(() =>
     flowConfigSchema.parse({
       version: "1",
@@ -154,6 +179,44 @@ test("Flow config schema validates topology and adapter declarations", () => {
         issueInference: [{ repo: "missing", keywords: ["oops"] }],
       },
     })
+  );
+  assert.throws(() =>
+    flowConfigSchema.parse({
+      version: "1",
+      project: { name: "Bad branch pattern" },
+      topology: {
+        repos: { main: { name: "example" } },
+        branchPattern: "feature/{slug}",
+      },
+    }),
+    /branchPattern must include/,
+  );
+  assert.throws(() =>
+    flowConfigSchema.parse({
+      version: "1",
+      project: { name: "Bad GitHub labels" },
+      topology: {
+        repos: { main: { name: "example" } },
+      },
+      issueTracker: { type: "github", owner: "example", repo: "example", activeLabels: ["ready", ""] },
+    }),
+    /activeLabels must be an array/,
+  );
+  assert.throws(() =>
+    flowConfigSchema.parse({
+      version: "1",
+      project: { name: "Bad dashboard theme" },
+      topology: {
+        repos: { main: { name: "example" } },
+      },
+      runtime: {
+        dashboard: {
+          themes: [{ id: "default", name: "Default", primary: "#111", primaryDark: "#000", primaryFg: "#fff" }],
+          defaultThemeId: "missing",
+        },
+      },
+    }),
+    /defaultThemeId must match/,
   );
 });
 
@@ -202,6 +265,28 @@ test("Flow config loader reads YAML and builds topology", async () => {
   }), "bug/abc-123-fix-backend-endpoint");
 });
 
+test("Flow config validator returns machine-readable diagnostics", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-config-"));
+  await mkdir(dirname(flowConfigPath(root)), { recursive: true });
+  await writeFile(flowConfigPath(root), [
+    'version: "1"',
+    "project:",
+    '  name: "Broken"',
+    "topology:",
+    "  repos:",
+    "    main:",
+    '      name: "example"',
+    '  branchPattern: "feature/{slug}"',
+  ].join("\n"), "utf8");
+
+  const result = await validateFlowConfig({ projectRoot: root });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.path, flowConfigPath(root));
+  assert.match(result.errors.join("\n"), /branchPattern must include/);
+  assert.equal(result.config, undefined);
+});
+
 test("Flow config bootstrap creates .flow/config.yaml from folder metadata", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-bootstrap-"));
   const result = await bootstrapFlowConfig({ projectRoot: root });
@@ -216,6 +301,8 @@ test("Flow config bootstrap creates .flow/config.yaml from folder metadata", asy
   assert.equal(config.project.name, result.projectName);
   assert.equal(config.topology.repos.main.name, result.repoName);
   assert.equal(config.topology.repos.main.baseBranch, "main");
+  assert.equal(config.issueTracker?.type, "local");
+  assert.equal(config.collaboration?.type, "none");
   assert.equal(config.sourceControl?.type, "git");
   assert.equal(config.ledger?.type, "flow");
 
@@ -223,6 +310,49 @@ test("Flow config bootstrap creates .flow/config.yaml from folder metadata", asy
     () => bootstrapFlowConfig({ projectRoot: root }),
     /Flow config already exists/,
   );
+});
+
+test("Flow config bootstrap defaults to GitHub providers when a GitHub remote exists", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-bootstrap-github-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  await execFileAsync("git", ["remote", "add", "origin", "git@github.com:example-org/example.git"], { cwd: root });
+
+  const result = await bootstrapFlowConfig({ projectRoot: root });
+  const config = await loadFlowConfig({ projectRoot: root });
+
+  assert.ok(config);
+  assert.equal(result.owner, "example-org");
+  assert.equal(config.issueTracker?.type, "github");
+  assert.equal(config.issueTracker?.owner, "example-org");
+  assert.equal(config.issueTracker?.repo, "example");
+  assert.equal(config.collaboration?.type, "github");
+  assert.equal(config.collaboration?.owner, "example-org");
+  assert.equal(config.collaboration?.repo, "example");
+});
+
+test("Local issue tracker creates issues through the Flow ledger surface", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-local-"));
+  const ledger = new MemoryWorkflowLedger();
+  const runtime = new FlowWorkRuntime({
+    store: new FlowStore({ root: join(root, ".flow/runtime") }),
+    ledger,
+    issueTracker: new LocalIssueTrackerAdapter({ ledger, projectName: "Flow" }),
+    collaboration: new NoopCodeCollaborationAdapter(),
+    projectRoot: root,
+    readiness: { assess: assessIssue },
+  });
+
+  await runtime.createSession("local-session");
+  const issue = await runtime.createIssue("local-session", {
+    issueType: "Task",
+    summary: "Spike local surface",
+    description: "Keep Flow usable without GitHub.",
+  });
+
+  assert.equal(issue.ref, "FLOW-1");
+  assert.equal(issue.title, "Spike local surface");
+  assert.equal((await ledger.readIssue("FLOW-1"))?.ref, "FLOW-1");
+  assert.deepEqual(await new NoopCodeCollaborationAdapter().findCodeReviews("flow"), []);
 });
 
 test("Flow config builds default and custom work type registries", () => {
@@ -755,7 +885,7 @@ test("Readiness blocks pull requests missing the repo template", () => {
       checksPassing: true,
       autoReviewStatus: "passed",
       templateMissingHeadings: [
-        "JIRA Ticket or Reason for Change",
+        "Issue or Reason for Change",
         "Description",
         "Summary of Changes",
         "Related PRs or Issues",
@@ -766,7 +896,7 @@ test("Readiness blocks pull requests missing the repo template", () => {
   assert.equal(assessment.readyToAdvance, false);
   assert.equal(assessment.reviewReady, false);
   assert.equal(assessment.findings[0].summary, "Pull request does not follow the repo template.");
-  assert.match(assessment.findings[0].detail ?? "", /JIRA Ticket or Reason for Change/);
+  assert.match(assessment.findings[0].detail ?? "", /Issue or Reason for Change/);
 });
 
 test("Readiness blocks conflicted pull requests", () => {
@@ -1434,6 +1564,68 @@ test("Work Runtime creates Jira issues through Flow without generated labels", a
   assert.equal(selectedSession?.selectedIssueRef, "ISSUE-15738");
 });
 
+test("Work Runtime creates provider-neutral issues without requiring a Jira project key", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const ledger = new MemoryWorkflowLedger();
+  const store = new FlowStore({ root });
+  let createdInput: unknown;
+  const workRuntime = new FlowWorkRuntime({
+    store,
+    ledger,
+    topology: legacyHostTopology,
+    issueTracker: {
+      capabilities: {
+        canCreateIssues: true,
+        canTransitionIssues: false,
+        canPostComments: false,
+        canManageActivePlanningLane: false,
+      },
+      async getIssue(ref) {
+        return {
+          ref,
+          title: "Harden Flow issue creation",
+          type: "task",
+          status: "Open",
+          statusCategory: "To Do",
+          url: `https://github.com/example/flow/issues/${ref.replace("GH-", "")}`,
+          labels: [],
+        };
+      },
+      async createIssue(input) {
+        createdInput = input;
+        return {
+          ref: "GH-15738",
+          title: input.summary,
+          description: input.description,
+          type: input.issueType.toLowerCase(),
+          status: "Open",
+          statusCategory: "To Do",
+          url: "https://github.com/example/flow/issues/15738",
+          labels: [],
+        };
+      },
+    },
+  });
+  const session = await workRuntime.createSession("session-create-provider-neutral");
+
+  const issue = await workRuntime.createIssue(session.id, {
+    issueType: "Task",
+    summary: "Harden Flow issue creation",
+    description: "Provider-neutral issue creation should not require Jira config.",
+    repoKeys: ["main"],
+  });
+
+  assert.deepEqual(createdInput, {
+    projectKey: undefined,
+    issueType: "Task",
+    summary: "Harden Flow issue creation",
+    description: "Provider-neutral issue creation should not require Jira config.",
+  });
+  assert.equal(issue.ref, "GH-15738");
+  assert.equal(issue.metadata.jiraIssueType, "task");
+  assert.deepEqual(issue.repoKeys, ["main"]);
+});
+
 test("Work Runtime moves issues into the active Jira sprint through Flow", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
   const ledger = new MemoryWorkflowLedger();
@@ -2013,7 +2205,7 @@ test("Mirrored workflow ledger keeps primary authoritative when mirror fails", a
 
 test("Flow workflow ledger persists records to local JSONL by default", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-ledger-"));
-  const ledger = createWorkflowLedger({ cwd: root, env: {} as NodeJS.ProcessEnv });
+  const ledger = createWorkflowLedger({ cwd: root });
   await ledger.writeIssue({
     ref: "ISSUE-90",
     title: "Native ledger",
@@ -2033,13 +2225,50 @@ test("Flow workflow ledger persists records to local JSONL by default", async ()
     completedAt: nowIso(),
   });
 
-  const reloaded = createWorkflowLedger({ cwd: root, env: {} as NodeJS.ProcessEnv });
+  const reloaded = createWorkflowLedger({ cwd: root });
   assert.equal((await reloaded.readIssue("ISSUE-90"))?.title, "Native ledger");
   assert.equal((await reloaded.listWorkerResults("ISSUE-90"))[0]?.taskId, "worker-90");
   const projection = JSON.parse(await readFile(flowIssueProjectionPath(root, "ISSUE-90"), "utf8"));
   assert.equal(projection.issue.title, "Native ledger");
   assert.equal(projection.workerRuns[0].taskId, "worker-90");
   assert.equal(projection.workerResults[0].taskId, "worker-90");
+});
+
+test("Flow workflow ledger verification rebuilds issue projections", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-ledger-"));
+  const ledger = createWorkflowLedger({ cwd: root });
+  await ledger.writeIssue({
+    ref: "ISSUE-91",
+    title: "Projection rebuild",
+    repoKeys: ["main"],
+    state: "queued",
+    metadata: {},
+  });
+  await writeFile(flowIssueProjectionPath(root, "ISSUE-91"), "{\"issue\":{\"title\":\"stale\"}}\n", "utf8");
+
+  const result = await verifyJsonlWorkflowLedger(join(root, ".flow", "ledger", "workflow.jsonl"), {
+    rebuildProjections: true,
+  });
+  const projection = JSON.parse(await readFile(flowIssueProjectionPath(root, "ISSUE-91"), "utf8"));
+
+  assert.equal(result.ok, true);
+  assert.equal(result.validRecords, 1);
+  assert.equal(result.rebuiltProjections, 1);
+  assert.equal(projection.issue.title, "Projection rebuild");
+});
+
+test("Flow workflow ledger verification reports malformed records", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-ledger-"));
+  const ledgerPath = join(root, ".flow", "ledger", "workflow.jsonl");
+  await mkdir(dirname(ledgerPath), { recursive: true });
+  await writeFile(ledgerPath, "{\"kind\":\"unknown\",\"value\":{}}\nnot-json\n", "utf8");
+
+  const result = await verifyJsonlWorkflowLedger(ledgerPath, { rebuildProjections: true });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.invalidRecords, 2);
+  assert.equal(result.rebuiltProjections, 0);
+  assert.match(result.diagnostics[0].message, /Unsupported ledger record kind/);
 });
 
 test("Workflow ledger upserts typed work jobs and results", async () => {
@@ -2750,25 +2979,19 @@ test("Work Runtime resets Autoflow attempt state through Flow", async () => {
   assert.equal(reset.metadata["workflow.autoflow.current_action_started_at"], "");
 });
 
-test("Default Worker spawner falls back to Codex when Pi credentials are unavailable", () => {
-  const env = { PATH: "/usr/bin" } as NodeJS.ProcessEnv;
-
+test("Default Worker spawner uses configured Codex executor", () => {
   const spawner = createDefaultWorkerSpawner({
-    env,
+    executor: "codex",
     flowRoot: "/repo",
-    codexAvailable: () => true,
   });
 
   assert.equal(spawner instanceof CodexWorkerSpawner, true);
 });
 
-test("Default Worker spawner honors explicit Pi executor selection", () => {
-  const env = { FLOW_WORKER_EXECUTOR: "pi" } as NodeJS.ProcessEnv;
-
+test("Default Worker spawner uses configured agent SDK executor", () => {
   const spawner = createDefaultWorkerSpawner({
-    env,
+    executor: "pi",
     flowRoot: "/repo",
-    codexAvailable: () => true,
   });
 
   assert.equal(spawner instanceof PiWorkerSpawner, true);
@@ -4304,6 +4527,13 @@ test("Jira adapter queue query includes active dev and review work only", () => 
   );
 });
 
+test("Jira adapter backlog query includes default planning statuses", () => {
+  assert.equal(
+    currentUserBacklogJql(configString(legacyHostConfig.issueTracker, "projectKey")),
+    "project = ISSUE AND assignee = currentUser() AND sprint is EMPTY AND status in ('Ready for Dev', 'To Do', 'Selected for Development') ORDER BY updated DESC",
+  );
+});
+
 test("Beads ledger issue update includes title and description", () => {
   assert.deepEqual(
     beadUpdateArgsForIssue("issue-1", {
@@ -4326,7 +4556,7 @@ test("GitHub adapter parses pull request check status", () => {
         mergeable: "MERGEABLE",
         mergeStateStatus: "CLEAN",
         reviewDecision: "REVIEW_REQUIRED",
-        body: `### JIRA Ticket or Reason for Change
+        body: `### Issue or Reason for Change
 
 ISSUE-1
 
@@ -4350,6 +4580,7 @@ None.`,
       },
     ],
     "app-api",
+    ["Issue or Reason for Change", "Description", "Summary of Changes", "Related PRs or Issues"],
   );
 
   assert.equal(prs[0].checksPassing, true);
@@ -4384,6 +4615,24 @@ test("GitHub issue tracker parses issue list JSON", () => {
   assert.equal(issues[0].assignees.join(","), "codex");
 });
 
+test("Provider CLI errors are classified for actionable Flow blockers", () => {
+  const missingCli = classifyProviderCliError("github", "gh issue list", {
+    message: "spawn gh ENOENT",
+    code: "ENOENT",
+  });
+  const auth = classifyProviderCliError("jira", "acli jira workitem search", {
+    stderr: "Unauthorized: token expired",
+  });
+  const rateLimit = classifyProviderCliError("github", "gh pr view", {
+    stderr: "API rate limit exceeded",
+  });
+
+  assert.ok(missingCli instanceof ProviderAdapterError);
+  assert.equal(missingCli.code, "cli_missing");
+  assert.equal(auth.code, "auth_missing");
+  assert.equal(rateLimit.code, "rate_limited");
+});
+
 test("GitHub adapter parses merged pull request lifecycle fields", () => {
   const prs = parsePullRequests(
     [
@@ -4395,7 +4644,7 @@ test("GitHub adapter parses merged pull request lifecycle fields", () => {
         state: "MERGED",
         mergedAt: "2026-05-11T19:11:01Z",
         isDraft: false,
-        body: `### JIRA Ticket or Reason for Change
+        body: `### Issue or Reason for Change
 
 ISSUE-15594
 
@@ -4411,6 +4660,7 @@ None.`,
       },
     ],
     "app-api",
+    ["Issue or Reason for Change", "Description", "Summary of Changes", "Related PRs or Issues"],
   );
 
   assert.equal(prs[0].state, "MERGED");
@@ -4435,14 +4685,34 @@ test("GitHub adapter flags pull requests missing template headings", () => {
       },
     ],
     "app-api",
+    ["Issue or Reason for Change", "Description", "Summary of Changes", "Related PRs or Issues"],
   );
 
   assert.deepEqual(prs[0].templateMissingHeadings, [
-    "JIRA Ticket or Reason for Change",
+    "Issue or Reason for Change",
     "Description",
     "Summary of Changes",
     "Related PRs or Issues",
   ]);
+});
+
+test("GitHub adapter does not enforce a PR template when none is provided", () => {
+  const prs = parsePullRequests(
+    [
+      {
+        number: 1403,
+        title: "ISSUE-15677",
+        url: "https://github.com/ExampleOrg/app-api/pull/1403",
+        headRefName: "feature/issue-15677",
+        isDraft: false,
+        body: "No repository template is configured.",
+        statusCheckRollup: [{ status: "COMPLETED", conclusion: "SUCCESS" }],
+      },
+    ],
+    "app-api",
+  );
+
+  assert.equal(prs[0].templateMissingHeadings, undefined);
 });
 
 test("GitHub adapter parses Codex review must-fix sections", () => {

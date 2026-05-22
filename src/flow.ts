@@ -13,10 +13,14 @@ import {
   FlowWorkRuntime,
   GhGitHubAdapter,
   IssueStateValue,
+  WorkerExecutorValue,
   flowLayout,
   flowRuntimePath,
-  loadFlowConfig,
+  flowWorkflowLedgerPath,
   terminalWorkerStatusValues,
+  type AcceptanceCriterionEvidence,
+  validateFlowConfig,
+  verifyJsonlWorkflowLedger,
   type CreateIssueOptions,
   type LocalThreadResultInput,
   type WorkerExecutor,
@@ -25,11 +29,17 @@ import {
   workerExecutorValues,
 } from "./index.js";
 import { GhGitHubIssueTrackerAdapter } from "./adapters/github.js";
-import { loadFlowEnv, repoRoot } from "./flow-runtime.js";
+import { LocalIssueTrackerAdapter, NoopCodeCollaborationAdapter } from "./adapters/local.js";
+import { repoRoot } from "./flow-runtime.js";
 
-loadFlowEnv();
-
-const defaultSessionId = process.env.FLOW_SESSION_ID ?? "cli";
+const configValidation = await validateFlowConfig({ projectRoot: repoRoot });
+const flowConfig = configValidation.config;
+const defaultSessionId = configString(flowConfig?.runtime, "defaultSessionId") ?? "cli";
+const workflowLedger = createWorkflowLedger({
+  cwd: repoRoot,
+  adapter: configString(flowConfig?.ledger, "type"),
+  path: configString(flowConfig?.runtime, "workflowLedgerPath"),
+});
 const rawWorkRuntimeMethods = [
   "inspectDashboardQueue",
   "inspectQueue",
@@ -52,16 +62,21 @@ const rawWorkRuntimeMethods = [
   "adoptLocalThread",
   "recordExecutorResult",
   "recordLocalThreadResult",
+  "recordEvidence",
+  "recordDocumentation",
+  "recordPullRequest",
   "summarizeHandoff",
   "observeFlowSubject",
 ];
-const flowConfig = await loadFlowConfig({ projectRoot: repoRoot });
 const runtime = new FlowWorkRuntime({
   store: new FlowStore({ root: flowRuntimePath(repoRoot) }),
-  ledger: createWorkflowLedger({ cwd: repoRoot }),
-  github: new GhGitHubAdapter({ cwd: repoRoot, owner: configString(flowConfig?.collaboration, "owner") }),
+  ledger: workflowLedger,
+  collaboration: createCollaboration(),
   issueTracker: createIssueTracker(),
   defaultJiraProjectKey: configString(flowConfig?.issueTracker, "projectKey"),
+  autoflowBlockedThreshold: flowConfig?.runtime?.autoflowBlockedThreshold,
+  workerTimeoutMs: flowConfig?.runtime?.worker?.timeoutMs,
+  debugEnabled: flowConfig?.runtime?.debug,
   ...(flowConfig
     ? {
       topology: configToProjectTopology(flowConfig),
@@ -118,6 +133,86 @@ program
   .option("--force", "overwrite an existing .flow/config.yaml")
   .action(async (options: { force?: boolean }) => {
     writeJson(await bootstrapFlowConfig({ projectRoot: repoRoot, force: Boolean(options.force) }));
+  });
+
+program
+  .command("config-validate")
+  .description("Validate .flow/config.yaml and emit machine-readable diagnostics.")
+  .option("--path <path>", "config path")
+  .action(async (options: { path?: string }) => {
+    const result = await validateFlowConfig({ projectRoot: repoRoot, configPath: options.path });
+    const { config: _config, ...publicResult } = result;
+    writeJson(publicResult);
+    if (!result.ok) process.exitCode = 1;
+  });
+
+program
+  .command("config-explain")
+  .description("Summarize the active Flow config without dumping secrets or provider credentials.")
+  .option("--path <path>", "config path")
+  .action(async (options: { path?: string }) => {
+    const result = await validateFlowConfig({ projectRoot: repoRoot, configPath: options.path });
+    const config = result.config;
+    writeJson({
+      ok: result.ok,
+      path: result.path,
+      errors: result.errors,
+      project: config?.project,
+      topology: config
+        ? {
+          repos: Object.fromEntries(Object.entries(config.topology.repos).map(([key, repo]) => [key, {
+            name: repo.name,
+            baseBranch: repo.baseBranch,
+            pathFromRoot: repo.pathFromRoot,
+          }])),
+          branchPattern: config.topology.branchPattern,
+          pullRequestUrlPattern: config.topology.pullRequestUrlPattern,
+          issueInferenceRules: config.topology.issueInference.length,
+        }
+        : undefined,
+      adapters: config
+        ? {
+          issueTracker: config.issueTracker?.type,
+          collaboration: config.collaboration?.type,
+          sourceControl: config.sourceControl?.type,
+          ledger: config.ledger?.type,
+        }
+        : undefined,
+      runtime: config?.runtime
+        ? {
+          defaultSessionId: config.runtime.defaultSessionId,
+          dashboard: config.runtime.dashboard
+            ? {
+              host: config.runtime.dashboard.host,
+              port: config.runtime.dashboard.port,
+              url: config.runtime.dashboard.url,
+              defaultThemeId: config.runtime.dashboard.defaultThemeId,
+            }
+            : undefined,
+          worker: config.runtime.worker
+            ? {
+              executor: config.runtime.worker.executor,
+              provider: config.runtime.worker.provider,
+              model: config.runtime.worker.model,
+              timeoutMs: config.runtime.worker.timeoutMs,
+            }
+            : undefined,
+        }
+        : undefined,
+    });
+    if (!result.ok) process.exitCode = 1;
+  });
+
+program
+  .command("ledger-verify")
+  .description("Verify the Flow workflow ledger and optionally rebuild issue projections.")
+  .option("--path <path>", "workflow ledger path")
+  .option("--rebuild-projections", "rebuild .flow/ledger/issues projections from valid ledger records")
+  .action(async (options: { path?: string; rebuildProjections?: boolean }) => {
+    writeJson(await verifyJsonlWorkflowLedger(
+      options.path ?? configString(flowConfig?.runtime, "workflowLedgerPath") ?? flowWorkflowLedgerPath(repoRoot),
+      { rebuildProjections: Boolean(options.rebuildProjections) },
+    ));
   });
 
 program
@@ -222,7 +317,7 @@ program
     await runtime.selectIssue(options.session, await queueIssue(issueRef));
     writeJson(await runtime.autoFlowIssue(
       options.session,
-      createDefaultWorkerSpawner({ flowRoot: repoRoot }),
+      createConfiguredWorkerSpawner(),
       {
         autoPrepareWorkspace: true,
         autoApproveWorker: true,
@@ -276,15 +371,97 @@ program
   });
 
 program
+  .command("record-pr")
+  .description("Record an existing pull request for an issue.")
+  .argument("<issue-ref>", "issue key or ref")
+  .requiredOption("--repo <name>", "repo name or key")
+  .requiredOption("--number <number>", "pull request number", parsePositiveInteger)
+  .requiredOption("--url <url>", "pull request URL")
+  .option("-s, --session <id>", "session id", defaultSessionId)
+  .option("--draft", "record the pull request as draft")
+  .option("--checks-passing", "record checks as passing")
+  .option("--review-decision <decision>", "review decision")
+  .action(async (issueRef: string, options: {
+    session: string;
+    repo: string;
+    number: number;
+    url: string;
+    draft?: boolean;
+    checksPassing?: boolean;
+    reviewDecision?: string;
+  }) => {
+    await ensureSession(options.session);
+    await runtime.selectIssue(options.session, await queueIssue(issueRef));
+    writeJson(await runtime.recordPullRequest(options.session, {
+      issueRef,
+      repo: options.repo,
+      number: options.number,
+      url: options.url,
+      isDraft: Boolean(options.draft),
+      checksPassing: options.checksPassing,
+      reviewDecision: options.reviewDecision,
+    }));
+  });
+
+program
+  .command("record-evidence")
+  .description("Record acceptance evidence for an issue.")
+  .argument("<issue-ref>", "issue key or ref")
+  .requiredOption("--summary <text>", "evidence summary")
+  .option("-s, --session <id>", "session id", defaultSessionId)
+  .option("--source <text>", "evidence source", "local")
+  .option("--criteria <items>", "comma-separated acceptance criteria")
+  .action(async (issueRef: string, options: {
+    session: string;
+    summary: string;
+    source: string;
+    criteria?: string;
+  }) => {
+    await ensureSession(options.session);
+    await runtime.selectIssue(options.session, await queueIssue(issueRef));
+    writeJson(await runtime.recordEvidence(options.session, {
+      issueRef,
+      summary: options.summary,
+      source: options.source,
+      criteria: parseEvidenceCriteria(options.criteria, options.summary, options.source),
+    }));
+  });
+
+program
+  .command("record-documentation")
+  .description("Record documentation disposition for an issue.")
+  .argument("<issue-ref>", "issue key or ref")
+  .requiredOption("--disposition <value>", "documentation disposition")
+  .requiredOption("--summary <text>", "documentation summary")
+  .option("-s, --session <id>", "session id", defaultSessionId)
+  .action(async (issueRef: string, options: {
+    session: string;
+    disposition: string;
+    summary: string;
+  }) => {
+    await ensureSession(options.session);
+    await runtime.selectIssue(options.session, await queueIssue(issueRef));
+    writeJson(await runtime.recordDocumentation(options.session, {
+      issueRef,
+      disposition: parseDocumentationDisposition(options.disposition),
+      summary: options.summary,
+    }));
+  });
+
+program
   .command("doctor")
   .description("Diagnose Flow visibility, routing, PR state, readiness blockers, and next action.")
   .argument("[issue-ref]", "issue key or ref")
   .option("-s, --session <id>", "session id", defaultSessionId)
-  .action(async (issueRef: string | undefined, options: { session: string }) => {
+  .option("--json", "emit JSON output; included for explicit CI and agent contracts")
+  .option("--strict", "exit nonzero when Flow diagnosis is blocked or degraded")
+  .action(async (issueRef: string | undefined, options: { session: string; strict?: boolean }) => {
     await ensureSession(options.session);
     const issue = issueRef ? await queueIssue(issueRef) : undefined;
     if (issue) await runtime.selectIssue(options.session, issue);
-    writeJson(await runtime.diagnoseIssue(options.session, issue?.ref));
+    const diagnosis = await runtime.diagnoseIssue(options.session, issue?.ref);
+    writeJson(diagnosis);
+    if (options.strict && diagnosis.status !== "ok") process.exitCode = 1;
   });
 
 program
@@ -368,6 +545,28 @@ async function runtimeGithubPullRequest(repo: string, number: number) {
 
 function runtimeGithub(): GhGitHubAdapter {
   return new GhGitHubAdapter({ cwd: repoRoot, owner: configString(flowConfig?.collaboration, "owner") });
+}
+
+function createConfiguredWorkerSpawner() {
+  const worker = flowConfig?.runtime?.worker;
+  return createDefaultWorkerSpawner({
+    flowRoot: repoRoot,
+    executor: parseConfiguredWorkerExecutor(worker?.executor),
+    provider: worker?.provider,
+    model: worker?.model,
+    timeoutMs: worker?.timeoutMs,
+    sdkModulePath: worker?.sdkModulePath,
+    extensionPath: worker?.extensionPath,
+    agentDir: worker?.agentDir,
+    command: worker?.codexCommand,
+  });
+}
+
+function parseConfiguredWorkerExecutor(value: unknown): WorkerExecutor | undefined {
+  if (value === WorkerExecutorValue.Pi || value === WorkerExecutorValue.Codex || value === WorkerExecutorValue.LiveAgentThread) {
+    return value;
+  }
+  return undefined;
 }
 
 function parsePullRequestRef(ref: string): { repo: string; number: number } | undefined {
@@ -509,13 +708,36 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
           completedAt: typeof params.completedAt === "string" ? params.completedAt : undefined,
         },
       );
+    case "recordEvidence":
+      return runtime.recordEvidence(String(params.sessionId ?? defaultSessionId), {
+        issueRef: String(params.issueRef),
+        summary: String(params.summary),
+        source: typeof params.source === "string" ? params.source : "local",
+        criteria: parseEvidenceCriteria(params.criteria, String(params.summary), typeof params.source === "string" ? params.source : "local"),
+      });
+    case "recordDocumentation":
+      return runtime.recordDocumentation(String(params.sessionId ?? defaultSessionId), {
+        issueRef: String(params.issueRef),
+        disposition: parseDocumentationDisposition(params.disposition),
+        summary: String(params.summary),
+      });
+    case "recordPullRequest":
+      return runtime.recordPullRequest(String(params.sessionId ?? defaultSessionId), {
+        issueRef: String(params.issueRef),
+        repo: String(params.repo),
+        number: Number(params.number),
+        url: String(params.url),
+        isDraft: Boolean(params.isDraft),
+        checksPassing: typeof params.checksPassing === "boolean" ? params.checksPassing : undefined,
+        reviewDecision: typeof params.reviewDecision === "string" ? params.reviewDecision : undefined,
+      });
     case "diagnoseIssue":
       return runtime.diagnoseIssue(
         String(params.sessionId ?? defaultSessionId),
         typeof params.issueRef === "string" ? params.issueRef : undefined,
       );
     case "autoFlowIssue":
-      return runtime.autoFlowIssue(String(params.sessionId ?? defaultSessionId), createDefaultWorkerSpawner({ flowRoot: repoRoot }), params.options ?? {});
+      return runtime.autoFlowIssue(String(params.sessionId ?? defaultSessionId), createConfiguredWorkerSpawner(), params.options ?? {});
     case "resetAutoflowState":
       return runtime.resetAutoflowState(String(params.sessionId ?? defaultSessionId), asStringArray(params.issueRefs));
     case "refreshReviewState":
@@ -602,6 +824,20 @@ function parseWorkerResultStatus(value: unknown): Extract<WorkerStatus, "succeed
   throw new Error(`Expected worker result status ${terminalWorkerStatusValues.join(", ")}, got ${String(value)}.`);
 }
 
+function parseEvidenceCriteria(value: unknown, summary: string, source: string): AcceptanceCriterionEvidence[] {
+  return (asStringArray(value) ?? []).map((label) => ({
+    label,
+    status: "passed",
+    evidence: summary,
+    source,
+  }));
+}
+
+function parseDocumentationDisposition(value: unknown): "not_needed" | "updated" | "needed" {
+  if (value === "not_needed" || value === "updated" || value === "needed") return value;
+  throw new Error(`Expected documentation disposition not_needed, updated, or needed, got ${String(value)}.`);
+}
+
 function parseJiraIssueType(value: string): "Bug" | "Task" | "Story" {
   if (value === "Bug" || value === "Task" || value === "Story") return value;
   throw new Error(`Expected issue type Bug, Task, or Story, got ${value}.`);
@@ -620,6 +856,13 @@ function errorMessage(error: unknown): string {
 function createIssueTracker() {
   const issueTracker = flowConfig?.issueTracker;
   const type = configString(issueTracker, "type") ?? "jira";
+  if (type === "local") {
+    return new LocalIssueTrackerAdapter({
+      ledger: workflowLedger,
+      projectName: flowConfig?.project.name,
+      prefix: configString(issueTracker, "prefix"),
+    });
+  }
   if (type === "github" || type === "github_issues") {
     return new GhGitHubIssueTrackerAdapter({
       cwd: repoRoot,
@@ -634,7 +877,20 @@ function createIssueTracker() {
     cwd: repoRoot,
     siteUrl: configString(issueTracker, "siteUrl"),
     projectKey: configString(issueTracker, "projectKey"),
+    activeQueueJql: configString(issueTracker, "activeQueueJql"),
+    backlogQueueJql: configString(issueTracker, "backlogQueueJql"),
+    email: configString(issueTracker, "email"),
+    apiToken: configString(issueTracker, "apiToken"),
   });
+}
+
+function createCollaboration() {
+  const collaboration = flowConfig?.collaboration;
+  const type = configString(collaboration, "type") ?? (configString(flowConfig?.issueTracker, "type") === "local" ? "none" : "github");
+  if (type === "none" || type === "local") {
+    return new NoopCodeCollaborationAdapter();
+  }
+  return new GhGitHubAdapter({ cwd: repoRoot, owner: configString(collaboration, "owner") });
 }
 
 function configString(config: Record<string, unknown> | undefined, key: string): string | undefined {

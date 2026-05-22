@@ -65,7 +65,7 @@ export interface CollaborationCapabilities {
 }
 
 export interface CreateIssueInput {
-  projectKey: string;
+  projectKey?: string;
   issueType: string;
   summary: string;
   description?: string;

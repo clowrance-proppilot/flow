@@ -102,6 +102,25 @@ type JsonlWorkflowLedgerRecord =
   | { kind: "workJob"; value: WorkJob }
   | { kind: "workJobResult"; value: WorkJobResult };
 
+export interface WorkflowLedgerDiagnostic {
+  line: number;
+  message: string;
+}
+
+export interface WorkflowLedgerVerifyOptions {
+  rebuildProjections?: boolean;
+}
+
+export interface WorkflowLedgerVerifyResult {
+  ok: boolean;
+  path: string;
+  totalLines: number;
+  validRecords: number;
+  invalidRecords: number;
+  rebuiltProjections: number;
+  diagnostics: WorkflowLedgerDiagnostic[];
+}
+
 interface IssueWorkflowProjection {
   issue?: WorkItem;
   workerRuns: WorkerRunRecord[];
@@ -271,6 +290,89 @@ export class JsonlWorkflowLedger implements WorkflowLedger {
   }
 }
 
+export async function verifyJsonlWorkflowLedger(
+  path: string,
+  options: WorkflowLedgerVerifyOptions = {},
+): Promise<WorkflowLedgerVerifyResult> {
+  const memory = new MemoryWorkflowLedger();
+  const diagnostics: WorkflowLedgerDiagnostic[] = [];
+  const issueRefs = new Set<string>();
+  let totalLines = 0;
+  let validRecords = 0;
+
+  if (existsSync(path)) {
+    const raw = await readFile(path, "utf8");
+    for (const [index, line] of raw.split(/\r?\n/).entries()) {
+      if (!line.trim()) continue;
+      totalLines += 1;
+      const lineNumber = index + 1;
+      try {
+        const record = parseWorkflowLedgerRecord(JSON.parse(line));
+        await applyWorkflowLedgerRecord(memory, record);
+        const issueRef = workflowLedgerRecordIssueRef(record);
+        if (issueRef) issueRefs.add(issueRef);
+        validRecords += 1;
+      } catch (error) {
+        diagnostics.push({ line: lineNumber, message: errorMessage(error) });
+      }
+    }
+  }
+
+  let rebuiltProjections = 0;
+  if (options.rebuildProjections && diagnostics.length === 0) {
+    const projections = new IssueProjectionStore(join(dirname(path), "issues"));
+    for (const issueRef of issueRefs) {
+      await projections.write(issueRef, {
+        issue: await memory.readIssue(issueRef),
+        workerRuns: await memory.listWorkerRuns(issueRef),
+        workerResults: await memory.listWorkerResults(issueRef),
+        workJobs: await memory.listWorkJobs(issueRef),
+        workJobResults: await memory.listWorkJobResults(issueRef),
+        updatedAt: nowIso(),
+      });
+      rebuiltProjections += 1;
+    }
+  }
+
+  return {
+    ok: diagnostics.length === 0,
+    path,
+    totalLines,
+    validRecords,
+    invalidRecords: diagnostics.length,
+    rebuiltProjections,
+    diagnostics,
+  };
+}
+
+function parseWorkflowLedgerRecord(value: unknown): JsonlWorkflowLedgerRecord {
+  if (typeof value !== "object" || value === null) throw new Error("Ledger record must be an object.");
+  const kind = (value as { kind?: unknown }).kind;
+  const recordValue = (value as { value?: unknown }).value;
+  if (kind === "issue") return { kind, value: workItemSchema.parse(recordValue) };
+  if (kind === "workerRun") return { kind, value: workerRunRecordSchema.parse(recordValue) };
+  if (kind === "workerResult") return { kind, value: workerTaskResultSchema.parse(recordValue) };
+  if (kind === "workJob") return { kind, value: workJobSchema.parse(recordValue) };
+  if (kind === "workJobResult") return { kind, value: workJobResultSchema.parse(recordValue) };
+  throw new Error(`Unsupported ledger record kind: ${String(kind)}.`);
+}
+
+async function applyWorkflowLedgerRecord(
+  memory: MemoryWorkflowLedger,
+  record: JsonlWorkflowLedgerRecord,
+): Promise<void> {
+  if (record.kind === "issue") await memory.writeIssue(record.value);
+  if (record.kind === "workerRun") await memory.recordWorkerRun(record.value);
+  if (record.kind === "workerResult") await memory.recordWorkerResult(record.value);
+  if (record.kind === "workJob") await memory.recordWorkJob(record.value);
+  if (record.kind === "workJobResult") await memory.recordWorkJobResult(record.value);
+}
+
+function workflowLedgerRecordIssueRef(record: JsonlWorkflowLedgerRecord): string | undefined {
+  if (record.kind === "issue") return record.value.ref;
+  return record.value.issueRef;
+}
+
 class IssueProjectionStore {
   constructor(private readonly root: string) {}
 
@@ -309,17 +411,14 @@ export interface BeadsWorkflowLedgerOptions {
 
 export interface WorkflowLedgerFactoryOptions {
   cwd: string;
-  env?: NodeJS.ProcessEnv;
   adapter?: string;
   path?: string;
 }
 
 export function createWorkflowLedger(options: WorkflowLedgerFactoryOptions): WorkflowLedger {
-  const env = options.env ?? process.env;
-  const adapter = options.adapter ?? env.FLOW_LEDGER_ADAPTER;
-  if (adapter === "beads") return new BeadsWorkflowLedger({ cwd: options.cwd });
+  if (options.adapter === "beads") return new BeadsWorkflowLedger({ cwd: options.cwd });
   return new JsonlWorkflowLedger({
-    path: options.path ?? env.FLOW_WORKFLOW_LEDGER_PATH ?? flowWorkflowLedgerPath(options.cwd),
+    path: options.path ?? flowWorkflowLedgerPath(options.cwd),
   });
 }
 
@@ -396,9 +495,7 @@ export class MirroredWorkflowLedger implements WorkflowLedger {
     try {
       await withPerfLog(`mirror.${label}`, operation, 1000);
     } catch (error) {
-      if (truthyMetadata(process.env.FLOW_MIRROR_DEBUG)) {
-        console.error(`Flow mirror failed: ${errorMessage(error)}`);
-      }
+      console.error(`Flow mirror failed: ${errorMessage(error)}`);
     }
   }
 }
@@ -636,8 +733,7 @@ async function withPerfLog<T>(label: string, operation: () => Promise<T>, defaul
 }
 
 function shouldPerfLog(durationMs: number, defaultThresholdMs: number): boolean {
-  const thresholdMs = Number(process.env.FLOW_PERF_CLI_THRESHOLD_MS ?? defaultThresholdMs);
-  return process.env.FLOW_PERF_LOG === "1" || durationMs >= thresholdMs;
+  return durationMs >= defaultThresholdMs;
 }
 
 function safeCommandArgs(args: string[]): string {
@@ -849,6 +945,10 @@ function parseIssueProjection(value: unknown): IssueWorkflowProjection {
   };
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function workerResultToRun(result: WorkerTaskResult): WorkerRunRecord {
   return workerRunRecordSchema.parse({
     taskId: result.taskId,
@@ -962,8 +1062,4 @@ function isRetryableBeadsError(error: unknown): boolean {
   const stderr = typeof record.stderr === "string" ? record.stderr : "";
   const message = typeof record.message === "string" ? record.message : "";
   return /serialization failure|transaction conflicts|try restarting transaction|database is locked/i.test(`${stderr}\n${message}`);
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

@@ -113,7 +113,7 @@ export async function callFlowCli(
   params: Record<string, unknown>,
   debugLog: (event: string, details: Record<string, unknown>) => void = () => undefined,
 ): Promise<unknown> {
-  const bin = process.env.FLOW_BIN ?? join(flowRoot, "bin", "flow");
+  const bin = join(flowRoot, "bin", "flow");
   const args = ["call", method, JSON.stringify(params)];
   const command = shouldRunWithNode(bin) ? process.execPath : bin;
   const commandArgs = shouldRunWithNode(bin) ? [bin, ...args] : args;
@@ -132,8 +132,7 @@ function shouldRunWithNode(bin: string): boolean {
 }
 
 function dashboardLiveRefreshTimeoutMs(): number {
-  const parsed = Number(process.env.FLOW_DASHBOARD_LIVE_REFRESH_TIMEOUT_MS ?? "60000");
-  return Number.isFinite(parsed) && parsed >= 1000 ? parsed : 60000;
+  return 60000;
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {

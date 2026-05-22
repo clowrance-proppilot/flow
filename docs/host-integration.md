@@ -1,16 +1,18 @@
 # Host Repo Integration
 
 Flow is a standalone workflow package. Host repos provide project-specific
-configuration; Flow provides the runtime, CLI, dashboard, ledgers, prompts,
-skills, and default adapters.
+configuration; Flow provides the runtime, CLI, dashboard, ledgers, and default
+contracts. Agent plugins, prompts, skills, and provider adapters are optional
+integration layers around that core.
 
 The intended integration contract is:
 
 1. Add Flow as a dependency or keep a sibling checkout.
 2. Run `flow bootstrap` at the host repo root to create `.flow/config.yaml`.
-3. Run Flow from the host repo root, or set `FLOW_PROJECT_ROOT`.
+3. Run Flow from the host repo root.
 4. Keep host-specific repo topology, branch policy, PR URL patterns, issue
-   routing keywords, work types, and executors in `.flow/config.yaml`.
+   routing keywords, and provider choices in `.flow/config.yaml`.
+5. Add agent plugins or provider adapters only where the host repo needs them.
 
 ## Package Surface
 
@@ -18,13 +20,14 @@ The package exposes:
 
 - `flow` and `flow-dashboard` binaries.
 - `flow` module exports from `src/index.ts` after build.
-- Optional agent extension, prompt, skill, hook, and dashboard assets through
-  the package files list.
+- Optional agent extension, prompt, skill, and dashboard assets through the
+  package files list.
 
 For a sibling checkout:
 
 ```bash
-FLOW_PROJECT_ROOT=/path/to/host-repo /path/to/flow/bin/flow queue
+cd /path/to/host-repo
+/path/to/flow/bin/flow queue
 ```
 
 For an npm dependency in a host repo after package publication:
@@ -64,8 +67,40 @@ Then update:
 - `topology.issueInference`: product-specific keywords that map issues to the
   right repo keys.
 - `issueTracker`, `collaboration`, and `ledger`: host-specific provider details.
-- `workTypes` and `executors`: executor names and capabilities available for
-  that host architecture.
+- `runtime.dashboard`: optional dashboard presentation overrides. Put broad UI
+  styling in `.flow/dashboard.css` or point `runtime.dashboard.customCssPath` at
+  another CSS file instead of expanding YAML with visual tokens.
+- `runtime.worker`: optional background worker adapter overrides.
+
+Hosts that cannot or do not want to use hosted issue tracking or code review can
+keep the workflow local:
+
+```yaml
+issueTracker:
+  type: "local"
+  prefix: "FLOW"
+
+collaboration:
+  type: "none"
+
+sourceControl:
+  type: "git"
+
+ledger:
+  type: "flow"
+```
+
+In that shape, the CLI creates local issue refs and the Flow ledger is the
+durable issue/workflow record. Git remains available for local branch and
+worktree inspection, but no hosted code review provider is required.
+
+Most hosts should not configure `workTypes` or `executors`. Flow ships
+permissive defaults for prepare, implement, remediate, verify, live-thread
+execution, and background execution. The default workflow is intentionally wide
+open so Flow can guide the current live agent thread instead of forcing users to
+model executor capabilities up front. Treat those sections as advanced extension
+points for hosts that are replacing Flow's built-in workflow categories, not as
+onboarding requirements.
 
 ## Boundaries
 
@@ -80,10 +115,22 @@ Host repos should own configuration and let Flow manage local workflow state:
 Flow should own reusable implementation:
 
 - runtime and reconciliation behavior
-- adapters and provider contracts
+- plugin-neutral adapter and provider contracts
 - executor contracts
 - dashboard
-- skills, prompts, hooks, and guard assets
+- optional skills, prompts, extensions, and guard assets
+
+Keep the core runtime independent from any single agent SDK, model provider,
+issue tracker, or code review provider. Compatibility names may remain at the
+edges, but new host behavior should plug in through `.flow/config.yaml`,
+provider adapters, executor adapters, or optional agent extensions.
+
+Use `.flow/config.yaml` as the Kubernetes-style declarative configuration model
+for durable Flow behavior. Environment variables are acceptable for process
+context, local launch mechanics, and secret injection where an adapter needs
+them, but they should not become the source of truth for workflow topology,
+provider selection, executor policy, ports, or ledger layout. Command-line flags
+are for one-off command input only.
 
 Avoid adding host-specific repo names or routing rules to Flow source code unless
 they are part of a deliberate built-in default. Prefer `.flow/config.yaml` for

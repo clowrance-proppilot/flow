@@ -1,16 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-base="${FLOW_QUALITY_BASE:-}"
-if [[ -z "$base" ]]; then
-  if git rev-parse --verify '@{upstream}' >/dev/null 2>&1; then
-    upstream="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}')"
-    base="$(git merge-base HEAD "$upstream")"
-  elif git rev-parse --verify origin/master >/dev/null 2>&1; then
-    base="$(git merge-base HEAD origin/master)"
-  else
-    base="$(git rev-parse HEAD~1)"
-  fi
+if git rev-parse --verify '@{upstream}' >/dev/null 2>&1; then
+  upstream="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}')"
+  base="$(git merge-base HEAD "$upstream")"
+elif git rev-parse --verify origin/master >/dev/null 2>&1; then
+  base="$(git merge-base HEAD origin/master)"
+else
+  base="$(git rev-parse HEAD~1)"
 fi
 
 collect_files() {
