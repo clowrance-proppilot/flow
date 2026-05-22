@@ -146,16 +146,18 @@ serve stale snapshots.
 ## Flow Ledger
 
 Work Runtime writes to the native Flow JSONL workflow ledger by default:
-`.flow/ledger/workflow.jsonl`. Configure `runtime.workflowLedgerPath` in
-`.flow/config.yaml` to use a different local ledger file.
+the current bootstrap storage's ledger path. The default `flow bootstrap` keeps
+that path in user state outside the repo; `--storage repo-tracked` uses
+`.flow/ledger/workflow.jsonl`. Configure `runtime.workflowLedgerPath` to use a
+different local ledger file.
 
 Flow also maintains per-issue projection snapshots under
 `.flow/ledger/issues/<issueRef>.json` so issue-level reads do not need to replay
 the whole JSONL ledger. The JSONL file remains the authoritative audit log and
 can rebuild missing projections.
 
-Consumers should edit only `.flow/config.yaml`; Flow manages `.flow/runtime/`
-and `.flow/ledger/`.
+Consumers using shared repo config should edit only `.flow/config.yaml`; Flow
+manages runtime and ledger files.
 
 Set `ledger.type: beads` in `.flow/config.yaml` only when intentionally running
 the legacy Beads adapter.

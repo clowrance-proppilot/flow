@@ -59,6 +59,7 @@ export interface IssueTrackerCapabilities {
 }
 
 export interface CollaborationCapabilities {
+  requiresCodeReview?: boolean;
   canMarkReady: boolean;
   canPostComments: boolean;
   canMerge: boolean;

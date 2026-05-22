@@ -30,6 +30,8 @@ import {
   configToWorkTypeRegistry,
   flowConfigPath,
   flowIssueProjectionPath,
+  flowUserConfigPath,
+  flowUserRuntimePath,
   flowConfigSchema,
   loadFlowConfig,
   validateFlowConfig,
@@ -287,29 +289,49 @@ test("Flow config validator returns machine-readable diagnostics", async () => {
   assert.equal(result.config, undefined);
 });
 
-test("Flow config bootstrap creates .flow/config.yaml from folder metadata", async () => {
+test("Flow config bootstrap creates hidden user-state config by default", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-bootstrap-"));
-  const result = await bootstrapFlowConfig({ projectRoot: root });
+  const home = await mkdtemp(join(tmpdir(), "flow-home-"));
+  const originalHome = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    const result = await bootstrapFlowConfig({ projectRoot: root });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.created, true);
+    assert.equal(result.storage, "user");
+    assert.equal(result.path, flowUserConfigPath(root));
+    assert.equal(result.repoName, result.projectName);
+
+    const config = await loadFlowConfig({ projectRoot: root });
+    assert.ok(config);
+    assert.equal(config.project.name, result.projectName);
+    assert.equal(config.topology.repos.main.name, result.repoName);
+    assert.equal(config.topology.repos.main.baseBranch, "main");
+    assert.equal(config.issueTracker?.type, "local");
+    assert.equal(config.collaboration?.type, "none");
+    assert.equal(config.sourceControl?.type, "git");
+    assert.equal(config.ledger?.type, "flow");
+    assert.equal(config.runtime?.stateDir, flowUserRuntimePath(root));
+
+    await assert.rejects(
+      () => bootstrapFlowConfig({ projectRoot: root }),
+      /Flow config already exists/,
+    );
+  } finally {
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+  }
+});
+
+test("Flow config bootstrap can create tracked repo config", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-bootstrap-tracked-"));
+  const result = await bootstrapFlowConfig({ projectRoot: root, storage: "repo-tracked" });
 
   assert.equal(result.ok, true);
   assert.equal(result.created, true);
+  assert.equal(result.storage, "repo-tracked");
   assert.equal(result.path, flowConfigPath(root));
-  assert.equal(result.repoName, result.projectName);
-
-  const config = await loadFlowConfig({ projectRoot: root });
-  assert.ok(config);
-  assert.equal(config.project.name, result.projectName);
-  assert.equal(config.topology.repos.main.name, result.repoName);
-  assert.equal(config.topology.repos.main.baseBranch, "main");
-  assert.equal(config.issueTracker?.type, "local");
-  assert.equal(config.collaboration?.type, "none");
-  assert.equal(config.sourceControl?.type, "git");
-  assert.equal(config.ledger?.type, "flow");
-
-  await assert.rejects(
-    () => bootstrapFlowConfig({ projectRoot: root }),
-    /Flow config already exists/,
-  );
 });
 
 test("Flow config bootstrap defaults to GitHub providers when a GitHub remote exists", async () => {
@@ -317,7 +339,7 @@ test("Flow config bootstrap defaults to GitHub providers when a GitHub remote ex
   await execFileAsync("git", ["init"], { cwd: root });
   await execFileAsync("git", ["remote", "add", "origin", "git@github.com:example-org/example.git"], { cwd: root });
 
-  const result = await bootstrapFlowConfig({ projectRoot: root });
+  const result = await bootstrapFlowConfig({ projectRoot: root, storage: "repo-tracked" });
   const config = await loadFlowConfig({ projectRoot: root });
 
   assert.ok(config);
@@ -328,6 +350,19 @@ test("Flow config bootstrap defaults to GitHub providers when a GitHub remote ex
   assert.equal(config.collaboration?.type, "github");
   assert.equal(config.collaboration?.owner, "example-org");
   assert.equal(config.collaboration?.repo, "example");
+});
+
+test("Flow config bootstrap can keep repo-local config in local git exclude", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-bootstrap-untracked-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+
+  const result = await bootstrapFlowConfig({ projectRoot: root, storage: "repo-untracked" });
+  const exclude = await readFile(join(root, ".git", "info", "exclude"), "utf8");
+
+  assert.equal(result.storage, "repo-untracked");
+  assert.equal(result.path, flowConfigPath(root));
+  assert.equal(result.localExcludeUpdated, true);
+  assert.match(exclude, /^\.flow\/$/m);
 });
 
 test("Local issue tracker creates issues through the Flow ledger surface", async () => {
@@ -521,6 +556,38 @@ test("Readiness blocks successful Worker output until handoff records exist", ()
     assessment.findings.map((finding) => finding.summary).join(","),
     "Acceptance evidence is missing.,Documentation disposition is missing.,Pull request is missing.",
   );
+});
+
+test("Readiness supports local no-PR workflows when code review is disabled", () => {
+  const assessment = assessIssue({
+    issue: {
+      ref: "LOCAL-11",
+      title: "Needs local closeout",
+      repoKeys: ["app_api"],
+      state: "ready_to_run",
+      metadata: {},
+    },
+    workerResults: [
+      {
+        taskId: "worker-local-11",
+        issueRef: "LOCAL-11",
+        repoKey: "app_api",
+        status: "succeeded",
+        summary: "Changed code",
+        changedFiles: ["worker/src/example.py"],
+        testsRun: ["pytest"],
+        blockers: [],
+        completedAt: nowIso(),
+      },
+    ],
+    evidenceRecorded: true,
+    documentationRecorded: true,
+    codeReviewRequired: false,
+  });
+
+  assert.equal(assessment.readyToAdvance, true);
+  assert.equal(assessment.reviewReady, true);
+  assert.equal(assessment.findings.some((finding) => finding.summary === "Pull request is missing."), false);
 });
 
 test("Readiness treats retryable Worker timeout after success as warning", () => {
@@ -1338,6 +1405,51 @@ test("Work Runtime adopts an existing worktree into issue metadata", async () =>
   assert.equal(adopted.metadata["workflow.repos.app_api.head_sha"], "adopted-sha");
   assert.equal(adopted.metadata["workflow.repos.app_api.dirty"], true);
   assert.notEqual(advanced.message, "Prepare workspace for ISSUE-3026 in app_api.");
+});
+
+test("Work Runtime adopts a branch as local-only Flow work", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    projectRoot: "/repo",
+    git: {
+      async inspect(repoPath) {
+        assert.equal(repoPath, "/repo/public-api");
+        return {
+          branch: "codex/spike-local-work",
+          headSha: "branch-sha",
+          dirty: false,
+          entries: [],
+          worktreePath: "/repo/public-api",
+        };
+      },
+    },
+    jira: {
+      async viewIssue() {
+        throw new Error("external issue tracker should not be read for branch adoption");
+      },
+    },
+  });
+  const session = await workRuntime.createSession("session-adopt-branch");
+
+  const adopted = await workRuntime.adoptBranch(session.id, {
+    repoKey: "public_api",
+    worktreePath: "/repo/public-api",
+    summary: "Spike local work",
+  });
+  const selected = await workRuntime.summarizeHandoff(session.id);
+
+  assert.equal(adopted.ref, "FLOW-1");
+  assert.equal(adopted.title, "Spike local work");
+  assert.deepEqual(adopted.repoKeys, ["public_api"]);
+  assert.equal(adopted.metadata["workflow.issue.origin"], "branch");
+  assert.equal(adopted.metadata["workflow.external.issue.status"], "unpublished");
+  assert.equal(adopted.metadata["workflow.external.code_review.status"], "unpublished");
+  assert.equal(adopted.metadata["workflow.repos.public_api.branch"], "codex/spike-local-work");
+  assert.equal(adopted.metadata["workflow.repos.public_api.head_sha"], "branch-sha");
+  assert.match(selected, /FLOW-1: Spike local work/);
 });
 
 test("Work Runtime inspects queue from workflow ledger", async () => {
@@ -3669,15 +3781,42 @@ test("Work Runtime doctor reports visibility, blockers, and next action", async 
   assert.equal(result.status, "blocked");
   assert.deepEqual(result.issue.repoKeys, ["public_api"]);
   assert.equal(result.visibility.repoRouting, true);
-  assert.equal(result.visibility.pullRequest, true);
+  assert.equal(result.visibility.codeReview, true);
   assert.equal(result.visibility.preparedWorktree, false);
-  assert.equal(result.review?.prUrl, "https://github.com/ExampleOrg/public-api/pull/3026");
+  assert.equal(result.codeReview?.prUrl, "https://github.com/ExampleOrg/public-api/pull/3026");
   assert.equal(result.nextAction.type, "adopt_workspace");
   assert.match(result.nextAction.command ?? "", /flow adopt-workspace ISSUE-15397 --repo public_api/);
   assert.equal(
     result.findings.some((finding) => finding.summary === "Auto review has must-fix feedback."),
     true,
   );
+});
+
+test("Work Runtime doctor treats no PR as healthy when collaboration is disabled", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    collaboration: new NoopCodeCollaborationAdapter(),
+  });
+  const session = await workRuntime.createSession("session-doctor-no-pr");
+  await workRuntime.selectIssue(session.id, {
+    ref: "LOCAL-1",
+    title: "Local-only work",
+    repoKeys: ["public_api"],
+    state: "selected",
+    metadata: {
+      "workflow.repos.public_api.worktree_path": "/repo/public-api/.worktrees/local-only-work",
+    },
+  });
+
+  const result = await workRuntime.diagnoseIssue(session.id);
+
+  assert.equal(result.status, "ok");
+  assert.equal(result.visibility.codeReview, false);
+  assert.equal(result.visibility.codeReviewRequired, false);
+  assert.equal(result.nextAction.type, "advance");
 });
 
 test("Work Runtime doctor prioritizes present review comments before approval wait", async () => {

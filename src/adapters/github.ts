@@ -75,6 +75,7 @@ export interface PullRequestMergeResult {
 
 export class GhGitHubAdapter implements CodeCollaborationProvider {
   readonly capabilities: CollaborationCapabilities = {
+    requiresCodeReview: true,
     canMarkReady: true,
     canPostComments: true,
     canMerge: true,

@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { DEFAULT_AGENT_MODEL, DEFAULT_AGENT_PROVIDER } from "./pi-defaults.js";
 import { loadFlowConfig } from "./config/config-loader.js";
 import type { WorkerRuntimeConfig } from "./config/config-schema.js";
+import { resolveFlowPath } from "./flow-layout.js";
 
 export interface RunFlowPromptOptions {
   prompt: string;
@@ -56,7 +57,10 @@ export async function runFlowPrompt(options: RunFlowPromptOptions): Promise<RunF
     : options.sessionFile
       ? sdk.SessionManager.open(options.sessionFile, dirname(options.sessionFile), repoRoot)
       : sdk.SessionManager.create(repoRoot);
-  const agentDir = workerConfig?.agentDir ?? join(repoRoot, ".flow", "agent");
+  const stateDir = flowConfig?.runtime?.stateDir ? resolveFlowPath(repoRoot, flowConfig.runtime.stateDir) : undefined;
+  const agentDir = workerConfig?.agentDir
+    ? resolveFlowPath(repoRoot, workerConfig.agentDir)
+    : join(stateDir ?? join(repoRoot, ".flow"), "agent");
   const additionalSystemPrompts = options.additionalSystemPrompts?.filter(Boolean) ?? [];
   const appendSystemPrompt = [readFlowPrompt(), ...additionalSystemPrompts].filter(Boolean);
   const loader = new sdk.DefaultResourceLoader({
@@ -103,6 +107,7 @@ const flowToolNames = [
   "flow_select_issue",
   "flow_bootstrap_jira_issue",
   "flow_create_jira_issue",
+  "flow_adopt_branch",
   "flow_move_issues_to_active_sprint",
   "flow_route_issue",
   "flow_prepare_workspace",

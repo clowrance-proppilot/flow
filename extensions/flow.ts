@@ -15,8 +15,9 @@ import {
   workerExecutorValues,
   workerStatusValues,
 } from "../src/index.js";
-import { GhGitHubAdapter } from "../src/adapters/github.js";
+import { GhGitHubAdapter, GhGitHubIssueTrackerAdapter } from "../src/adapters/github.js";
 import { AcliJiraAdapter } from "../src/adapters/jira.js";
+import { LocalIssueTrackerAdapter, NoopCodeCollaborationAdapter } from "../src/adapters/local.js";
 
 function flowRoot() {
   return process.cwd();
@@ -25,23 +26,18 @@ function flowRoot() {
 async function workRuntime() {
   const repoRoot = flowRoot();
   const flowConfig = await loadFlowConfig({ projectRoot: repoRoot });
+  const ledger = createWorkflowLedger({
+    cwd: repoRoot,
+    adapter: configString(flowConfig?.ledger, "type"),
+    path: configString(flowConfig?.runtime, "workflowLedgerPath"),
+  });
   // TODO(flow-contracts): Route tool response payloads through a dedicated
   // contract adapter layer so external shapes are decoupled from workRuntime internals.
   return new FlowWorkRuntime({
     store: new FlowStore({ root: flowRuntimePath(repoRoot) }),
-    ledger: createWorkflowLedger({
-      cwd: repoRoot,
-      adapter: configString(flowConfig?.ledger, "type"),
-      path: configString(flowConfig?.runtime, "workflowLedgerPath"),
-    }),
-    github: new GhGitHubAdapter({ cwd: repoRoot, owner: configString(flowConfig?.collaboration, "owner") }),
-    jira: new AcliJiraAdapter({
-      cwd: repoRoot,
-      siteUrl: configString(flowConfig?.issueTracker, "siteUrl"),
-      projectKey: configString(flowConfig?.issueTracker, "projectKey"),
-      email: configString(flowConfig?.issueTracker, "email"),
-      apiToken: configString(flowConfig?.issueTracker, "apiToken"),
-    }),
+    ledger,
+    issueTracker: createIssueTracker(flowConfig, ledger, repoRoot),
+    collaboration: createCollaboration(flowConfig, repoRoot),
     ...(flowConfig
       ? {
         topology: configToProjectTopology(flowConfig),
@@ -76,6 +72,49 @@ async function configuredWorkerSpawner() {
 function configString(config: Record<string, unknown> | undefined, key: string): string | undefined {
   const value = config?.[key];
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function configStringArray(config: Record<string, unknown> | undefined, key: string): string[] {
+  const value = config?.[key];
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
+}
+
+function createIssueTracker(flowConfig: Awaited<ReturnType<typeof loadFlowConfig>>, ledger: ReturnType<typeof createWorkflowLedger>, repoRoot: string) {
+  const issueTracker = flowConfig?.issueTracker;
+  const type = configString(issueTracker, "type") ?? "jira";
+  if (type === "local") {
+    return new LocalIssueTrackerAdapter({
+      ledger,
+      projectName: flowConfig?.project.name,
+      prefix: configString(issueTracker, "prefix"),
+    });
+  }
+  if (type === "github" || type === "github_issues") {
+    return new GhGitHubIssueTrackerAdapter({
+      cwd: repoRoot,
+      owner: configString(issueTracker, "owner") ?? configString(flowConfig?.collaboration, "owner"),
+      repo: configString(issueTracker, "repo") ?? configString(flowConfig?.collaboration, "repo") ?? "flow",
+      assignee: configString(issueTracker, "assignee"),
+      activeLabels: configStringArray(issueTracker, "activeLabels"),
+      backlogLabels: configStringArray(issueTracker, "backlogLabels"),
+    });
+  }
+  return new AcliJiraAdapter({
+    cwd: repoRoot,
+    siteUrl: configString(issueTracker, "siteUrl"),
+    projectKey: configString(issueTracker, "projectKey"),
+    activeQueueJql: configString(issueTracker, "activeQueueJql"),
+    backlogQueueJql: configString(issueTracker, "backlogQueueJql"),
+    email: configString(issueTracker, "email"),
+    apiToken: configString(issueTracker, "apiToken"),
+  });
+}
+
+function createCollaboration(flowConfig: Awaited<ReturnType<typeof loadFlowConfig>>, repoRoot: string) {
+  const collaboration = flowConfig?.collaboration;
+  const type = configString(collaboration, "type") ?? (configString(flowConfig?.issueTracker, "type") === "local" ? "none" : "github");
+  if (type === "none" || type === "local") return new NoopCodeCollaborationAdapter();
+  return new GhGitHubAdapter({ cwd: repoRoot, owner: configString(collaboration, "owner") });
 }
 
 function parseConfiguredWorkerExecutor(value: unknown) {
@@ -226,6 +265,49 @@ export default function (pi: ExtensionAPI) {
       return {
         content: [{ type: "text", text: `Created Jira ${issue.ref}\n${formatIssueProjection(issue)}` }],
         details: { issue },
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "flow_adopt_branch",
+    label: "Flow Adopt Branch",
+    description: "Create or update local Flow work from an existing branch/worktree without publishing externally.",
+    parameters: Type.Object({
+      sessionId: Type.String(),
+      issueRef: Type.Optional(Type.String()),
+      summary: Type.Optional(Type.String()),
+      description: Type.Optional(Type.String()),
+      repoKey: Type.Optional(Type.String()),
+      worktreePath: Type.Optional(Type.String()),
+      baseBranch: Type.Optional(Type.String()),
+      prefix: Type.Optional(Type.String()),
+      select: Type.Optional(Type.Boolean()),
+    }),
+    async execute(_toolCallId, params) {
+      const issue = await (await workRuntime()).adoptBranch(params.sessionId, {
+        issueRef: params.issueRef,
+        summary: params.summary,
+        description: params.description,
+        repoKey: params.repoKey,
+        worktreePath: params.worktreePath,
+        baseBranch: params.baseBranch,
+        prefix: params.prefix,
+        select: params.select,
+      });
+      const repoKey = params.repoKey ?? issue.repoKeys[0] ?? "";
+      const branch = typeof issue.metadata[`workflow.repos.${repoKey}.branch`] === "string"
+        ? issue.metadata[`workflow.repos.${repoKey}.branch`]
+        : issue.metadata.branch;
+      const workDir = typeof issue.metadata[`workflow.repos.${repoKey}.worktree_path`] === "string"
+        ? issue.metadata[`workflow.repos.${repoKey}.worktree_path`]
+        : issue.metadata.work_dir;
+      return {
+        content: [{
+          type: "text",
+          text: `Adopted branch as local Flow work ${issue.ref}; branch=${String(branch ?? "")}; work_dir=${String(workDir ?? "")}\n${formatIssueProjection(issue)}`,
+        }],
+        details: { issue, branch, workDir, repoKey },
       };
     },
   });

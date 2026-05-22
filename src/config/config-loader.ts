@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { readFile, mkdir, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -12,7 +12,7 @@ import {
   WorkTypeRegistry,
 } from "../work-registry.js";
 import type { WorkJobExecutor } from "../contracts.js";
-import { flowConfigPath } from "../flow-layout.js";
+import { flowConfigPath, flowUserConfigPath, flowUserRuntimePath, flowUserWorkflowLedgerPath } from "../flow-layout.js";
 import { ConfigDrivenTopology } from "./config-topology.js";
 import { flowConfigSchema, type FlowConfig } from "./config-schema.js";
 
@@ -26,17 +26,22 @@ export interface LoadFlowConfigOptions {
 export interface BootstrapFlowConfigOptions {
   projectRoot?: string;
   force?: boolean;
+  storage?: FlowConfigStorage;
 }
 
 export interface BootstrapFlowConfigResult {
   ok: boolean;
   created: boolean;
   path: string;
+  storage: FlowConfigStorage;
   projectName: string;
   repoName: string;
   baseBranch: string;
   owner?: string;
+  localExcludeUpdated?: boolean;
 }
+
+export type FlowConfigStorage = "user" | "repo-untracked" | "repo-tracked";
 
 export interface ValidateFlowConfigResult {
   ok: boolean;
@@ -123,28 +128,36 @@ export function findFlowConfigPath(options: LoadFlowConfigOptions = {}): string 
   }
   const projectRoot = resolve(options.projectRoot ?? process.cwd());
   const candidate = flowConfigPath(projectRoot);
-  return existsSync(candidate) ? candidate : undefined;
+  if (existsSync(candidate)) return candidate;
+  const userCandidate = flowUserConfigPath(projectRoot);
+  return existsSync(userCandidate) ? userCandidate : undefined;
 }
 
 export async function bootstrapFlowConfig(options: BootstrapFlowConfigOptions = {}): Promise<BootstrapFlowConfigResult> {
   const projectRoot = resolve(options.projectRoot ?? process.cwd());
-  const configPath = flowConfigPath(projectRoot);
+  const storage = options.storage ?? "user";
+  const configPath = storage === "user" ? flowUserConfigPath(projectRoot) : flowConfigPath(projectRoot);
   if (existsSync(configPath) && !options.force) {
     throw new Error(`Flow config already exists at ${configPath}. Pass --force to overwrite it.`);
   }
 
-  const draft = await inferBootstrapFlowConfig(projectRoot);
+  const draft = await inferBootstrapFlowConfig(projectRoot, storage);
 
   await mkdir(dirname(configPath), { recursive: true });
   await writeFile(configPath, stringifyYaml(draft.config), "utf8");
+  const localExcludeUpdated = storage === "repo-untracked"
+    ? await ensureLocalGitExclude(projectRoot, ".flow/")
+    : undefined;
   return {
     ok: true,
     created: true,
     path: configPath,
+    storage,
     projectName: draft.projectName,
     repoName: draft.repoName,
     baseBranch: draft.baseBranch,
     owner: draft.owner,
+    localExcludeUpdated,
   };
 }
 
@@ -180,7 +193,7 @@ export function configToWorkTypeRegistry(config: FlowConfig): WorkTypeRegistry {
   return new WorkTypeRegistry(definitions, executors);
 }
 
-async function inferBootstrapFlowConfig(projectRoot: string): Promise<BootstrapFlowConfigDraft> {
+async function inferBootstrapFlowConfig(projectRoot: string, storage: FlowConfigStorage): Promise<BootstrapFlowConfigDraft> {
   const remote = await gitOutput(projectRoot, ["config", "--get", "remote.origin.url"]);
   const github = parseGithubRemote(remote);
   const repoName = github?.repo ?? basename(projectRoot);
@@ -233,6 +246,12 @@ async function inferBootstrapFlowConfig(projectRoot: string): Promise<BootstrapF
       type: "flow",
     },
     runtime: {
+      ...(storage === "user"
+        ? {
+          stateDir: flowUserRuntimePath(projectRoot),
+          workflowLedgerPath: flowUserWorkflowLedgerPath(projectRoot),
+        }
+        : {}),
       dashboard: {
         host: "127.0.0.1",
         port: 8867,
@@ -270,6 +289,22 @@ async function gitOutput(cwd: string, args: string[]): Promise<string | undefine
   } catch {
     return undefined;
   }
+}
+
+async function ensureLocalGitExclude(projectRoot: string, pattern: string): Promise<boolean> {
+  const excludePath = await gitOutput(projectRoot, ["rev-parse", "--git-path", "info/exclude"]);
+  if (!excludePath) return false;
+  const absoluteExcludePath = resolve(projectRoot, excludePath);
+  let current = "";
+  try {
+    current = await readFile(absoluteExcludePath, "utf8");
+  } catch {
+    // Missing exclude files are created below.
+  }
+  if (current.split(/\r?\n/).includes(pattern)) return false;
+  await mkdir(dirname(absoluteExcludePath), { recursive: true });
+  await appendFile(absoluteExcludePath, `${current.endsWith("\n") || current.length === 0 ? "" : "\n"}${pattern}\n`, "utf8");
+  return true;
 }
 
 function parseGithubRemote(remote: string | undefined): { owner: string; repo: string } | undefined {

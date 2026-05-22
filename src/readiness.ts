@@ -33,6 +33,7 @@ export interface ReadinessAssessmentInput {
   };
   evidenceRecorded?: boolean;
   documentationRecorded?: boolean;
+  codeReviewRequired?: boolean;
 }
 
 export interface ReadinessAssessment {
@@ -57,6 +58,7 @@ export function assessIssue(input: ReadinessAssessmentInput): ReadinessAssessmen
     : latestWorker;
   const hasSuccessfulWorker = workerForReadiness?.status === "succeeded";
   const externalProviderEscalation = input.issue.metadata.externalProviderEscalation;
+  const codeReviewRequired = input.codeReviewRequired ?? true;
 
   if (input.issue.repoKeys.length === 0) {
     findings.push(finding(input.issue.ref, "blocker", "Repo routing is missing."));
@@ -180,7 +182,7 @@ export function assessIssue(input: ReadinessAssessmentInput): ReadinessAssessmen
     findings.push(finding(input.issue.ref, "blocker", "Documentation disposition is missing."));
   }
 
-  if (hasSuccessfulWorker && !input.review?.prUrl) {
+  if (hasSuccessfulWorker && codeReviewRequired && !input.review?.prUrl) {
     findings.push(finding(input.issue.ref, "blocker", "Pull request is missing."));
   }
 
@@ -208,19 +210,22 @@ export function assessIssue(input: ReadinessAssessmentInput): ReadinessAssessmen
   }
 
   const hasBlocker = findings.some((item) => item.severity === "blocker");
+  const pullRequestGateSatisfied = codeReviewRequired ? Boolean(input.review?.prUrl) : true;
+  const pullRequestStateReady = !input.review?.prUrl ||
+    (pullRequestMerged || input.review?.isDraft === false) &&
+      (pullRequestMerged || !isPullRequestConflicted(input.review)) &&
+      (pullRequestMerged || input.review?.checksPassing !== false) &&
+      (pullRequestMerged || !hasMissingPullRequestTemplateHeadings(input.review)) &&
+      (pullRequestMerged || input.review?.autoReviewStatus !== "failed") &&
+      (pullRequestMerged || input.review?.autoReviewStatus !== "pending") &&
+      (pullRequestMerged || input.review?.autoReviewMustFix !== true || isEmptyAutoReviewDetail(input.review?.autoReviewMustFixDetail)) &&
+      (pullRequestMerged || input.review?.autoReviewNeedsConfirmation !== true ||
+        Boolean(input.review?.autoReviewNeedsConfirmationDisposition && input.review?.autoReviewNeedsConfirmationPostedUrl));
   const reviewReady =
     !hasBlocker &&
     hasSuccessfulWorker &&
-    Boolean(input.review?.prUrl) &&
-    (pullRequestMerged || input.review?.isDraft === false) &&
-    (pullRequestMerged || !isPullRequestConflicted(input.review)) &&
-    (pullRequestMerged || input.review?.checksPassing !== false) &&
-    (pullRequestMerged || !hasMissingPullRequestTemplateHeadings(input.review)) &&
-    (pullRequestMerged || input.review?.autoReviewStatus !== "failed") &&
-    (pullRequestMerged || input.review?.autoReviewStatus !== "pending") &&
-    (pullRequestMerged || input.review?.autoReviewMustFix !== true || isEmptyAutoReviewDetail(input.review?.autoReviewMustFixDetail)) &&
-    (pullRequestMerged || input.review?.autoReviewNeedsConfirmation !== true ||
-      Boolean(input.review?.autoReviewNeedsConfirmationDisposition && input.review?.autoReviewNeedsConfirmationPostedUrl)) &&
+    pullRequestGateSatisfied &&
+    pullRequestStateReady &&
     input.evidenceRecorded === true &&
     input.documentationRecorded === true;
 

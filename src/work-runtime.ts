@@ -36,7 +36,7 @@ import {
 } from "./contracts.js";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { join } from "pathe";
+import { join, resolve } from "pathe";
 import { GitAdapter, type GitRepoStatus, type WorktreePlan } from "./adapters/git.js";
 import { type PullRequestMergeResult, type PullRequestStatus } from "./adapters/github.js";
 import type { JiraIssue, JiraSprintMoveResult } from "./adapters/jira.js";
@@ -243,6 +243,17 @@ export interface BootstrapJiraIssueOptions {
 
 export type BranchKind = "bug" | "feature";
 
+export interface AdoptBranchOptions {
+  issueRef?: string;
+  summary?: string;
+  description?: string;
+  repoKey?: string;
+  worktreePath?: string;
+  baseBranch?: string;
+  prefix?: string;
+  select?: boolean;
+}
+
 export interface CreateJiraIssueOptions {
   projectKey?: string;
   issueType?: "Bug" | "Task" | "Story";
@@ -302,16 +313,17 @@ export interface FlowDoctorResult {
     title: string;
     state: WorkItem["state"];
     repoKeys: string[];
-    jiraStatus?: string;
+    issueStatus?: string;
   };
   visibility: {
     ledger: boolean;
-    jira: boolean;
+    issueTracker: boolean;
     repoRouting: boolean;
     preparedWorktree: boolean;
-    pullRequest: boolean;
+    codeReview: boolean;
+    codeReviewRequired: boolean;
   };
-  review?: ReturnType<typeof reviewMetadata>;
+  codeReview?: ReturnType<typeof reviewMetadata>;
   findings: ReadinessFinding[];
   nextAction: {
     type: string;
@@ -358,6 +370,37 @@ export class FlowWorkRuntime {
       ledger: this.ledger,
       debug: (event, details) => this.debug(event, details),
     });
+  }
+
+  private codeReviewRequired(): boolean {
+    return collaborationRequiresCodeReview(this.collaboration);
+  }
+
+  private resolveAdoptBranchRepoKey(repoKey: string | undefined, worktreePath: string): string {
+    if (repoKey) {
+      const normalized = normalizeRepoKey(repoKey);
+      if (!this.topology.isValidRepoKey(normalized)) {
+        throw new Error(`Unknown repo key ${repoKey}. Allowed repo keys: ${[...this.topology.validRepoKeys].join(", ")}.`);
+      }
+      return normalized;
+    }
+    const repoKeys = [...this.topology.validRepoKeys];
+    const matchingRepoKeys = repoKeys.filter((candidate) =>
+      pathWithin(worktreePath, this.topology.repoPath(this.projectRoot, candidate))
+    );
+    if (matchingRepoKeys.length === 1) return matchingRepoKeys[0];
+    if (repoKeys.length === 1) return repoKeys[0];
+    throw new Error(`Repo key is required. Allowed repo keys: ${repoKeys.join(", ")}.`);
+  }
+
+  private async nextLocalWorkItemRef(prefix = "FLOW"): Promise<string> {
+    const normalizedPrefix = normalizeLocalRefPrefix(prefix);
+    const issues = await this.ledger.listIssues(1000);
+    const next = issues.reduce((max, issue) => {
+      const match = new RegExp(`^${escapeRegExp(normalizedPrefix)}-(\\d+)$`, "i").exec(issue.ref);
+      return match ? Math.max(max, Number(match[1])) : max;
+    }, 0) + 1;
+    return `${normalizedPrefix}-${next}`;
   }
 
   private debug(event: string, details: Record<string, unknown>): void {
@@ -708,6 +751,7 @@ export class FlowWorkRuntime {
         evidenceRecorded: hasRecordedEvidence(issue),
         documentationRecorded: hasRecordedDocumentation(issue),
         review,
+        codeReviewRequired: this.codeReviewRequired(),
       });
       const blockers = assessment.findings
         .filter((finding) => finding.severity === "blocker" || finding.severity === "warning")
@@ -904,6 +948,69 @@ export class FlowWorkRuntime {
     return await this.transitionJiraWorkStarted(sessionId, updated);
   }
 
+  async adoptBranch(sessionId: string, options: AdoptBranchOptions = {}): Promise<WorkItem> {
+    const session = await this.requireSession(sessionId);
+    const worktreePath = options.worktreePath ?? this.projectRoot;
+    const status = await this.sourceControl.inspect(worktreePath);
+    const branch = existingString(status.branch);
+    if (!branch) throw new Error("Cannot adopt a detached HEAD or unnamed branch.");
+    const repoKey = this.resolveAdoptBranchRepoKey(options.repoKey, worktreePath);
+    const issueRef = options.issueRef?.trim() || await this.nextLocalWorkItemRef(options.prefix);
+    const existing = await this.ledger.readIssue(issueRef);
+    const existingRepoKeys = existing?.repoKeys ?? [];
+    const repoKeys = existingRepoKeys.includes(repoKey) ? existingRepoKeys : [...existingRepoKeys, repoKey];
+    const baseRef = options.baseBranch ??
+      existingString(existing?.metadata[`workflow.repos.${repoKey}.base_branch`]) ??
+      this.topology.defaultBaseBranch(repoKey);
+    const title = options.summary?.trim() || existing?.title || titleFromBranch(branch);
+    const selected = options.select !== false;
+    const preparedWorktreePath = existingString(status.worktreePath) ?? worktreePath;
+    const statusIssue: WorkItem = existing ?? { ref: issueRef, title, repoKeys, state: "queued", metadata: {} };
+    const updated = await this.ledger.writeIssue({
+      ref: issueRef,
+      title,
+      repoKeys,
+      state: selected ? "selected" : existing?.state ?? "queued",
+      summary: options.description?.trim() || existing?.summary,
+      metadata: {
+        ...(existing?.metadata ?? {}),
+        issueStatus: issueTrackerStatus(statusIssue) ?? "In Progress",
+        issueStatusCategory: issueTrackerStatusCategory(statusIssue) ?? "In Progress",
+        localStatus: existingString(existing?.metadata.localStatus) ?? "In Progress",
+        localStatusCategory: existingString(existing?.metadata.localStatusCategory) ?? "In Progress",
+        localUrl: existingString(existing?.metadata.localUrl) ?? localIssueUrl(issueRef),
+        branchKind: existingBranchKind(existing) ?? branchKindFromBranch(branch),
+        work_dir: preparedWorktreePath,
+        branch,
+        "workflow.issue.origin": existingString(existing?.metadata["workflow.issue.origin"]) ?? "branch",
+        "workflow.external.issue.status": existingString(existing?.metadata["workflow.external.issue.status"]) ?? "unpublished",
+        "workflow.external.code_review.status": existingString(existing?.metadata["workflow.external.code_review.status"]) ??
+          "unpublished",
+        [`workflow.repos.${repoKey}.base_branch`]: baseRef,
+        [`workflow.repos.${repoKey}.branch`]: branch,
+        [`workflow.repos.${repoKey}.head_sha`]: status.headSha,
+        [`workflow.repos.${repoKey}.dirty`]: status.dirty,
+        [`workflow.repos.${repoKey}.worktree_path`]: preparedWorktreePath,
+      },
+    });
+    if (selected) {
+      await this.store.writeSession({
+        ...session,
+        selectedIssueRef: updated.ref,
+        selectedRepoKey: repoKey,
+        pendingConfirmation: undefined,
+      });
+    }
+    await this.store.appendEvent({
+      sessionId,
+      type: "branch.adopted",
+      issueRef: updated.ref,
+      message: `Adopted branch ${branch} as local Flow work ${updated.ref}.`,
+      payload: { repoKey, worktreePath: preparedWorktreePath, branch, baseRef },
+    });
+    return updated;
+  }
+
   private async transitionJiraWorkStarted(sessionId: string, issue: WorkItem): Promise<WorkItem> {
     if (!this.issueTracker?.viewIssue) return issue;
     const currentJira = await this.issueTracker.viewIssue(issue.ref);
@@ -964,6 +1071,7 @@ export class FlowWorkRuntime {
       evidenceRecorded: hasRecordedEvidence(issue),
       documentationRecorded: hasRecordedDocumentation(issue),
       review: reviewMetadata(issue),
+      codeReviewRequired: this.codeReviewRequired(),
     });
     if (assessment.findings.length === 0) {
       return `${issue.ref} has no Readiness blockers in Flow ledger state.`;
@@ -981,17 +1089,26 @@ export class FlowWorkRuntime {
       evidenceRecorded: hasRecordedEvidence(issue),
       documentationRecorded: hasRecordedDocumentation(issue),
       review,
+      codeReviewRequired: this.codeReviewRequired(),
     });
     const preparedWorktree = issue.repoKeys.some((repoKey) => Boolean(worktreePathForRepo(issue, repoKey)));
+    const codeReviewRequired = this.codeReviewRequired();
     const visibility = {
       ledger: true,
-      jira: typeof issue.metadata.jiraStatus === "string" || typeof issue.metadata.jiraUpdated === "string",
+      issueTracker: Boolean(this.issueTracker?.viewIssue) ||
+        Boolean(issueTrackerStatus(issue) || existingString(issue.metadata.issueUpdated)),
       repoRouting: issue.repoKeys.length > 0,
       preparedWorktree,
-      pullRequest: Boolean(review?.prUrl),
+      codeReview: Boolean(review?.prUrl),
+      codeReviewRequired,
     };
     const blockingFindings = assessment.findings.filter((finding) => finding.severity === "blocker");
-    const status = blockingFindings.length > 0 ? "blocked" : visibility.repoRouting && visibility.pullRequest ? "ok" : "degraded";
+    const hasRequiredReviewVisibility = visibility.codeReview || !visibility.codeReviewRequired;
+    const status = blockingFindings.length > 0
+      ? "blocked"
+      : visibility.repoRouting && hasRequiredReviewVisibility
+      ? "ok"
+      : "degraded";
     return {
       issueRef: issue.ref,
       status,
@@ -1000,10 +1117,10 @@ export class FlowWorkRuntime {
         title: issue.title,
         state: issue.state,
         repoKeys: issue.repoKeys,
-        jiraStatus: existingString(issue.metadata.jiraStatus),
+        issueStatus: issueTrackerStatus(issue),
       },
       visibility,
-      review,
+      codeReview: review,
       findings: assessment.findings,
       nextAction: doctorNextAction(issue, assessment.findings, visibility),
     };
@@ -1034,6 +1151,7 @@ export class FlowWorkRuntime {
       evidenceRecorded: hasRecordedEvidence(issue),
       documentationRecorded: hasRecordedDocumentation(issue),
       review: reviewMetadata(issue),
+      codeReviewRequired: this.codeReviewRequired(),
     });
     const sessionWithFindings = await this.store.writeSession({
       ...latestSession,
@@ -1064,11 +1182,14 @@ export class FlowWorkRuntime {
 
     if (assessment.reviewReady) {
       await this.ledger.writeIssue({ ...issue, state: "awaiting_review" });
+      const message = this.codeReviewRequired()
+        ? `${issue.ref} is review-ready in Readiness assessment.`
+        : `${issue.ref} is ready for local closeout; no code review provider is configured.`;
       return {
         status: "awaiting_review",
         session: sessionWithFindings,
         issue,
-        message: `${issue.ref} is review-ready in Readiness assessment.`,
+        message,
       };
     }
 
@@ -2381,6 +2502,11 @@ export class FlowWorkRuntime {
     const repoKeys = this.resolveJiraQueueRepoKeys(jiraIssue, existing);
     const metadata = {
       ...(existing?.metadata ?? {}),
+      issueStatus: jiraIssue.status,
+      issueStatusCategory: jiraIssue.statusCategory,
+      issueResolution: jiraIssue.resolution,
+      issueUpdated: jiraIssue.updated,
+      issueUrl: existingString((jiraIssue as { url?: unknown }).url),
       jiraStatus: jiraIssue.status,
       jiraIssueType: jiraIssue.issueType,
       branchKind: existingBranchKind(existing) ?? branchKindFromJiraIssueType(jiraIssue.issueType) ?? "",
@@ -2862,6 +2988,10 @@ function collaborationCanMarkReady(
   return Boolean(provider?.markPullRequestReadyForReview && provider.capabilities?.canMarkReady !== false);
 }
 
+function collaborationRequiresCodeReview(provider: CodeCollaborationIntegration | undefined): boolean {
+  return provider?.capabilities?.requiresCodeReview !== false;
+}
+
 function collaborationCanPostComments(
   provider: CodeCollaborationIntegration | undefined,
 ): provider is CodeCollaborationIntegration & Required<Pick<GitHubInspector, "postPullRequestComment">> {
@@ -2964,7 +3094,7 @@ function doctorNextAction(
   if (isFlowTerminal(issue)) {
     return {
       type: "done",
-      summary: "The issue is complete: the pull request is merged and Jira is Done.",
+      summary: "The issue is complete: issue tracker state is done and required code review is complete.",
     };
   }
   const blockerSummaries = findings
@@ -2978,7 +3108,7 @@ function doctorNextAction(
     };
   }
   if (blockerSummaries.includes("Prepared worktree is missing.")) {
-    if (visibility.pullRequest) {
+    if (visibility.codeReview) {
       const repoKey = issue.repoKeys[0] ?? "<repo_key>";
       const branch = existingString(issue.metadata[`workflow.repos.${repoKey}.branch`]) ??
         existingString(issue.metadata.prHeadRefName) ??
@@ -2987,7 +3117,7 @@ function doctorNextAction(
       return {
         type: "adopt_workspace",
         command: `flow adopt-workspace ${issue.ref} --repo ${repoKey} --path ${pathHint}`,
-        summary: "Adopt the existing PR worktree into Flow, or let Flow prepare a new routed workspace.",
+        summary: "Adopt the existing code review worktree into Flow, or let Flow prepare a new routed workspace.",
       };
     }
     return {
@@ -3003,7 +3133,7 @@ function doctorNextAction(
     return {
       type: "remediate_review",
       command: `flow advance ${issue.ref}`,
-      summary: "Remediate PR review feedback through the normal Flow advance path.",
+      summary: "Remediate code review feedback through the normal Flow advance path.",
     };
   }
   if (
@@ -3018,26 +3148,26 @@ function doctorNextAction(
   if (blockerSummaries.includes("Pull request checks are not passing.")) {
     return {
       type: "fix_checks",
-      summary: "Inspect failing GitHub checks and remediate through the PR worktree.",
+      summary: "Inspect failing code review checks and remediate through the review worktree.",
     };
   }
   if (findings.some((finding) => finding.summary === "Approval review is required.")) {
     if (findings.some((finding) => finding.summary === "Review comments are present.")) {
       return {
         type: "address_review_comments",
-        summary: "Inspect and address any actionable PR review comments, then request an approval review.",
+        summary: "Inspect and address any actionable code review comments, then request an approval review.",
       };
     }
     return {
       type: "wait_for_approval_review",
-      summary: "The PR is waiting for an approval review; review comments alone do not satisfy approval-required review policy.",
+      summary: "The code review is waiting for an approval review; review comments alone do not satisfy approval-required review policy.",
     };
   }
-  if (visibility.pullRequest) {
+  if (visibility.codeReview) {
     return {
       type: "advance",
       command: `flow advance ${issue.ref}`,
-      summary: "Flow can continue from the reconciled pull-request state.",
+      summary: "Flow can continue from the reconciled code review state.",
     };
   }
   return {
@@ -3050,19 +3180,36 @@ function doctorNextAction(
 function isFlowTerminal(issue: WorkItem): boolean {
   const review = reviewMetadata(issue);
   const pullRequestMerged = !review?.prUrl || isPullRequestMetadataMerged(review);
-  return isWorkItemJiraDone(issue) && pullRequestMerged;
+  return isIssueTrackerDone(issue) && pullRequestMerged;
 }
 
-function isWorkItemJiraDone(issue: WorkItem): boolean {
+function isIssueTrackerDone(issue: WorkItem): boolean {
   return isJiraDone({
     key: issue.ref,
     summary: issue.title,
     issueType: "Task",
-    status: existingString(issue.metadata.jiraStatus),
-    statusCategory: existingString(issue.metadata.jiraStatusCategory),
-    resolution: existingString(issue.metadata.jiraResolution),
+    status: issueTrackerStatus(issue),
+    statusCategory: issueTrackerStatusCategory(issue),
+    resolution: issueTrackerResolution(issue),
     labels: [],
   });
+}
+
+function issueTrackerStatus(issue: WorkItem): string | undefined {
+  return existingString(issue.metadata.issueStatus) ??
+    existingString(issue.metadata.localStatus) ??
+    existingString(issue.metadata.jiraStatus);
+}
+
+function issueTrackerStatusCategory(issue: WorkItem): string | undefined {
+  return existingString(issue.metadata.issueStatusCategory) ??
+    existingString(issue.metadata.localStatusCategory) ??
+    existingString(issue.metadata.jiraStatusCategory);
+}
+
+function issueTrackerResolution(issue: WorkItem): string | undefined {
+  return existingString(issue.metadata.issueResolution) ??
+    existingString(issue.metadata.jiraResolution);
 }
 
 function isJiraCloseoutStatus(issue: JiraIssue): boolean {
@@ -3225,10 +3372,38 @@ function branchKindFromJiraIssueType(issueType: unknown): BranchKind | undefined
   return undefined;
 }
 
+function branchKindFromBranch(branch: string): BranchKind {
+  return /^bug(?:\/|-)/i.test(branch) ? "bug" : "feature";
+}
+
 function existingBranchKind(issue?: WorkItem): BranchKind | undefined {
   const normalized = String(issue?.metadata.branchKind ?? "").toLowerCase();
   if (normalized === "bug" || normalized === "feature") return normalized;
   return undefined;
+}
+
+function titleFromBranch(branch: string): string {
+  const leaf = branch.split("/").filter(Boolean).at(-1) ?? branch;
+  return leaf.replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim() || branch;
+}
+
+function localIssueUrl(ref: string): string {
+  return `flow://local/issues/${encodeURIComponent(ref)}`;
+}
+
+function normalizeLocalRefPrefix(prefix: string): string {
+  const normalized = prefix.toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return normalized || "FLOW";
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function pathWithin(path: string, root: string): boolean {
+  const resolvedPath = resolve(path);
+  const resolvedRoot = resolve(root);
+  return resolvedPath === resolvedRoot || resolvedPath.startsWith(`${resolvedRoot}/`);
 }
 
 function buildWorkerPrompt(issue: WorkItem, repoKey: string): string {

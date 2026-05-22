@@ -107,6 +107,7 @@ export class LocalIssueTrackerAdapter implements IssueTrackerProvider {
 
 export class NoopCodeCollaborationAdapter implements CodeCollaborationProvider {
   readonly capabilities: CollaborationCapabilities = {
+    requiresCodeReview: false,
     canMarkReady: false,
     canPostComments: false,
     canMerge: false,

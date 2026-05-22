@@ -8,10 +8,12 @@ integration layers around that core.
 The intended integration contract is:
 
 1. Add Flow as a dependency or keep a sibling checkout.
-2. Run `flow bootstrap` at the host repo root to create `.flow/config.yaml`.
+2. Run `flow bootstrap` at the host repo root to create hidden per-user state.
 3. Run Flow from the host repo root.
 4. Keep host-specific repo topology, branch policy, PR URL patterns, issue
-   routing keywords, and provider choices in `.flow/config.yaml`.
+   routing keywords, and provider choices in Flow config. Use
+   `--storage repo-tracked` only once the host repo is ready to share that
+   config as `.flow/config.yaml`.
 5. Add agent plugins or provider adapters only where the host repo needs them.
 
 ## Package Surface
@@ -38,15 +40,23 @@ npx flow queue
 npx flow-dashboard
 ```
 
-## Host-Owned Config
+## Config Storage
 
-The consuming architecture owns the real `.flow/config.yaml`. Create the first
-draft from local folder and Git metadata:
+Create the first draft from local folder and Git metadata:
 
 ```bash
 cd /path/to/host-repo
 /path/to/flow/bin/flow bootstrap
 ```
+
+Storage modes:
+
+- `user`: default. Writes config, runtime, and ledger under user state outside
+  the repo.
+- `repo-untracked`: writes `.flow/config.yaml` in the checkout and adds
+  `.flow/` to `.git/info/exclude`.
+- `repo-tracked`: writes `.flow/config.yaml` for teams that are ready to share
+  Flow config through git.
 
 Or start from the generic shape:
 
@@ -54,7 +64,7 @@ Or start from the generic shape:
 examples/.flow/config.yaml
 ```
 
-Copy it to the host repo:
+For shared repo config, copy it to the host repo:
 
 ```text
 /path/to/host-repo/.flow/config.yaml
@@ -93,6 +103,16 @@ ledger:
 In that shape, the CLI creates local issue refs and the Flow ledger is the
 durable issue/workflow record. Git remains available for local branch and
 worktree inspection, but no hosted code review provider is required.
+
+When the branch already exists and the work should stay local, use:
+
+```bash
+flow adopt-branch --summary "Spike checkout workflow" --repo main
+```
+
+That records the branch/worktree as a local Flow item without publishing an
+issue or code review. Hosted systems can be added later as checkpoint
+projections.
 
 Most hosts should not configure `workTypes` or `executors`. Flow ships
 permissive defaults for prepare, implement, remediate, verify, live-thread
