@@ -123,13 +123,16 @@ function unifiedIssueFromWorkItem(issue: WorkItem): UnifiedIssue {
     ref: issue.ref,
     title: issue.title,
     description: issue.summary,
-    status: stringMetadata(issue, "localStatus") ?? stringMetadata(issue, "jiraStatus") ?? issue.state,
-    statusCategory: stringMetadata(issue, "localStatusCategory") ?? stringMetadata(issue, "jiraStatusCategory") ?? issue.state,
-    resolution: stringMetadata(issue, "jiraResolution"),
-    type: stringMetadata(issue, "jiraIssueType") ?? "Task",
-    url: stringMetadata(issue, "localUrl") ?? stringMetadata(issue, "jiraUrl") ?? localIssueUrl(issue.ref),
+    status: stringMetadata(issue, "issueStatus") ?? stringMetadata(issue, "localStatus") ?? stringMetadata(issue, "jiraStatus") ?? issue.state,
+    statusCategory: stringMetadata(issue, "issueStatusCategory") ??
+      stringMetadata(issue, "localStatusCategory") ??
+      stringMetadata(issue, "jiraStatusCategory") ??
+      issue.state,
+    resolution: stringMetadata(issue, "issueResolution") ?? stringMetadata(issue, "jiraResolution"),
+    type: stringMetadata(issue, "issueType") ?? stringMetadata(issue, "jiraIssueType") ?? "Task",
+    url: stringMetadata(issue, "issueUrl") ?? stringMetadata(issue, "localUrl") ?? stringMetadata(issue, "jiraUrl") ?? localIssueUrl(issue.ref),
     updatedAt: issue.updatedAt,
-    labels: arrayMetadata(issue, "jiraLabels"),
+    labels: arrayMetadata(issue, "issueLabels").length ? arrayMetadata(issue, "issueLabels") : arrayMetadata(issue, "jiraLabels"),
     raw: issue,
   };
 }

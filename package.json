@@ -43,8 +43,9 @@
     "tsconfig.json"
   ],
   "scripts": {
-    "check": "tsc -p tsconfig.json --noEmit",
-    "test": "node scripts/test-flow.mjs",
+    "check": "npm run check:cli-contract && tsc -p tsconfig.json --noEmit",
+    "check:cli-contract": "node scripts/check-flow-cli-contract.mjs",
+    "test": "npm run check:cli-contract && node scripts/test-flow.mjs",
     "build:flow": "tsc -p tsconfig.json",
     "build:dashboard": "vite build --config vite.dashboard.config.ts",
     "build": "npm run build:flow && npm run build:dashboard",

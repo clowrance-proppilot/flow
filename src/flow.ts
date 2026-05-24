@@ -496,7 +496,6 @@ program
   .description("Diagnose Flow visibility, routing, PR state, readiness blockers, and next action.")
   .argument("[issue-ref]", "issue key or ref")
   .option("-s, --session <id>", "session id", defaultSessionId)
-  .option("--json", "emit JSON output; included for explicit CI and agent contracts")
   .option("--strict", "exit nonzero when Flow diagnosis is blocked or degraded")
   .action(async (issueRef: string | undefined, options: { session: string; strict?: boolean }) => {
     await ensureSession(options.session);

@@ -176,6 +176,10 @@ export interface JiraInspector {
 }
 
 export type IssueTrackerIntegration = JiraInspector & Omit<Partial<IssueTrackerProvider>, "createIssue">;
+type NormalizedIssueTrackerIssue = JiraIssue & {
+  source?: "unified";
+  raw?: unknown;
+};
 
 type EvidenceRecordInput = Omit<EvidenceRecord, "recordedAt" | "criteria"> & {
   criteria?: AcceptanceCriterionEvidence[];
@@ -505,7 +509,7 @@ export class FlowWorkRuntime {
       ...issue,
       title: issue.title || existing?.title || issue.ref,
       repoKeys: issue.repoKeys.length ? issue.repoKeys : existing?.repoKeys ?? [],
-      state: "selected",
+      state: selectedWorkflowState(issue.state, existing?.state),
       summary: issue.summary ?? existing?.summary,
       updatedAt: issue.updatedAt ?? existing?.updatedAt,
       metadata: {
@@ -621,7 +625,8 @@ export class FlowWorkRuntime {
       state: shouldSelect ? "selected" : queueIssue.state,
       metadata: {
         ...queueIssue.metadata,
-        jiraIssueType: createdIssue.issueType ?? issueType,
+        issueType: createdIssue.issueType ?? issueType,
+        ...(isJiraIssueTrackerIssue(createdIssue) ? { jiraIssueType: createdIssue.issueType ?? issueType } : {}),
         ...(options.branchKind ? { branchKind: options.branchKind } : {}),
       },
     });
@@ -2500,21 +2505,38 @@ export class FlowWorkRuntime {
 
   private mergeJiraQueueIssue(jiraIssue: JiraIssue, existing?: WorkItem): WorkItem {
     const repoKeys = this.resolveJiraQueueRepoKeys(jiraIssue, existing);
+    const issueUrl = existingString((jiraIssue as { url?: unknown }).url);
+    const localIssue = isLocalIssueTrackerIssue(jiraIssue);
+    const jiraIssueTrackerIssue = isJiraIssueTrackerIssue(jiraIssue);
+    const existingMetadata = jiraIssueTrackerIssue
+      ? existing?.metadata ?? {}
+      : providerNeutralExistingMetadata(existing?.metadata);
+    const jiraMetadata = isJiraIssueTrackerIssue(jiraIssue)
+      ? {
+        jiraStatus: jiraIssue.status,
+        jiraIssueType: jiraIssue.issueType,
+        jiraLabels: jiraIssue.labels ?? [],
+        jiraStatusCategory: jiraIssue.statusCategory,
+        jiraResolution: jiraIssue.resolution,
+        jiraUpdated: jiraIssue.updated,
+        jiraUrl: issueUrl,
+      }
+      : {};
     const metadata = {
-      ...(existing?.metadata ?? {}),
+      ...existingMetadata,
       issueStatus: jiraIssue.status,
       issueStatusCategory: jiraIssue.statusCategory,
       issueResolution: jiraIssue.resolution,
       issueUpdated: jiraIssue.updated,
-      issueUrl: existingString((jiraIssue as { url?: unknown }).url),
-      jiraStatus: jiraIssue.status,
-      jiraIssueType: jiraIssue.issueType,
+      issueUrl,
+      issueType: jiraIssue.issueType,
+      issueLabels: jiraIssue.labels ?? [],
+      "workflow.external.issue.status": existingString(existing?.metadata["workflow.external.issue.status"]) ??
+        (localIssue ? "unpublished" : issueUrl ? "published" : "unpublished"),
+      "workflow.external.code_review.status": existingString(existing?.metadata["workflow.external.code_review.status"]) ??
+        "unpublished",
+      ...jiraMetadata,
       branchKind: existingBranchKind(existing) ?? branchKindFromJiraIssueType(jiraIssue.issueType) ?? "",
-      jiraLabels: jiraIssue.labels ?? [],
-      jiraStatusCategory: jiraIssue.statusCategory,
-      jiraResolution: jiraIssue.resolution,
-      jiraUpdated: jiraIssue.updated,
-      jiraUrl: existingString((jiraIssue as { url?: unknown }).url),
     };
     const issue: WorkItem = {
       ref: jiraIssue.key,
@@ -2928,7 +2950,9 @@ function jiraIssueFromUnified(issue: UnifiedIssue): JiraIssue {
     updated: issue.updatedAt,
     labels: issue.labels,
     url: issue.url,
-  };
+    source: "unified",
+    raw: issue.raw,
+  } as NormalizedIssueTrackerIssue;
 }
 
 function pullRequestStatusFromUnified(review: UnifiedCodeReview): PullRequestStatus {
@@ -3210,6 +3234,44 @@ function issueTrackerStatusCategory(issue: WorkItem): string | undefined {
 function issueTrackerResolution(issue: WorkItem): string | undefined {
   return existingString(issue.metadata.issueResolution) ??
     existingString(issue.metadata.jiraResolution);
+}
+
+function selectedWorkflowState(issueState: WorkItem["state"], existingState?: WorkItem["state"]): WorkItem["state"] {
+  if (issueState === "awaiting_review" || issueState === "awaiting_human" || issueState === "done") return issueState;
+  if (
+    issueState === "queued" &&
+    (existingState === "awaiting_review" || existingState === "awaiting_human" || existingState === "done")
+  ) {
+    return existingState;
+  }
+  return "selected";
+}
+
+function isJiraIssueTrackerIssue(issue: JiraIssue): boolean {
+  return (issue as { source?: unknown }).source !== "unified";
+}
+
+function isLocalIssueTrackerIssue(issue: JiraIssue): boolean {
+  const raw = (issue as { raw?: unknown }).raw;
+  const url = existingString((issue as { url?: unknown }).url);
+  return Boolean(
+    raw && typeof raw === "object" && (raw as { provider?: unknown }).provider === "local"
+  ) || Boolean((issue as { source?: unknown }).source === "unified" && url?.startsWith("flow://local/"));
+}
+
+function providerNeutralExistingMetadata(metadata: WorkItem["metadata"] | undefined): WorkItem["metadata"] {
+  if (!metadata) return {};
+  const {
+    jiraStatus: _jiraStatus,
+    jiraIssueType: _jiraIssueType,
+    jiraLabels: _jiraLabels,
+    jiraStatusCategory: _jiraStatusCategory,
+    jiraResolution: _jiraResolution,
+    jiraUpdated: _jiraUpdated,
+    jiraUrl: _jiraUrl,
+    ...neutralMetadata
+  } = metadata;
+  return neutralMetadata;
 }
 
 function isJiraCloseoutStatus(issue: JiraIssue): boolean {

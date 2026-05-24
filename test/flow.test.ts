@@ -1519,7 +1519,9 @@ test("Work Runtime accepts pure issue tracker providers", async () => {
   assert.equal(queue[0].ref, "ISSUE-900");
   assert.equal(queue[0].title, "Provider queue issue");
   assert.deepEqual(queue[0].repoKeys, ["app_api"]);
-  assert.equal(queue[0].metadata.jiraStatus, "Ready for Dev");
+  assert.equal(queue[0].metadata.issueStatus, "Ready for Dev");
+  assert.equal(queue[0].metadata.issueType, "story");
+  assert.equal(queue[0].metadata.jiraStatus, undefined);
 });
 
 test("Work Runtime accepts pure source control providers", async () => {
@@ -1734,8 +1736,57 @@ test("Work Runtime creates provider-neutral issues without requiring a Jira proj
     description: "Provider-neutral issue creation should not require Jira config.",
   });
   assert.equal(issue.ref, "GH-15738");
-  assert.equal(issue.metadata.jiraIssueType, "task");
+  assert.equal(issue.metadata.issueType, "task");
+  assert.equal(issue.metadata.jiraIssueType, undefined);
   assert.deepEqual(issue.repoKeys, ["main"]);
+});
+
+test("Work Runtime keeps local provider issue metadata provider-neutral", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const ledger = new MemoryWorkflowLedger();
+  const store = new FlowStore({ root });
+  const workRuntime = new FlowWorkRuntime({
+    store,
+    ledger,
+    issueTracker: new LocalIssueTrackerAdapter({ ledger, prefix: "FLOW" }),
+  });
+  const session = await workRuntime.createSession("session-create-local");
+
+  const issue = await workRuntime.createIssue(session.id, {
+    issueType: "Task",
+    summary: "Local provider metadata",
+  });
+
+  assert.equal(issue.ref, "FLOW-1");
+  assert.equal(issue.metadata.issueStatus, "To Do");
+  assert.equal(issue.metadata.issueType, "Task");
+  assert.equal(issue.metadata.issueUrl, "flow://local/issues/FLOW-1");
+  assert.equal(issue.metadata["workflow.external.issue.status"], "unpublished");
+  assert.equal(issue.metadata["workflow.external.code_review.status"], "unpublished");
+  assert.equal(issue.metadata.jiraStatus, undefined);
+  assert.equal(issue.metadata.jiraIssueType, undefined);
+  assert.equal(issue.metadata.jiraUrl, undefined);
+
+  await ledger.writeIssue({
+    ref: "FLOW-2",
+    title: "Legacy local metadata",
+    repoKeys: [],
+    state: "queued",
+    metadata: {
+      jiraStatus: "To Do",
+      jiraIssueType: "Task",
+      jiraUrl: "flow://local/issues/FLOW-2",
+    },
+  });
+
+  const legacyIssue = (await workRuntime.inspectQueue(10)).find((candidate) => candidate.ref === "FLOW-2");
+  assert.equal(legacyIssue?.metadata.issueStatus, "To Do");
+  assert.equal(legacyIssue?.metadata.issueType, "Task");
+  assert.equal(legacyIssue?.metadata.issueUrl, "flow://local/issues/FLOW-2");
+  assert.equal(legacyIssue?.metadata["workflow.external.issue.status"], "unpublished");
+  assert.equal(legacyIssue?.metadata.jiraStatus, undefined);
+  assert.equal(legacyIssue?.metadata.jiraIssueType, undefined);
+  assert.equal(legacyIssue?.metadata.jiraUrl, undefined);
 });
 
 test("Work Runtime moves issues into the active Jira sprint through Flow", async () => {
@@ -3854,6 +3905,37 @@ test("Work Runtime doctor prioritizes present review comments before approval wa
     result.findings.some((finding) => finding.summary === "Approval review is required."),
     true,
   );
+});
+
+test("Work Runtime doctor preserves awaiting review issue state", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  const session = await workRuntime.createSession("session-doctor-awaiting-review");
+  await ledger.writeIssue({
+    ref: "ISSUE-77",
+    title: "Review-ready issue",
+    repoKeys: ["public_api"],
+    state: "awaiting_review",
+    metadata: {
+      "workflow.repos.public_api.worktree_path": "/repo/public-api/.worktrees/issue-77",
+      prUrl: "https://github.com/ExampleOrg/public-api/pull/77",
+      prChecksPassing: true,
+      prIsDraft: false,
+    },
+  });
+  await workRuntime.selectIssue(session.id, {
+    ref: "ISSUE-77",
+    title: "Review-ready issue",
+    repoKeys: ["public_api"],
+    state: "awaiting_review",
+    metadata: {},
+  });
+
+  const result = await workRuntime.diagnoseIssue(session.id, "ISSUE-77");
+
+  assert.equal(result.issue.state, "awaiting_review");
+  assert.equal((await ledger.readIssue("ISSUE-77"))?.state, "awaiting_review");
 });
 
 test("Work Runtime doctor reports no next action for merged Done issue", async () => {

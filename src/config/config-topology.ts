@@ -90,7 +90,7 @@ function slugForTitle(title: string): string {
 function branchKindForIssue(issue: WorkItem): "bug" | "feature" {
   const explicitKind = String(issue.metadata.branchKind ?? "").toLowerCase();
   if (explicitKind === "bug" || explicitKind === "feature") return explicitKind;
-  const issueType = String(issue.metadata.jiraIssueType ?? "").toLowerCase();
+  const issueType = String(issue.metadata.issueType ?? issue.metadata.jiraIssueType ?? "").toLowerCase();
   if (issueType === "bug") return "bug";
   if (issueType === "story" || issueType === "task") return "feature";
   throw new Error(
