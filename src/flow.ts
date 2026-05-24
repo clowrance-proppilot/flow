@@ -1,11 +1,9 @@
 #!/usr/bin/env node
-import { Command, CommanderError } from "commander";
 
 import {
   AcliJiraAdapter,
   assessIssue,
   bootstrapFlowConfig,
-  createDefaultWorkerSpawner,
   createWorkflowLedger,
   configToProjectTopology,
   configToWorkTypeRegistry,
@@ -13,7 +11,6 @@ import {
   FlowWorkRuntime,
   GhGitHubAdapter,
   IssueStateValue,
-  WorkerExecutorValue,
   flowLayout,
   flowRuntimePath,
   flowWorkflowLedgerPath,
@@ -23,7 +20,6 @@ import {
   validateFlowConfig,
   verifyJsonlWorkflowLedger,
   type CreateIssueOptions,
-  type LocalThreadResultInput,
   type WorkerExecutor,
   type WorkerStatus,
   type WorkItem,
@@ -32,6 +28,7 @@ import {
 import { GhGitHubIssueTrackerAdapter } from "./adapters/github.js";
 import { LocalIssueTrackerAdapter, NoopCodeCollaborationAdapter } from "./adapters/local.js";
 import { repoRoot } from "./flow-runtime.js";
+import { JsonCliError, runJsonCli } from "./json-cli.js";
 
 const configValidation = await validateFlowConfig({ projectRoot: repoRoot });
 const flowConfig = configValidation.config;
@@ -77,7 +74,6 @@ const runtime = new FlowWorkRuntime({
   issueTracker: createIssueTracker(),
   defaultJiraProjectKey: configString(flowConfig?.issueTracker, "projectKey"),
   autoflowBlockedThreshold: flowConfig?.runtime?.autoflowBlockedThreshold,
-  workerTimeoutMs: flowConfig?.runtime?.worker?.timeoutMs,
   debugEnabled: flowConfig?.runtime?.debug,
   ...(flowConfig
     ? {
@@ -89,461 +85,298 @@ const runtime = new FlowWorkRuntime({
   readiness: { assess: assessIssue },
 });
 
-const program = new Command()
-  .name("flow")
-  .description("Flow agent protocol CLI. Emits JSON on stdout and diagnostics on stderr.")
-  .helpOption(false)
-  .configureOutput({
-    writeOut: (value) => process.stderr.write(value),
-    writeErr: (value) => process.stderr.write(value),
-  })
-  .action(() => {
-    const manifest = commandManifest();
-    writeJson({
-      ok: false,
-      error: "command required",
-      commands: manifest.commands.map((command) => command.name),
-      hint: "Run `flow commands` or `flow manifest` for the command contract.",
-    });
-    process.exitCode = 1;
-  });
+await runJsonCli({
+  manifest: ({ target }) => flowManifest(target),
+  route: routeFlowRequest,
+});
 
-program
-  .command("commands")
-  .description("Emit supported agent protocol commands.")
-  .action(() => {
-    const manifest = commandManifest();
-    writeJson({
-      commands: manifest.commands.map((command) => command.name),
-      descriptions: Object.fromEntries(manifest.commands.map((command) => [command.name, command.description])),
-      rawWorkRuntimeMethods,
-      stdout: manifest.stdout,
-      stderr: manifest.stderr,
-      layout: manifest.layout,
-      manifest,
-    });
-  });
-
-program
-  .command("manifest")
-  .description("Emit the machine-readable CLI command contract derived from registered commands.")
-  .action(() => writeJson(commandManifest()));
-
-program
-  .command("bootstrap")
-  .description("Create Flow config for this project from local repo metadata.")
-  .option("--force", "overwrite an existing Flow config")
-  .option("--storage <mode>", "user, repo-untracked, or repo-tracked", "user")
-  .action(async (options: { force?: boolean; storage?: string }) => {
-    writeJson(await bootstrapFlowConfig({
+async function routeFlowRequest(request: Record<string, unknown>): Promise<unknown> {
+  const op = requireString(request, "op");
+  if (op === "manifest") return flowManifest(optionalString(request, "target"));
+  if (op === "state") {
+    await ensureSession(sessionId(request));
+    return runtime.summarizeHandoff(sessionId(request));
+  }
+  if (op === "queue") return runtime.inspectQueue(limit(request));
+  if (op === "backlog") return runtime.inspectBacklog(limit(request));
+  if (op === "bootstrap") {
+    return bootstrapFlowConfig({
       projectRoot: repoRoot,
-      force: Boolean(options.force),
-      storage: parseBootstrapStorage(options.storage),
-    }));
-  });
-
-program
-  .command("config-validate")
-  .description("Validate .flow/config.yaml and emit machine-readable diagnostics.")
-  .option("--path <path>", "config path")
-  .action(async (options: { path?: string }) => {
-    const result = await validateFlowConfig({ projectRoot: repoRoot, configPath: options.path });
-    const { config: _config, ...publicResult } = result;
-    writeJson(publicResult);
-    if (!result.ok) process.exitCode = 1;
-  });
-
-program
-  .command("config-explain")
-  .description("Summarize the active Flow config without dumping secrets or provider credentials.")
-  .option("--path <path>", "config path")
-  .action(async (options: { path?: string }) => {
-    const result = await validateFlowConfig({ projectRoot: repoRoot, configPath: options.path });
-    const config = result.config;
-    writeJson({
-      ok: result.ok,
-      path: result.path,
-      errors: result.errors,
-      project: config?.project,
-      topology: config
-        ? {
-          repos: Object.fromEntries(Object.entries(config.topology.repos).map(([key, repo]) => [key, {
-            name: repo.name,
-            baseBranch: repo.baseBranch,
-            pathFromRoot: repo.pathFromRoot,
-          }])),
-          branchPattern: config.topology.branchPattern,
-          pullRequestUrlPattern: config.topology.pullRequestUrlPattern,
-          issueInferenceRules: config.topology.issueInference.length,
-        }
-        : undefined,
-      adapters: config
-        ? {
-          issueTracker: config.issueTracker?.type,
-          collaboration: config.collaboration?.type,
-          sourceControl: config.sourceControl?.type,
-          ledger: config.ledger?.type,
-        }
-        : undefined,
-      runtime: config?.runtime
-        ? {
-          defaultSessionId: config.runtime.defaultSessionId,
-          dashboard: config.runtime.dashboard
-            ? {
-              host: config.runtime.dashboard.host,
-              port: config.runtime.dashboard.port,
-              url: config.runtime.dashboard.url,
-              defaultThemeId: config.runtime.dashboard.defaultThemeId,
-            }
-            : undefined,
-          worker: config.runtime.worker
-            ? {
-              executor: config.runtime.worker.executor,
-              provider: config.runtime.worker.provider,
-              model: config.runtime.worker.model,
-              timeoutMs: config.runtime.worker.timeoutMs,
-            }
-            : undefined,
-        }
-        : undefined,
+      force: Boolean(request.force),
+      storage: parseBootstrapStorage(request.storage ?? "user"),
     });
-    if (!result.ok) process.exitCode = 1;
+  }
+  if (op === "config") return handleConfigRequest(request);
+  if (op === "ledger") return handleLedgerRequest(request);
+  if (op === "issue") return handleIssueRequest(request);
+  if (op === "workflow") return handleWorkflowRequest(request);
+  if (op === "runtime") return dispatch(requireString(request, "method"), paramsFromRequest(request));
+  if (rawWorkRuntimeMethods.includes(op)) return dispatch(op, paramsFromRequest(request));
+  throw new JsonCliError("BAD_OP", `Unsupported Flow op: ${op}`, {
+    details: { supportedOps: ["manifest", "state", "queue", "backlog", "bootstrap", "config", "ledger", "issue", "workflow", "runtime"] },
   });
+}
 
-program
-  .command("ledger-verify")
-  .description("Verify the Flow workflow ledger and optionally rebuild issue projections.")
-  .option("--path <path>", "workflow ledger path")
-  .option("--rebuild-projections", "rebuild .flow/ledger/issues projections from valid ledger records")
-  .action(async (options: { path?: string; rebuildProjections?: boolean }) => {
-    writeJson(await verifyJsonlWorkflowLedger(
-      options.path ?? resolveWorkflowLedgerPath(),
-      { rebuildProjections: Boolean(options.rebuildProjections) },
-    ));
-  });
+async function handleConfigRequest(request: Record<string, unknown>): Promise<unknown> {
+  const mode = optionalString(request, "mode") ?? "validate";
+  const result = await validateFlowConfig({ projectRoot: repoRoot, configPath: optionalString(request, "path") });
+  if (mode === "validate") {
+    const { config: _config, ...publicResult } = result;
+    return publicResult;
+  }
+  if (mode !== "explain") throw badMode("config", mode, ["validate", "explain"]);
+  const config = result.config;
+  return {
+    ok: result.ok,
+    path: result.path,
+    errors: result.errors,
+    project: config?.project,
+    topology: config
+      ? {
+        repos: Object.fromEntries(Object.entries(config.topology.repos).map(([key, repo]) => [key, {
+          name: repo.name,
+          baseBranch: repo.baseBranch,
+          pathFromRoot: repo.pathFromRoot,
+        }])),
+        branchPattern: config.topology.branchPattern,
+        pullRequestUrlPattern: config.topology.pullRequestUrlPattern,
+        issueInferenceRules: config.topology.issueInference.length,
+      }
+      : undefined,
+    adapters: config
+      ? {
+        issueTracker: config.issueTracker?.type,
+        collaboration: config.collaboration?.type,
+        sourceControl: config.sourceControl?.type,
+        ledger: config.ledger?.type,
+      }
+      : undefined,
+    runtime: config?.runtime
+      ? {
+        defaultSessionId: config.runtime.defaultSessionId,
+        dashboard: config.runtime.dashboard
+          ? {
+            host: config.runtime.dashboard.host,
+            port: config.runtime.dashboard.port,
+            url: config.runtime.dashboard.url,
+            defaultThemeId: config.runtime.dashboard.defaultThemeId,
+          }
+          : undefined,
+        worker: config.runtime.worker
+          ? {
+            executor: config.runtime.worker.executor,
+            provider: config.runtime.worker.provider,
+            model: config.runtime.worker.model,
+            timeoutMs: config.runtime.worker.timeoutMs,
+          }
+          : undefined,
+      }
+      : undefined,
+  };
+}
 
-program
-  .command("session")
-  .description("Create or overwrite a named Work Runtime session.")
-  .argument("[id]", "session id", defaultSessionId)
-  .action(async (id: string) => writeJson(await runtime.createSession(id)));
+async function handleLedgerRequest(request: Record<string, unknown>): Promise<unknown> {
+  const mode = optionalString(request, "mode") ?? "verify";
+  if (mode !== "verify") throw badMode("ledger", mode, ["verify"]);
+  return verifyJsonlWorkflowLedger(
+    optionalString(request, "path") ?? resolveWorkflowLedgerPath(),
+    { rebuildProjections: Boolean(request.rebuildProjections) },
+  );
+}
 
-program
-  .command("queue")
-  .description("Inspect current configured issue queue.")
-  .option("-l, --limit <count>", "issue limit", parsePositiveInteger, 10)
-  .action(async (options: { limit: number }) => writeJson(await runtime.inspectQueue(options.limit)));
+async function handleIssueRequest(request: Record<string, unknown>): Promise<unknown> {
+  const mode = requireString(request, "mode");
+  const activeSessionId = sessionId(request);
+  await ensureSession(activeSessionId);
+  switch (mode) {
+    case "select":
+      return runtime.selectIssue(activeSessionId, await queueIssue(requireString(request, "issueRef")));
+    case "create":
+      return runtime.createIssue(activeSessionId, {
+        projectKey: optionalString(request, "projectKey"),
+        issueType: parseJiraIssueType(optionalString(request, "issueType") ?? "Bug"),
+        branchKind: parseBranchKind(optionalString(request, "branchKind")),
+        summary: requireString(request, "summary"),
+        description: optionalString(request, "description"),
+        repoKeys: asStringArray(request.repoKeys),
+        select: typeof request.select === "boolean" ? request.select : true,
+      });
+    case "adoptBranch":
+      return runtime.adoptBranch(activeSessionId, {
+        issueRef: optionalString(request, "issueRef"),
+        summary: optionalString(request, "summary"),
+        description: optionalString(request, "description"),
+        repoKey: optionalString(request, "repoKey"),
+        worktreePath: optionalString(request, "worktreePath"),
+        baseBranch: optionalString(request, "baseBranch"),
+        prefix: optionalString(request, "prefix") ?? configString(flowConfig?.issueTracker, "prefix") ?? "FLOW",
+        select: typeof request.select === "boolean" ? request.select : true,
+      });
+    case "adoptWorkspace":
+      return runtime.adoptWorkspace(activeSessionId, requireString(request, "issueRef"), {
+        repoKey: optionalString(request, "repoKey"),
+        worktreePath: requireString(request, "worktreePath"),
+        baseBranch: optionalString(request, "baseBranch"),
+      });
+    default:
+      throw badMode("issue", mode, ["select", "create", "adoptBranch", "adoptWorkspace"]);
+  }
+}
 
-program
-  .command("backlog")
-  .description("Inspect configured issue backlog.")
-  .option("-l, --limit <count>", "issue limit", parsePositiveInteger, 10)
-  .action(async (options: { limit: number }) => writeJson(await runtime.inspectBacklog(options.limit)));
-
-program
-  .command("select")
-  .description("Select an issue in a file-backed Work Runtime session.")
-  .argument("<issue-ref>", "issue key or ref")
-  .option("-s, --session <id>", "session id", defaultSessionId)
-  .action(async (issueRef: string, options: { session: string }) => {
-    await ensureSession(options.session);
-    writeJson(await runtime.selectIssue(options.session, await queueIssue(issueRef)));
-  });
-
-program
-  .command("create-issue")
-  .description("Create an issue through the configured issue tracker and select it by default.")
-  .requiredOption("--summary <text>", "issue summary")
-  .option("--description <text>", "issue description")
-  .option("--type <type>", "issue type: Bug, Task, or Story", "Bug")
-  .option("--project <key>", "issue tracker project key")
-  .option("--repo <keys>", "comma-separated routed repo keys")
-  .option("--branch-kind <kind>", "Flow branch kind: bug or feature")
-  .option("-s, --session <id>", "session id", defaultSessionId)
-  .option("--no-select", "create and store the issue without selecting it")
-  .action(async (options: {
-    summary: string;
-    description?: string;
-    type: "Bug" | "Task" | "Story";
-    project?: string;
-    repo?: string;
-    branchKind?: "bug" | "feature";
-    session: string;
-    select: boolean;
-  }) => {
-    await ensureSession(options.session);
-    writeJson(await runtime.createIssue(options.session, {
-      projectKey: options.project,
-      issueType: parseJiraIssueType(options.type),
-      branchKind: parseBranchKind(options.branchKind),
-      summary: options.summary,
-      description: options.description,
-      repoKeys: asStringArray(options.repo),
-      select: options.select,
-    }));
-  });
-
-program
-  .command("adopt-branch")
-  .description("Create or update local Flow work from an existing branch/worktree without publishing externally.")
-  .option("--issue-ref <ref>", "existing local Flow work ref to update")
-  .option("--summary <text>", "local work summary")
-  .option("--description <text>", "local work description")
-  .option("--repo <key>", "repo key")
-  .option("--path <path>", "existing branch/worktree path")
-  .option("--base-branch <branch>", "base branch")
-  .option("--prefix <prefix>", "local work ref prefix", configString(flowConfig?.issueTracker, "prefix") ?? "FLOW")
-  .option("-s, --session <id>", "session id", defaultSessionId)
-  .option("--no-select", "create or update without selecting it")
-  .action(async (options: {
-    issueRef?: string;
-    summary?: string;
-    description?: string;
-    repo?: string;
-    path?: string;
-    baseBranch?: string;
-    prefix?: string;
-    session: string;
-    select: boolean;
-  }) => {
-    await ensureSession(options.session);
-    writeJson(await runtime.adoptBranch(options.session, {
-      issueRef: options.issueRef,
-      summary: options.summary,
-      description: options.description,
-      repoKey: options.repo,
-      worktreePath: options.path,
-      baseBranch: options.baseBranch,
-      prefix: options.prefix,
-      select: options.select,
-    }));
-  });
-
-program
-  .command("adopt-workspace")
-  .description("Record an existing worktree as the prepared workspace for an issue.")
-  .argument("<issue-ref>", "issue key or ref")
-  .requiredOption("--path <path>", "existing worktree path")
-  .option("--repo <key>", "repo key")
-  .option("--base-branch <branch>", "base branch")
-  .option("-s, --session <id>", "session id", defaultSessionId)
-  .action(async (issueRef: string, options: { path: string; repo?: string; baseBranch?: string; session: string }) => {
-    await ensureSession(options.session);
-    writeJson(await runtime.adoptWorkspace(options.session, issueRef, {
-      repoKey: options.repo,
-      worktreePath: options.path,
-      baseBranch: options.baseBranch,
-    }));
-  });
-
-program
-  .command("advance")
-  .description("Advance a selected issue, or select the issue first when provided.")
-  .argument("[issue-ref]", "issue key or ref")
-  .option("-s, --session <id>", "session id", defaultSessionId)
-  .option("--approve <confirmation-id>", "approve pending confirmation id")
-  .action(async (issueRef: string | undefined, options: { session: string; approve?: string }) => {
-    await ensureSession(options.session);
-    if (issueRef) await runtime.selectIssue(options.session, await queueIssue(issueRef));
-    writeJson(await runtime.advanceIssue(options.session, options.approve));
-  });
-
-program
-  .command("autoflow")
-  .description("Run deterministic autoflow for an issue.")
-  .argument("<issue-ref>", "issue key or ref")
-  .option("-s, --session <id>", "session id", defaultSessionId)
-  .option("--steps <count>", "maximum Work Runtime autoflow steps", parsePositiveInteger, 20)
-  .option("--no-worker", "do not run a background executor")
-  .action(async (issueRef: string, options: { session: string; steps: number; worker: boolean }) => {
-    await ensureSession(options.session);
-    await runtime.selectIssue(options.session, await queueIssue(issueRef));
-    writeJson(await runtime.autoFlowIssue(
-      options.session,
-      createConfiguredWorkerSpawner(),
-      {
+async function handleWorkflowRequest(request: Record<string, unknown>): Promise<unknown> {
+  const mode = requireString(request, "mode");
+  const activeSessionId = sessionId(request);
+  await ensureSession(activeSessionId);
+  const issueRef = optionalString(request, "issueRef") ?? optionalString(request, "id");
+  if (issueRef && ["advance", "autoflow", "doctor", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation"].includes(mode)) {
+    await runtime.selectIssue(activeSessionId, await queueIssue(issueRef));
+  }
+  switch (mode) {
+    case "advance":
+      return runtime.advanceIssue(activeSessionId, optionalString(request, "approveConfirmationId"));
+    case "autoflow":
+      return runtime.autoFlowIssue(activeSessionId, {
         autoPrepareWorkspace: true,
         autoApproveWorker: true,
-        runWorker: options.worker,
-        maxSteps: options.steps,
-      },
-    ));
-  });
-
-program
-  .command("complete-worker")
-  .description("Record the current local agent thread as the Worker result for an issue.")
-  .argument("[issue-ref]", "issue key or ref")
-  .requiredOption("--summary <text>", "worker result summary")
-  .option("-s, --session <id>", "session id", defaultSessionId)
-  .option("--repo <key>", "repo key")
-  .option("--task-id <id>", "worker task id to close")
-  .option("--work-job-id <id>", "typed work job id to close")
-  .option("--status <status>", "result status: succeeded, blocked, or failed", "succeeded")
-  .option("--changed-files <files>", "comma-separated changed files")
-  .option("--tests-run <commands>", "comma-separated verification commands")
-  .option("--blockers <items>", "comma-separated blockers")
-  .option("--next-pickup <text>", "next pickup guidance for blocked/failed work")
-  .action(async (issueRef: string | undefined, options: {
-    session: string;
-    summary: string;
-    repo?: string;
-    taskId?: string;
-    workJobId?: string;
-    status: string;
-    changedFiles?: string;
-    testsRun?: string;
-    blockers?: string;
-    nextPickup?: string;
-  }) => {
-    await ensureSession(options.session);
-    if (issueRef) await runtime.selectIssue(options.session, await queueIssue(issueRef));
-    const input: LocalThreadResultInput = {
-      issueRef,
-      repoKey: options.repo,
-      taskId: options.taskId,
-      workJobId: options.workJobId,
-      status: parseWorkerResultStatus(options.status),
-      summary: options.summary,
-      changedFiles: asStringArray(options.changedFiles),
-      testsRun: asStringArray(options.testsRun),
-      blockers: asStringArray(options.blockers),
-      nextPickup: options.nextPickup,
-    };
-    writeJson(await runtime.recordLocalThreadResult(options.session, input));
-  });
-
-program
-  .command("record-pr")
-  .description("Record an existing pull request for an issue.")
-  .argument("<issue-ref>", "issue key or ref")
-  .requiredOption("--repo <name>", "repo name or key")
-  .requiredOption("--number <number>", "pull request number", parsePositiveInteger)
-  .requiredOption("--url <url>", "pull request URL")
-  .option("-s, --session <id>", "session id", defaultSessionId)
-  .option("--draft", "record the pull request as draft")
-  .option("--checks-passing", "record checks as passing")
-  .option("--review-decision <decision>", "review decision")
-  .action(async (issueRef: string, options: {
-    session: string;
-    repo: string;
-    number: number;
-    url: string;
-    draft?: boolean;
-    checksPassing?: boolean;
-    reviewDecision?: string;
-  }) => {
-    await ensureSession(options.session);
-    await runtime.selectIssue(options.session, await queueIssue(issueRef));
-    writeJson(await runtime.recordPullRequest(options.session, {
-      issueRef,
-      repo: options.repo,
-      number: options.number,
-      url: options.url,
-      isDraft: Boolean(options.draft),
-      checksPassing: options.checksPassing,
-      reviewDecision: options.reviewDecision,
-    }));
-  });
-
-program
-  .command("record-evidence")
-  .description("Record acceptance evidence for an issue.")
-  .argument("<issue-ref>", "issue key or ref")
-  .requiredOption("--summary <text>", "evidence summary")
-  .option("-s, --session <id>", "session id", defaultSessionId)
-  .option("--source <text>", "evidence source", "local")
-  .option("--criteria <items>", "comma-separated acceptance criteria")
-  .action(async (issueRef: string, options: {
-    session: string;
-    summary: string;
-    source: string;
-    criteria?: string;
-  }) => {
-    await ensureSession(options.session);
-    await runtime.selectIssue(options.session, await queueIssue(issueRef));
-    writeJson(await runtime.recordEvidence(options.session, {
-      issueRef,
-      summary: options.summary,
-      source: options.source,
-      criteria: parseEvidenceCriteria(options.criteria, options.summary, options.source),
-    }));
-  });
-
-program
-  .command("record-documentation")
-  .description("Record documentation disposition for an issue.")
-  .argument("<issue-ref>", "issue key or ref")
-  .requiredOption("--disposition <value>", "documentation disposition")
-  .requiredOption("--summary <text>", "documentation summary")
-  .option("-s, --session <id>", "session id", defaultSessionId)
-  .action(async (issueRef: string, options: {
-    session: string;
-    disposition: string;
-    summary: string;
-  }) => {
-    await ensureSession(options.session);
-    await runtime.selectIssue(options.session, await queueIssue(issueRef));
-    writeJson(await runtime.recordDocumentation(options.session, {
-      issueRef,
-      disposition: parseDocumentationDisposition(options.disposition),
-      summary: options.summary,
-    }));
-  });
-
-program
-  .command("doctor")
-  .description("Diagnose Flow visibility, routing, PR state, readiness blockers, and next action.")
-  .argument("[issue-ref]", "issue key or ref")
-  .option("-s, --session <id>", "session id", defaultSessionId)
-  .option("--strict", "exit nonzero when Flow diagnosis is blocked or degraded")
-  .action(async (issueRef: string | undefined, options: { session: string; strict?: boolean }) => {
-    await ensureSession(options.session);
-    const issue = issueRef ? await queueIssue(issueRef) : undefined;
-    if (issue) await runtime.selectIssue(options.session, issue);
-    const diagnosis = await runtime.diagnoseIssue(options.session, issue?.ref);
-    writeJson(diagnosis);
-    if (options.strict && diagnosis.status !== "ok") process.exitCode = 1;
-  });
-
-program
-  .command("handoff")
-  .description("Summarize current session handoff state.")
-  .option("-s, --session <id>", "session id", defaultSessionId)
-  .action(async (options: { session: string }) => {
-    await ensureSession(options.session);
-    writeJson(await runtime.summarizeHandoff(options.session));
-  });
-
-program
-  .command("observe")
-  .description("Observe projected workflow state for a subject.")
-  .argument("<ref>", "subject reference, defaults to issue ref")
-  .option("-t, --type <type>", "subject type", "issue")
-  .action(async (ref: string, options: { type: string }) => {
-    writeJson(await runtime.observeFlowSubject({ type: options.type, ref }));
-  });
-
-program
-  .command("call")
-  .description("Call a Work Runtime method with raw JSON params.")
-  .argument("<method>", "Work Runtime method")
-  .argument("[params-json]", "JSON object params", "{}")
-  .action(async (method: string, paramsJson: string) => {
-    const params = JSON.parse(paramsJson) as Record<string, unknown>;
-    writeJson(await dispatch(method, params));
-  });
-
-try {
-  await program.exitOverride().parseAsync(process.argv);
-} catch (error) {
-  if (error instanceof CommanderError) {
-    writeJson({ ok: false, error: error.message, code: error.code });
-    process.exitCode = error.exitCode;
-  } else {
-  writeJson({ ok: false, error: errorMessage(error) });
-  process.exitCode = 1;
+        maxSteps: limit(request, 20),
+      });
+    case "doctor":
+    case "audit":
+      return runtime.diagnoseIssue(activeSessionId, issueRef);
+    case "handoff":
+      return runtime.summarizeHandoff(activeSessionId);
+    case "recordResult":
+      return runtime.recordLocalThreadResult(activeSessionId, {
+        issueRef,
+        repoKey: optionalString(request, "repoKey"),
+        taskId: optionalString(request, "taskId"),
+        workJobId: optionalString(request, "workJobId"),
+        status: parseWorkerResultStatus(request.status ?? "succeeded"),
+        summary: requireString(request, "summary"),
+        changedFiles: asStringArray(request.changedFiles),
+        testsRun: asStringArray(request.testsRun),
+        blockers: asStringArray(request.blockers),
+        nextPickup: optionalString(request, "nextPickup"),
+      });
+    case "recordPullRequest":
+      return runtime.recordPullRequest(activeSessionId, {
+        issueRef: requireValue(issueRef, "issueRef"),
+        repo: requireString(request, "repo"),
+        number: Number(request.number),
+        url: requireString(request, "url"),
+        isDraft: Boolean(request.isDraft),
+        checksPassing: typeof request.checksPassing === "boolean" ? request.checksPassing : undefined,
+        reviewDecision: optionalString(request, "reviewDecision"),
+      });
+    case "recordEvidence": {
+      const summary = requireString(request, "summary");
+      const source = optionalString(request, "source") ?? "local";
+      return runtime.recordEvidence(activeSessionId, {
+        issueRef: requireValue(issueRef, "issueRef"),
+        summary,
+        source,
+        criteria: parseEvidenceCriteria(request.criteria, summary, source),
+      });
+    }
+    case "recordDocumentation":
+      return runtime.recordDocumentation(activeSessionId, {
+        issueRef: requireValue(issueRef, "issueRef"),
+        disposition: parseDocumentationDisposition(request.disposition),
+        summary: requireString(request, "summary"),
+      });
+    case "observe":
+      return runtime.observeFlowSubject({
+        type: optionalString(request, "type") ?? "issue",
+        ref: requireValue(issueRef, "ref"),
+      });
+    default:
+      throw badMode("workflow", mode, ["advance", "audit", "autoflow", "doctor", "handoff", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation", "observe"]);
   }
+}
+
+function flowManifest(target?: string) {
+  if (!target) {
+    return {
+      manifestVersion: 2,
+      surface: "flow",
+      transport: {
+        stdin: "json-body",
+        argv: "single-json-body",
+        stdout: "single-json-document",
+        stderr: "diagnostics",
+      },
+      invocation: {
+        manifest: ["flow", "flow manifest"],
+        body: ["flow '{\"op\":\"state\"}'", "printf '%s\\n' '{\"op\":\"state\"}' | flow"],
+      },
+      detail: { op: "manifest", target: "<op>" },
+      targets: ["workflow", "issue", "runtime", "config", "layout"],
+      ops: {
+        manifest: "Get compact or targeted capability metadata.",
+        state: "Read current session state.",
+        queue: "Inspect active issue queue.",
+        backlog: "Inspect backlog.",
+        bootstrap: "Create Flow config from repo metadata.",
+        config: "Validate or explain Flow config.",
+        ledger: "Verify workflow ledger.",
+        issue: "Create, select, or adopt issue/workspace state.",
+        workflow: "Advance, audit, autoflow, record, or observe workflow state.",
+        runtime: "Call a raw Work Runtime method by name.",
+      },
+    };
+  }
+  if (target === "workflow") {
+    return {
+      target,
+      modes: ["advance", "audit", "autoflow", "doctor", "handoff", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation", "observe"],
+      examples: [
+        { op: "workflow", mode: "audit", id: "FLOW-123" },
+        { op: "workflow", mode: "autoflow", issueRef: "FLOW-123", limit: 20 },
+        { op: "workflow", mode: "recordEvidence", issueRef: "FLOW-123", summary: "npm test passed", criteria: ["tests"] },
+      ],
+    };
+  }
+  if (target === "issue") {
+    return {
+      target,
+      modes: ["select", "create", "adoptBranch", "adoptWorkspace"],
+      examples: [
+        { op: "issue", mode: "select", issueRef: "FLOW-123" },
+        { op: "issue", mode: "adoptWorkspace", issueRef: "FLOW-123", repoKey: "main", worktreePath: "/path/to/worktree" },
+      ],
+    };
+  }
+  if (target === "runtime") {
+    return {
+      target,
+      shape: { op: "runtime", method: "<method>", params: {} },
+      methods: rawWorkRuntimeMethods,
+    };
+  }
+  if (target === "config") {
+    return {
+      target,
+      modes: ["validate", "explain"],
+      examples: [
+        { op: "config", mode: "validate" },
+        { op: "config", mode: "explain" },
+      ],
+    };
+  }
+  if (target === "layout") {
+    return {
+      target,
+      layout: flowLayout,
+    };
+  }
+  return {
+    target,
+    error: {
+      code: "UNKNOWN_MANIFEST_TARGET",
+      message: `Unknown manifest target: ${target}`,
+      targets: ["workflow", "issue", "runtime", "config", "layout"],
+    },
+  };
 }
 
 async function ensureSession(sessionId: string): Promise<void> {
@@ -587,28 +420,6 @@ async function runtimeGithubPullRequest(repo: string, number: number) {
 
 function runtimeGithub(): GhGitHubAdapter {
   return new GhGitHubAdapter({ cwd: repoRoot, owner: configString(flowConfig?.collaboration, "owner") });
-}
-
-function createConfiguredWorkerSpawner() {
-  const worker = flowConfig?.runtime?.worker;
-  return createDefaultWorkerSpawner({
-    flowRoot: repoRoot,
-    executor: parseConfiguredWorkerExecutor(worker?.executor),
-    provider: worker?.provider,
-    model: worker?.model,
-    timeoutMs: worker?.timeoutMs,
-    sdkModulePath: worker?.sdkModulePath,
-    extensionPath: worker?.extensionPath,
-    agentDir: worker?.agentDir,
-    command: worker?.codexCommand,
-  });
-}
-
-function parseConfiguredWorkerExecutor(value: unknown): WorkerExecutor | undefined {
-  if (value === WorkerExecutorValue.Pi || value === WorkerExecutorValue.Codex || value === WorkerExecutorValue.LiveAgentThread) {
-    return value;
-  }
-  return undefined;
 }
 
 function parsePullRequestRef(ref: string): { repo: string; number: number } | undefined {
@@ -790,7 +601,7 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
         typeof params.issueRef === "string" ? params.issueRef : undefined,
       );
     case "autoFlowIssue":
-      return runtime.autoFlowIssue(String(params.sessionId ?? defaultSessionId), createConfiguredWorkerSpawner(), params.options ?? {});
+      return runtime.autoFlowIssue(String(params.sessionId ?? defaultSessionId), params.options ?? {});
     case "resetAutoflowState":
       return runtime.resetAutoflowState(String(params.sessionId ?? defaultSessionId), asStringArray(params.issueRefs));
     case "refreshReviewState":
@@ -806,51 +617,11 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
         ref: String(params.ref),
       });
     default:
-      throw new Error(`Unsupported CLI Work Runtime method: ${method}`);
+      throw new JsonCliError("BAD_METHOD", `Unsupported Work Runtime method: ${method}`, {
+        manifestTarget: "runtime",
+        details: { supportedMethods: rawWorkRuntimeMethods },
+      });
   }
-}
-
-function writeJson(value: unknown): void {
-  process.stdout.write(`${JSON.stringify(value)}\n`);
-}
-
-function commandManifest() {
-  return {
-    manifestVersion: 1,
-    stdout: "json",
-    stderr: "diagnostics",
-    layout: flowLayout,
-    commands: program.commands.map((command) => ({
-      name: command.name(),
-      description: command.description(),
-      arguments: command.registeredArguments.map((argument) => ({
-        name: argument.name(),
-        description: argument.description,
-        required: argument.required,
-        variadic: argument.variadic,
-        default: serializableDefault(argument.defaultValue),
-        choices: argument.argChoices,
-      })),
-      options: command.options.map((option) => ({
-        name: option.attributeName(),
-        flags: option.flags,
-        description: option.description,
-        requiredValue: option.required,
-        optionalValue: option.optional,
-        mandatory: option.mandatory,
-        boolean: option.isBoolean(),
-        negated: option.negate,
-        variadic: option.variadic,
-        default: serializableDefault(option.defaultValue),
-        choices: option.argChoices,
-      })),
-    })),
-    rawWorkRuntimeMethods,
-  };
-}
-
-function serializableDefault(value: unknown): unknown {
-  return value === undefined ? undefined : value;
 }
 
 function resolveRuntimeStorePath(): string {
@@ -868,17 +639,61 @@ function parseBootstrapStorage(value: unknown): "user" | "repo-untracked" | "rep
   throw new Error(`Expected bootstrap storage user, repo-untracked, or repo-tracked, got ${String(value)}.`);
 }
 
-function parsePositiveInteger(value: string): number {
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1) throw new Error(`Expected a positive integer, got ${value}.`);
-  return parsed;
-}
-
 function asStringArray(value: unknown): string[] | undefined {
   if (value === undefined) return undefined;
   if (Array.isArray(value)) return value.map(String);
   if (typeof value === "string") return value.split(",").map((item) => item.trim()).filter(Boolean);
   return [];
+}
+
+function limit(request: Record<string, unknown>, fallback = 10): number {
+  const value = request.limit ?? fallback;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) throw new Error(`Expected a positive integer limit, got ${String(value)}.`);
+  return parsed;
+}
+
+function sessionId(request: Record<string, unknown>): string {
+  return optionalString(request, "sessionId") ?? defaultSessionId;
+}
+
+function paramsFromRequest(request: Record<string, unknown>): Record<string, unknown> {
+  if (isRecord(request.params)) return request.params;
+  const { op: _op, method: _method, ...params } = request;
+  return params;
+}
+
+function requireString(request: Record<string, unknown>, key: string): string {
+  const value = request[key];
+  if (typeof value === "string" && value.trim()) return value;
+  throw badField(key, "non-empty string");
+}
+
+function optionalString(request: Record<string, unknown>, key: string): string | undefined {
+  const value = request[key];
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function requireValue(value: string | undefined, key: string): string {
+  if (value) return value;
+  throw badField(key, "non-empty string");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function badMode(target: string, mode: string, supportedModes: string[]): JsonCliError {
+  return new JsonCliError("BAD_MODE", `Unsupported ${target} mode: ${mode}`, {
+    manifestTarget: target,
+    details: { supportedModes },
+  });
+}
+
+function badField(field: string, expected: string): JsonCliError {
+  return new JsonCliError("BAD_FIELD", `Expected ${expected} field: ${field}`, {
+    details: { field, expected },
+  });
 }
 
 function parseWorkerExecutor(value: unknown): WorkerExecutor | undefined {

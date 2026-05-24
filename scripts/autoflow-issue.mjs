@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { Command } from "commander";
 import { execFile } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,36 +7,7 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const flowRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
-const program = new Command()
-  .name("flow-autoflow")
-  .description("Run Flow autoflow against one issue through the Flow CLI.")
-  .argument("<issue-ref>", "issue key or ref, for example ISSUE-123")
-  .option(
-    "--flow-bin <path>",
-    "Flow CLI path",
-    join(flowRoot, "bin", "flow"),
-  )
-  .option(
-    "--cycles <count>",
-    "maximum autoflow cycles",
-    parsePositiveInteger,
-    4,
-  )
-  .option(
-    "--steps <count>",
-    "maximum autoflow steps per cycle",
-    parsePositiveInteger,
-    20,
-  );
-
-program.parse();
-
-const [issueRef] = program.args;
-const options = program.opts();
-
-const flowBin = options.flowBin;
-const maxCycles = options.cycles;
-const maxSteps = options.steps;
+const { issueRef, flowBin, maxCycles, maxSteps } = parseArgs(process.argv.slice(2));
 
 const session = await call("createSession", {});
 const queue = await call("inspectQueue", { limit: 50 });
@@ -77,12 +47,48 @@ const output = {
 console.log(JSON.stringify(output, null, 2));
 
 async function call(method, params) {
-  const { stdout, stderr } = await execFileAsync(flowBin, ["call", method, JSON.stringify(params)], {
+  const { stdout, stderr } = await execFileAsync(flowBin, [JSON.stringify({ op: "runtime", method, params })], {
     cwd: process.cwd(),
     maxBuffer: 20 * 1024 * 1024,
   });
   if (stderr.trim()) process.stderr.write(stderr);
-  return JSON.parse(stdout);
+  const parsed = JSON.parse(stdout);
+  if (parsed.ok === false) throw new Error(`Flow CLI failed: ${JSON.stringify(parsed.error)}`);
+  return parsed.result;
+}
+
+function parseArgs(args) {
+  const parsed = {
+    issueRef: "",
+    flowBin: join(flowRoot, "bin", "flow"),
+    maxCycles: 4,
+    maxSteps: 20,
+  };
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--flow-bin") {
+      parsed.flowBin = requireArgValue(args, index);
+      index += 1;
+    } else if (arg === "--cycles") {
+      parsed.maxCycles = parsePositiveInteger(requireArgValue(args, index));
+      index += 1;
+    } else if (arg === "--steps") {
+      parsed.maxSteps = parsePositiveInteger(requireArgValue(args, index));
+      index += 1;
+    } else if (!parsed.issueRef) {
+      parsed.issueRef = arg;
+    } else {
+      throw new Error(`Unexpected argument: ${arg}`);
+    }
+  }
+  if (!parsed.issueRef) throw new Error("Expected issue ref argument.");
+  return parsed;
+}
+
+function requireArgValue(args, index) {
+  const value = args[index + 1];
+  if (!value) throw new Error(`Expected value after ${args[index]}.`);
+  return value;
 }
 
 function parsePositiveInteger(value) {

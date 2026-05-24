@@ -2,7 +2,7 @@
   "name": "@camden-lowrance/flow",
   "version": "0.1.0",
   "type": "module",
-  "description": "Flow durable coordination and workflow orchestration engine.",
+  "description": "Flow durable workflow authority for agent-assisted developer work.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -79,7 +79,6 @@
   "dependencies": {
     "@vitejs/plugin-react": "^5.2.0",
     "autoprefixer": "^10.5.0",
-    "commander": "^14.0.3",
     "express": "^5.2.1",
     "lucide-react": "^1.16.0",
     "pathe": "^2.0.3",

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -47,7 +47,7 @@ try {
   if (!state.sessionOptions?.tools?.every((tool) => tool.startsWith("flow_"))) {
     throw new Error("session tools are not restricted to flow_*");
   }
-  if (state.sessionOptions?.cwd !== repoRoot) {
+  if (realpathSync(state.sessionOptions?.cwd) !== realpathSync(repoRoot)) {
     throw new Error(`session cwd should be project root, got ${state.sessionOptions?.cwd}`);
   }
   if (state.sessionOptions?.model?.provider !== "openrouter") {

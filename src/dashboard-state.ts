@@ -114,7 +114,7 @@ export async function callFlowCli(
   debugLog: (event: string, details: Record<string, unknown>) => void = () => undefined,
 ): Promise<unknown> {
   const bin = join(flowRoot, "bin", "flow");
-  const args = ["call", method, JSON.stringify(params)];
+  const args = [JSON.stringify({ op: "runtime", method, params })];
   const command = shouldRunWithNode(bin) ? process.execPath : bin;
   const commandArgs = shouldRunWithNode(bin) ? [bin, ...args] : args;
   const { stdout, stderr } = await execFileAsync(command, commandArgs, {
@@ -122,7 +122,9 @@ export async function callFlowCli(
     maxBuffer: 20 * 1024 * 1024,
   });
   if (stderr.trim()) debugLog("dashboard.flow_cli_stderr", { method, stderr: stderr.trim().slice(0, 1000) });
-  return JSON.parse(stdout) as unknown;
+  const parsed = JSON.parse(stdout) as { ok?: boolean; result?: unknown; error?: unknown };
+  if (parsed.ok === false) throw new Error(`Flow CLI failed: ${JSON.stringify(parsed.error)}`);
+  return parsed.result;
 }
 
 function shouldRunWithNode(bin: string): boolean {
