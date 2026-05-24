@@ -84,7 +84,7 @@ export function assessIssue(input: ReadinessAssessmentInput): ReadinessAssessmen
       finding(
         input.issue.ref,
         "blocker",
-        "Worker is already running for this issue.",
+        "Execution handoff is already active for this issue.",
         "Wait for the current Worker run to finish before requesting another run.",
       ),
     );
@@ -98,7 +98,7 @@ export function assessIssue(input: ReadinessAssessmentInput): ReadinessAssessmen
   }
 
   if (input.issue.state === "running" && !latestWorker) {
-    findings.push(finding(input.issue.ref, "warning", "Issue is marked running but has no worker result."));
+    findings.push(finding(input.issue.ref, "warning", "Issue is marked running but has no execution result."));
   }
 
   const pullRequestMerged = isPullRequestMerged(input.review);

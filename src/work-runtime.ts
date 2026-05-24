@@ -51,7 +51,6 @@ import type {
 import { assessIssue } from "./readiness.js";
 import type { WorkflowLedger } from "./ledger.js";
 import { FlowStore } from "./store.js";
-import type { WorkerSpawner } from "./worker.js";
 import { parseWorkEnvelope } from "./work-envelope.js";
 import { type WorkTypeRegistry, createDefaultFlowWorkTypeRegistry, workerExecutorToWorkExecutor } from "./work-registry.js";
 import { DefaultProjectTopology, type ProjectTopology } from "./project-topology.js";
@@ -101,7 +100,6 @@ export interface WorkRuntimeOptions {
   projectRoot?: string;
   defaultJiraProjectKey?: string;
   autoflowBlockedThreshold?: number;
-  workerTimeoutMs?: number;
   debugEnabled?: boolean;
   readiness?: ReadinessEvaluator;
 }
@@ -186,7 +184,7 @@ type EvidenceRecordInput = Omit<EvidenceRecord, "recordedAt" | "criteria"> & {
 };
 
 export interface AdvanceIssueResult {
-  status: "needs_issue" | "needs_confirmation" | "blocked" | "worker_requested" | "awaiting_review";
+  status: "needs_issue" | "needs_confirmation" | "blocked" | "execution_handoff" | "worker_requested" | "awaiting_review";
   session: WorkRuntimeSession;
   issue?: WorkItem;
   message: string;
@@ -199,13 +197,21 @@ export interface AdvanceIssueResult {
     workspacePath?: string;
     createdAt?: string;
   };
+  executionContext?: {
+    id: string;
+    issueRef: string;
+    repoKey: string;
+    workJobId?: string;
+    prompt: string;
+    workspacePath?: string;
+    createdAt?: string;
+  };
 }
 
 export interface AutoFlowIssueOptions {
   autoPrepareWorkspace?: boolean;
+  /** Compatibility name. Flow approves an execution handoff; it does not run a worker. */
   autoApproveWorker?: boolean;
-  runWorker?: boolean;
-  runBackgroundExecutor?: boolean;
   maxSteps?: number;
 }
 
@@ -307,6 +313,8 @@ export interface AutoFlowIssueResult {
   workerResults: WorkerTaskResult[];
   session: WorkRuntimeSession;
   issue?: WorkItem;
+  workerRequest?: AdvanceIssueResult["workerRequest"];
+  executionContext?: AdvanceIssueResult["executionContext"];
 }
 
 export interface FlowDoctorResult {
@@ -347,7 +355,6 @@ export class FlowWorkRuntime {
   private readonly projectRoot: string;
   private readonly defaultJiraProjectKey?: string;
   private readonly autoflowBlockedThreshold: number;
-  private readonly workerTimeoutMs: number;
   private readonly debugEnabled: boolean;
   private readonly readiness: ReadinessEvaluator;
   private readonly reconciliation: ReconciliationEngine;
@@ -364,7 +371,6 @@ export class FlowWorkRuntime {
     this.projectRoot = options.projectRoot ?? process.cwd();
     this.defaultJiraProjectKey = options.defaultJiraProjectKey;
     this.autoflowBlockedThreshold = positiveNumber(options.autoflowBlockedThreshold, 3);
-    this.workerTimeoutMs = positiveNumber(options.workerTimeoutMs, 20 * 60 * 1000);
     this.debugEnabled = options.debugEnabled ?? false;
     this.readiness = options.readiness ?? { assess: assessIssue };
     this.reconciliation = new ReconciliationEngine({
@@ -1204,7 +1210,7 @@ export class FlowWorkRuntime {
         status: "blocked",
         session: sessionWithFindings,
         issue,
-        message: `Worker is already running for ${issue.ref} (${activeWorkerRun.taskId}).`,
+        message: `Execution handoff is already active for ${issue.ref} (${activeWorkerRun.taskId}).`,
       };
     }
 
@@ -1289,8 +1295,8 @@ export class FlowWorkRuntime {
     const confirmation: PendingConfirmation = {
       id: createId("confirm"),
       issueRef: issue.ref,
-      action: "spawn_worker",
-      summary: `Spawn a Worker for ${issue.ref} in ${repoKey}.`,
+      action: "request_execution",
+      summary: `Request execution handoff for ${issue.ref} in ${repoKey}.`,
       payload: { repoKey },
       createdAt: nowIso(),
     };
@@ -1316,11 +1322,9 @@ export class FlowWorkRuntime {
 
   async autoFlowIssue(
     sessionId: string,
-    spawner: WorkerSpawner,
     options: AutoFlowIssueOptions = {},
   ): Promise<AutoFlowIssueResult> {
     const maxSteps = options.maxSteps ?? 8;
-    const runWorker = options.runWorker ?? options.runBackgroundExecutor ?? false;
     const steps: AdvanceIssueResult[] = [];
     const workerResults: WorkerTaskResult[] = [];
     let last = await this.advanceIssue(sessionId);
@@ -1331,7 +1335,7 @@ export class FlowWorkRuntime {
       options: {
         autoPrepareWorkspace: options.autoPrepareWorkspace !== false,
         autoApproveWorker: options.autoApproveWorker === true,
-        runWorker,
+        executionMode: "handoff_only",
       },
       initialStatus: last.status,
       initialMessage: last.message,
@@ -1366,63 +1370,15 @@ export class FlowWorkRuntime {
         continue;
       }
 
-      if (last.status === "worker_requested") {
-        if (!runWorker || !last.workerRequest) return this.autoFlowResult(last, steps, workerResults);
-        const workspacePath = (last.issue ? worktreePathForRepo(last.issue, last.workerRequest.repoKey) : undefined) ??
-          last.workerRequest.workspacePath;
-        if (!workspacePath) {
-          const missingWorkspaceResult: WorkerTaskResult = {
-            taskId: last.workerRequest.id,
-            issueRef: last.workerRequest.issueRef,
-            repoKey: last.workerRequest.repoKey,
-            status: "blocked",
-            summary: `Worker workspace path is missing for ${last.workerRequest.repoKey}.`,
-            changedFiles: [],
-            testsRun: [],
-            blockers: ["Worker workspace path is missing."],
-            nextPickup: "Run prepare workspace for the routed repo, then retry advance/autoflow.",
-            completedAt: nowIso(),
-          };
-          await this.recordWorkerResult(sessionId, missingWorkspaceResult);
-          workerResults.push(missingWorkspaceResult);
-          this.debug("autoflow.worker.blocked_missing_workspace", {
-            sessionId,
-            step,
-            issueRef: missingWorkspaceResult.issueRef,
-            repoKey: missingWorkspaceResult.repoKey,
-          });
-          last = await this.advanceIssue(sessionId);
-          continue;
-        }
-        this.debug("autoflow.worker.run", {
+      if (last.status === "execution_handoff" || last.status === "worker_requested") {
+        this.debug("autoflow.execution_handoff.ready", {
           sessionId,
           step,
-          issueRef: last.workerRequest.issueRef,
-          repoKey: last.workerRequest.repoKey,
-          workspacePath,
+          issueRef: last.workerRequest?.issueRef,
+          repoKey: last.workerRequest?.repoKey,
+          workspacePath: last.workerRequest?.workspacePath,
         });
-        const workerResult = await this.runWorker(
-          sessionId,
-          {
-            ...last.workerRequest,
-            workspacePath,
-            createdAt: nowIso(),
-          },
-          spawner,
-        );
-        workerResults.push(workerResult);
-        this.debug("autoflow.worker.result", {
-          sessionId,
-          step,
-          issueRef: workerResult.issueRef,
-          repoKey: workerResult.repoKey,
-          status: workerResult.status,
-          summary: workerResult.summary,
-          blockers: workerResult.blockers,
-          nextPickup: workerResult.nextPickup,
-        });
-        last = await this.advanceIssue(sessionId);
-        continue;
+        return this.autoFlowResult(last, steps, workerResults);
       }
 
       if (last.status === "blocked") {
@@ -1741,7 +1697,7 @@ export class FlowWorkRuntime {
         executor,
         status: WorkerStatusValue.Running,
         workspacePath: stringFromRecord(targetJob.input, "workspacePath") ?? latestActiveRun?.workspacePath,
-        summary: `Local thread took over Worker ${taskId}.`,
+        summary: `Local thread took over execution handoff ${taskId}.`,
         blockers: [],
         startedAt,
         updatedAt: startedAt,
@@ -1769,118 +1725,6 @@ export class FlowWorkRuntime {
     return { session: updated, result, adoptedRun };
   }
 
-  async runBackgroundExecutor(
-    sessionId: string,
-    request: WorkerTaskRequest,
-    spawner: WorkerSpawner,
-  ): Promise<WorkerTaskResult> {
-    return this.runWorker(sessionId, request, spawner);
-  }
-
-  async runWorker(sessionId: string, request: WorkerTaskRequest, spawner: WorkerSpawner): Promise<WorkerTaskResult> {
-    await this.requireSession(sessionId);
-    const executor = request.executor ?? WorkerExecutorValue.Pi;
-    const workExecutor = workerExecutorToWorkExecutor(executor);
-    const requestWithJob = await this.ensureWorkerWorkJob(sessionId, request);
-    const claimedJob = await this.claimWorkJob(sessionId, requestWithJob.workJobId, workExecutor);
-    if (!request.workspacePath) {
-      const blockedResult: WorkerTaskResult = {
-        taskId: request.id,
-        issueRef: request.issueRef,
-        repoKey: request.repoKey,
-        workJobId: requestWithJob.workJobId,
-        executor,
-        status: WorkerStatusValue.Blocked,
-        summary: `Worker workspace path is missing for ${request.repoKey}.`,
-        changedFiles: [],
-        testsRun: [],
-        blockers: ["Worker workspace path is missing."],
-        nextPickup: "Run prepare workspace for the routed repo, then retry advance/autoflow.",
-        handoffPrompt: buildLiveWorkerHandoffPrompt(sessionId, request, {
-          status: WorkerStatusValue.Blocked,
-          summary: "Worker workspace path is missing.",
-          blockers: ["Worker workspace path is missing."],
-        }),
-        completedAt: nowIso(),
-      };
-      await this.recordWorkerResult(sessionId, blockedResult);
-      return blockedResult;
-    }
-    const startedAt = nowIso();
-    await this.markWorkJobRunning(sessionId, claimedJob, workExecutor, startedAt);
-    await this.ledger.recordWorkerRun({
-      taskId: request.id,
-      issueRef: request.issueRef,
-      repoKey: request.repoKey,
-      workJobId: requestWithJob.workJobId,
-      executor,
-      status: WorkerStatusValue.Running,
-      workspacePath: request.workspacePath,
-      summary: "Worker started.",
-      blockers: [],
-      startedAt,
-      updatedAt: startedAt,
-    });
-    this.debug("worker.started", {
-      sessionId,
-      issueRef: request.issueRef,
-      repoKey: request.repoKey,
-      workspacePath: request.workspacePath,
-      taskId: request.id,
-    });
-    const workerTimeoutMs = this.workerTimeoutMs;
-    const result = await withPromiseTimeout(
-      spawner.run(requestWithJob, async (event) => {
-        if (!this.shouldRecordProgress(request.id, event.summary)) return;
-        await this.ledger.recordWorkerRun({
-          taskId: event.taskId,
-          issueRef: event.issueRef,
-          repoKey: event.repoKey,
-          executor,
-          status: WorkerStatusValue.Running,
-          workspacePath: request.workspacePath,
-          summary: event.summary,
-          blockers: [],
-          startedAt,
-          updatedAt: event.updatedAt,
-        });
-      }),
-      workerTimeoutMs,
-      (): WorkerTaskResult => ({
-        taskId: request.id,
-        issueRef: request.issueRef,
-        repoKey: request.repoKey,
-        executor,
-        status: WorkerStatusValue.Blocked,
-        summary: `Background worker timed out or was interrupted before returning a structured result (${Math.round(workerTimeoutMs / 1000)}s workRuntime timeout).`,
-        changedFiles: [],
-        testsRun: [],
-        blockers: ["Background worker timed out or was interrupted before returning a structured result."],
-        nextPickup: "Retry worker run. If this repeats, inspect worker runtime/debug logs.",
-        handoffPrompt: buildLiveWorkerHandoffPrompt(sessionId, request, {
-          status: WorkerStatusValue.Blocked,
-          summary: "Background worker timed out or was interrupted before returning a structured result.",
-          blockers: ["Background worker timed out or was interrupted before returning a structured result."],
-        }),
-        completedAt: nowIso(),
-      }),
-    );
-    const resultWithHandoff = withLiveWorkerHandoffPrompt(sessionId, requestWithJob, {
-      ...result,
-      workJobId: requestWithJob.workJobId,
-    });
-    await this.recordWorkerResult(sessionId, resultWithHandoff);
-    this.debug("worker.completed", {
-      sessionId,
-      issueRef: resultWithHandoff.issueRef,
-      repoKey: resultWithHandoff.repoKey,
-      taskId: resultWithHandoff.taskId,
-      status: resultWithHandoff.status,
-      blockers: resultWithHandoff.blockers,
-    });
-    return resultWithHandoff;
-  }
-
   async adoptLiveWorker(
     sessionId: string,
     request: WorkerTaskRequest,
@@ -1893,7 +1737,7 @@ export class FlowWorkRuntime {
       executor,
     });
     if (!adopted.workspacePath) {
-      throw new Error(`Live Worker workspace path is missing for ${adopted.repoKey}. Run prepare workspace first.`);
+      throw new Error(`Live execution workspace path is missing for ${adopted.repoKey}. Run prepare workspace first.`);
     }
     const startedAt = nowIso();
     const adoptedWithJob = await this.ensureWorkerWorkJob(sessionId, adopted);
@@ -1920,7 +1764,7 @@ export class FlowWorkRuntime {
       sessionId,
       type: "worker.live_adopted",
       issueRef: adoptedWithJob.issueRef,
-      message: `Live agent thread adopted Worker ${adoptedWithJob.id}.`,
+      message: `Live agent thread adopted execution handoff ${adoptedWithJob.id}.`,
       payload: { workerRequest: adoptedWithJob, adopter: options.adopter },
     });
     this.debug("worker.live_adopted", {
@@ -1941,18 +1785,20 @@ export class FlowWorkRuntime {
     let session = await this.requireSession(sessionId);
     let advanced: AdvanceIssueResult;
 
-    if (session.pendingConfirmation?.action === "spawn_worker") {
-      advanced = await this.advanceIssue(sessionId, session.pendingConfirmation.id);
+    const pending = session.pendingConfirmation;
+    if (pending && isExecutionHandoffAction(pending.action)) {
+      advanced = await this.advanceIssue(sessionId, pending.id);
     } else {
       advanced = await this.advanceIssue(sessionId);
     }
 
     session = advanced.session;
-    if (advanced.status === "needs_confirmation" && session.pendingConfirmation?.action === "spawn_worker") {
-      advanced = await this.advanceIssue(sessionId, session.pendingConfirmation.id);
+    const nextPending = session.pendingConfirmation;
+    if (advanced.status === "needs_confirmation" && nextPending && isExecutionHandoffAction(nextPending.action)) {
+      advanced = await this.advanceIssue(sessionId, nextPending.id);
     }
 
-    if (advanced.status !== "worker_requested" || !advanced.workerRequest) {
+    if ((advanced.status !== "execution_handoff" && advanced.status !== "worker_requested") || !advanced.workerRequest) {
       throw new Error(`No Work Runtime-created Worker request is available to adopt. Current state: ${advanced.status}.`);
     }
 
@@ -2599,6 +2445,8 @@ export class FlowWorkRuntime {
       workerResults,
       session: last.session,
       issue: last.issue,
+      workerRequest: last.workerRequest,
+      executionContext: last.executionContext,
     };
   }
 
@@ -2688,20 +2536,21 @@ export class FlowWorkRuntime {
       pendingConfirmation: undefined,
     });
     await this.ledger.writeIssue({ ...issue, state: "running" });
-    await this.store.appendEvent({
-      sessionId: session.id,
-      type: "worker.requested",
-      issueRef: issue.ref,
-      message: `Worker requested for ${issue.ref} in ${repoKey}.`,
-      payload: { workerRequest },
-    });
-    return {
-      status: "worker_requested",
-      session: updatedSession,
-      issue,
-      message: `Spawn Worker ${workerRequest.id}.`,
-      workerRequest,
-    };
+      await this.store.appendEvent({
+        sessionId: session.id,
+        type: "worker.requested",
+        issueRef: issue.ref,
+        message: `Execution handoff requested for ${issue.ref} in ${repoKey}.`,
+        payload: { workerRequest },
+      });
+      return {
+        status: "execution_handoff",
+        session: updatedSession,
+        issue,
+        message: `Record result for execution handoff ${workerRequest.id}.`,
+        workerRequest,
+        executionContext: workerRequest,
+      };
   }
 
   private prepareWorkspaceConfirmation(
@@ -2740,8 +2589,8 @@ export class FlowWorkRuntime {
     return {
       id: createId("confirm"),
       issueRef: issue.ref,
-      action: "spawn_worker",
-      summary: `Resolve PR merge conflicts for ${issue.ref} in ${repoKey}.`,
+      action: "request_execution",
+      summary: `Hand off PR merge-conflict resolution for ${issue.ref} in ${repoKey}.`,
       payload: { repoKey },
       createdAt: nowIso(),
     };
@@ -2771,8 +2620,8 @@ export class FlowWorkRuntime {
     return {
       id: createId("confirm"),
       issueRef: issue.ref,
-      action: "spawn_worker",
-      summary: `Remediate PR review feedback for ${issue.ref} in ${repoKey}.`,
+      action: "request_execution",
+      summary: `Hand off PR review remediation for ${issue.ref} in ${repoKey}.`,
       payload: {
         repoKey,
         workType: this.workTypeForCategory("remediate"),
@@ -2793,16 +2642,6 @@ export class FlowWorkRuntime {
     const issue = await this.ledger.readIssue(session.selectedIssueRef);
     if (!issue) throw new Error(`Issue ${session.selectedIssueRef} is not in Flow ledger state.`);
     return issue;
-  }
-
-  private readonly progressCache = new Map<string, { summary: string; updatedAtMs: number }>();
-
-  private shouldRecordProgress(taskId: string, summary: string): boolean {
-    const now = Date.now();
-    const previous = this.progressCache.get(taskId);
-    if (previous?.summary === summary && now - previous.updatedAtMs < 5000) return false;
-    this.progressCache.set(taskId, { summary, updatedAtMs: now });
-    return true;
   }
 
   private async latestActiveWorkerRun(issueRef: string): Promise<WorkerRunRecord | undefined> {
@@ -3127,7 +2966,7 @@ function doctorNextAction(
   if (!visibility.repoRouting) {
     return {
       type: "route_issue",
-      command: `flow call routeIssue '{"issueRef":"${issue.ref}","repoKeys":["<repo_key>"]}'`,
+      command: `flow '{"op":"runtime","method":"routeIssue","params":{"issueRef":"${issue.ref}","repoKeys":["<repo_key>"]}}'`,
       summary: "Route the issue to a component repo, then rerun Flow.",
     };
   }
@@ -3197,7 +3036,7 @@ function doctorNextAction(
   return {
     type: "advance",
     command: `flow advance ${issue.ref}`,
-    summary: "Run Flow advance to choose the next valid orchestration action.",
+    summary: "Run Flow advance to choose the next valid workflow action.",
   };
 }
 
@@ -3424,7 +3263,11 @@ function isObsoleteSatisfiedPrWorkerResult(result: WorkerTaskResult, issue: Work
 }
 
 function liveWorkerAdoptionSummary(adopter?: string): string {
-  return adopter ? `Live agent thread adopted Worker (${adopter}).` : "Live agent thread adopted Worker.";
+  return adopter ? `Live agent thread adopted execution handoff (${adopter}).` : "Live agent thread adopted execution handoff.";
+}
+
+function isExecutionHandoffAction(action: string | undefined): boolean {
+  return action === "request_execution" || action === "spawn_worker";
 }
 
 function branchKindFromJiraIssueType(issueType: unknown): BranchKind | undefined {
@@ -3640,16 +3483,4 @@ function stringFromRecord(record: unknown, key: string): string | undefined {
 
 function positiveNumber(value: number | undefined, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
-}
-
-async function withPromiseTimeout<T>(promise: Promise<T>, timeoutMs: number, onTimeout: () => T): Promise<T> {
-  let timeoutHandle: NodeJS.Timeout | undefined;
-  const timeoutPromise = new Promise<T>((resolve) => {
-    timeoutHandle = setTimeout(() => resolve(onTimeout()), timeoutMs);
-  });
-  try {
-    return await Promise.race([promise, timeoutPromise]);
-  } finally {
-    if (timeoutHandle) clearTimeout(timeoutHandle);
-  }
 }

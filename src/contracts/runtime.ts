@@ -19,7 +19,7 @@ export type ReadinessFinding = z.infer<typeof readinessFindingSchema>;
 export const pendingConfirmationSchema = z.object({
   id: z.string().min(1),
   issueRef: z.string().min(1),
-  action: z.enum(["prepare_workspace", "spawn_worker", "record_evidence", "handoff_review"]),
+  action: z.enum(["prepare_workspace", "request_execution", "spawn_worker", "record_evidence", "handoff_review"]),
   summary: z.string().min(1),
   payload: z.record(z.string(), z.unknown()).default({}),
   createdAt: z.string().datetime(),

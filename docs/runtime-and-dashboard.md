@@ -5,7 +5,7 @@ agent-assisted work. It is not part of any product application runtime and is no
 required for manual development.
 
 Use it when an operator-facing agent needs durable workflow coordination across
-an issue tracker, Git, code review, local worktrees, executor attempts,
+an issue tracker, Git, code review, local worktrees, execution handoffs,
 acceptance evidence, and PR handoff. Skip it for ordinary manual edits,
 component build/test loops, or explicit direct-tooling recovery.
 
@@ -21,13 +21,15 @@ The active local stack has one long-running role plus the CLI:
 - **CLI** is the operator surface used by local coding agents.
   It emits stable JSON and persists Work Runtime sessions.
 - **Dashboard** is the browser operator console. It presents CLI-reconciled Flow
-  state and routes any dashboard actions back through `flow call`.
+  state and routes any dashboard actions back through the JSON-body CLI surface.
 
-Executors are assigned per issue. An executor may be the current live agent
-thread adopted by Work Runtime, a bundled background executor, or a host/plugin
-adapter launched for a narrow task. Executors are not long-running services.
-Flow treats concrete SDKs, CLIs, and model providers as adapters behind the
-executor contract, not as workflow policy.
+Flow records execution lifecycle state per issue: handoff requested, structured
+result recorded, and readiness reconciled. The execution runtime may be the
+current live agent thread, a CLI process, an SDK call, or a host-owned worker
+system. Flow does not spawn or manage workers as infrastructure. It emits Flow
+context for an external runtime and records the result that comes back.
+Flow treats concrete SDKs, CLIs, and model providers as external runtime
+details, not as workflow policy.
 
 The live agent thread is the normal interactive work surface for complex sprint
 issues. One live thread can coordinate multiple issue-tracker efforts, but each effort
@@ -53,7 +55,7 @@ flowchart LR
   CLI["CLI: JSON command surface"]
   Coord["Work Runtime: workflow authority"]
   Gate["Readiness checks: readiness"]
-  Executor["Background Executor: optional"]
+  Executor["Execution Adapter: optional"]
   Systems["Issue tracker / code review / ledger"]
   Tree["Prepared worktree"]
 
@@ -87,23 +89,20 @@ npm run dashboard
 From the repo root:
 
 ```bash
-flow commands
 flow manifest
-flow queue
-flow create-issue --type Bug --summary "Fix provider parquet schema" --description "Follow-up from ISSUE-15461." --repo app_api
-flow select ISSUE-123 --session codex-issue-123
-flow advance ISSUE-123 --session codex-issue-123
+flow '{"op":"manifest","target":"workflow"}'
+flow '{"op":"queue"}'
+flow '{"op":"issue","mode":"create","issueType":"Bug","summary":"Fix provider parquet schema","description":"Follow-up from ISSUE-15461.","repoKeys":["app_api"]}'
+flow '{"op":"issue","mode":"select","issueRef":"ISSUE-123","sessionId":"codex-issue-123"}'
+flow '{"op":"workflow","mode":"advance","issueRef":"ISSUE-123","sessionId":"codex-issue-123"}'
 flow-dashboard
 ```
 
-`flow manifest` is the CLI discovery contract. It returns JSON derived from the
-registered Commander commands, including command descriptions, arguments,
-options, defaults, required flags, negated flags, and the raw Work Runtime
-methods supported by `flow call`, including `createIssue`,
-`bootstrapJiraIssue`, `routeIssue`, and `advanceIssue`. `flow commands` returns
-a compact compatibility view plus the same manifest. Provider-specific method
-names remain only as compatibility aliases where existing agents already use
-them.
+`flow manifest` is the compact CLI discovery contract. It returns a small
+capability index, not the full operation catalog. Detailed examples and accepted
+modes are opt-in through targeted discovery, such as
+`flow '{"op":"manifest","target":"workflow"}'` or
+`flow '{"op":"manifest","target":"runtime"}'`.
 
 `npm run start:all` starts the Dashboard. It also builds the runtime and
 dashboard first.
@@ -138,7 +137,7 @@ The dashboard serves live CLI-reconciled Flow state. It does not cache queue dat
 serve stale snapshots.
 
 - Browser poll interval: 5 seconds
-- Every `/api/dashboard` request performs a `flow call inspectDashboardQueue`
+- Every `/api/dashboard` request performs a `flow '{"op":"runtime","method":"inspectDashboardQueue",...}'`
   inspection
 - Manual Refresh performs the same live read immediately
 - Live refresh timeout: 60 seconds
@@ -146,10 +145,10 @@ serve stale snapshots.
 ## Flow Ledger
 
 Work Runtime writes to the native Flow JSONL workflow ledger by default:
-the current bootstrap storage's ledger path. The default `flow bootstrap` keeps
-that path in user state outside the repo; `--storage repo-tracked` uses
-`.flow/ledger/workflow.jsonl`. Configure `runtime.workflowLedgerPath` to use a
-different local ledger file.
+the current bootstrap storage's ledger path. The default
+`flow '{"op":"bootstrap"}'` keeps that path in user state outside the repo;
+`"storage":"repo-tracked"` uses `.flow/ledger/workflow.jsonl`. Configure
+`runtime.workflowLedgerPath` to use a different local ledger file.
 
 Flow also maintains per-issue projection snapshots under
 `.flow/ledger/issues/<issueRef>.json` so issue-level reads do not need to replay
@@ -184,7 +183,7 @@ or times out, it returns `degraded=true` with the error and an empty issue list.
 ## Authority Boundary
 
 Dashboard must not write issue tracker, code review, ledger, branch state, PR
-state, work envelopes, or executor orchestration directly. The Flow CLI is the
+state, work envelopes, or executor lifecycle state directly. The Flow CLI is the
 only blessed workflow write/control surface; Work Runtime remains the
 in-process library behind it.
 

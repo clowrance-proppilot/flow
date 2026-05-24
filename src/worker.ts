@@ -519,15 +519,15 @@ function safeJson(value: unknown): string {
 
 function nextPickupForWorkerError(message: string): string {
   if (/SIGTERM|ETIMEDOUT|timed out/i.test(message)) {
-    return "Inspect the Worker lifecycle record, then rerun with a longer timeout or split the task smaller.";
+    return "Inspect the execution lifecycle record, then rerun with a longer timeout or split the task smaller.";
   }
   if (/No API key found|API key is missing/i.test(message)) {
-    return "Configure agent provider credentials, then rerun the Worker request.";
+    return "Configure agent provider credentials, then retry the execution handoff.";
   }
   if (/Codex background executor exited|command not found|ENOENT/i.test(message)) {
     return "Inspect the Codex executor error, then retry after fixing the local Codex CLI/runtime configuration.";
   }
-  return "Observe the latest worker run for concrete blocker details, then retry with a narrower prompt or corrected repo/workspace context.";
+  return "Observe the latest execution run for concrete blocker details, then retry with a narrower prompt or corrected repo/workspace context.";
 }
 
 function codexWorkerPrompt(request: WorkerTaskRequest): string {

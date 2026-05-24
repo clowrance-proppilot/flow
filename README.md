@@ -1,14 +1,18 @@
 # Flow
 
-Flow is a durable coordination and workflow orchestration engine for
-agent-assisted developer work. Projects bring a `.flow/config.yaml`; Flow brings
-the runtime, workflow ledger, reconciliation, readiness checks, executor tracking,
-CLI, and operator dashboard.
+Flow is a durable workflow authority for agent-assisted developer work. It is
+not an agent orchestrator, IDE, ticket tracker, or CI replacement. Projects
+bring a `.flow/config.yaml`; Flow brings the runtime, workflow ledger,
+reconciliation, readiness checks, executor tracking, CLI, and operator
+dashboard.
 
 Flow is a standalone package that can be plugged into multiple host repos. The
 consuming architecture owns its `.flow/config.yaml`; Flow owns the reusable
 runtime and exposes optional plugin surfaces for agent SDKs, executors, and
 provider adapters. See [Host Repo Integration](docs/host-integration.md).
+
+For positioning, alternatives, and the short demo narrative, see
+[Why Flow](docs/why-flow.md).
 
 ## Runtime Shape
 
@@ -39,13 +43,13 @@ metadata:
 
 ```bash
 cd /path/to/host-repo
-/path/to/flow/bin/flow bootstrap
+/path/to/flow/bin/flow '{"op":"bootstrap"}'
 ```
 
 By default this writes per-user Flow state outside the repo. Use
-`flow bootstrap --storage repo-untracked` to keep `.flow/` in the checkout and
-hide it through `.git/info/exclude`, or `--storage repo-tracked` when the repo is
-ready to share `.flow/config.yaml`.
+`flow '{"op":"bootstrap","storage":"repo-untracked"}'` to keep `.flow/` in the
+checkout and hide it through `.git/info/exclude`, or `repo-tracked` when the repo
+is ready to share `.flow/config.yaml`.
 
 Or use the checked-in example as a starting shape for a shared host repo
 `.flow/config.yaml`:
@@ -58,14 +62,14 @@ With a sibling checkout:
 
 ```bash
 cd /path/to/host-repo
-/path/to/flow/bin/flow queue
+/path/to/flow/bin/flow '{"op":"queue"}'
 ```
 
 With Flow installed as a host repo dependency after package publication:
 
 ```bash
 npm install --save-dev @camden-lowrance/flow
-npx flow queue
+npx flow '{"op":"queue"}'
 npx flow-dashboard
 ```
 
@@ -75,47 +79,55 @@ Run Flow from the project repository that contains `.flow/config.yaml`:
 
 ```bash
 cd /path/to/project
-/path/to/flow/bin/flow queue
+/path/to/flow/bin/flow '{"op":"queue"}'
 ```
 
-Common commands:
+Agent surface:
 
 ```text
-flow commands
 flow manifest
-flow bootstrap
-flow queue
-flow create-issue --type Bug --summary "Fix provider parquet schema" --description "Follow-up from ISSUE-15461." --repo app_api
-flow adopt-branch --summary "Spike provider parquet schema" --repo app_api
-flow select ISSUE-123 --session codex-issue-123
-flow advance ISSUE-123 --session codex-issue-123
-flow autoflow ISSUE-123 --session codex-issue-123
-flow complete-worker ISSUE-123 --session codex-issue-123 --repo app_api --summary "Patch applied and focused tests passed" --changed-files src/example.ts --tests-run "npm test"
+flow
+flow '{"op":"manifest","target":"workflow"}'
+flow '{"op":"bootstrap"}'
+flow '{"op":"queue"}'
+flow '{"op":"issue","mode":"create","issueType":"Bug","summary":"Fix provider parquet schema","description":"Follow-up from ISSUE-15461.","repoKeys":["app_api"]}'
+flow '{"op":"issue","mode":"adoptBranch","summary":"Spike provider parquet schema","repoKey":"app_api"}'
+flow '{"op":"issue","mode":"select","issueRef":"ISSUE-123","sessionId":"codex-issue-123"}'
+flow '{"op":"workflow","mode":"advance","issueRef":"ISSUE-123","sessionId":"codex-issue-123"}'
+flow '{"op":"workflow","mode":"autoflow","issueRef":"ISSUE-123","sessionId":"codex-issue-123"}'
+flow '{"op":"workflow","mode":"recordResult","issueRef":"ISSUE-123","sessionId":"codex-issue-123","repoKey":"app_api","summary":"Patch applied and focused tests passed","changedFiles":["src/example.ts"],"testsRun":["npm test"]}'
 ```
 
-`flow manifest` emits the machine-readable command contract derived from the
-registered Commander commands, including arguments, options, defaults, required
-flags, and raw Work Runtime methods available through `flow call`. `flow
-commands` is a compact compatibility view that includes the same manifest.
-Prefer the first-class commands for normal work; use `flow call` when you need a
-lower-level runtime method such as `createIssue` or `routeIssue`.
+`flow` with no input and `flow manifest` emit a compact capability index only.
+Detailed examples and accepted modes are opt-in by target, such as
+`{"op":"manifest","target":"workflow"}`. This keeps agent discovery from
+turning into a large MCP-style context dump.
 
-Use `flow complete-worker` when the current local agent thread has already done
-the Worker assignment. Flow will claim the pending Worker job for the live-thread
-executor, record the structured result, and stop asking for a duplicate Worker.
+Use `{"op":"workflow","mode":"recordResult"}` when the current local thread or
+an external execution adapter has already done the work. Flow claims the pending
+handoff if one exists, records the structured result, and continues lifecycle
+reconciliation without trying to manage the runtime that performed the work.
 
-Background executor settings belong in `.flow/config.yaml` under
-`runtime.worker`. Treat `.flow/config.yaml` like Kubernetes-style declarative
-configuration: it owns durable behavior. Environment variables may still be used
-for process context, local launch mechanics, or secret injection where an
-adapter requires them, but they should not define workflow topology or policy.
+Optional execution adapter settings belong in `.flow/config.yaml` under the
+compatibility key `runtime.worker`. Treat `.flow/config.yaml` like
+Kubernetes-style declarative configuration: it owns durable workflow behavior.
+Environment variables may still be used for process context, local launch
+mechanics, or secret injection where an adapter requires them, but they should
+not define workflow topology or policy.
+
+Flow no longer spawns or manages workers from Work Runtime.
+`flow '{"op":"workflow","mode":"advance"}'` and
+`flow '{"op":"workflow","mode":"autoflow"}'` stop at an execution handoff with
+enough Flow context for an external worker, live thread, or host adapter to do
+the work. That runtime later reports back through
+`flow '{"op":"workflow","mode":"recordResult",...}'`.
 
 Most projects only need topology, issue tracker, collaboration, source control,
 and ledger config. Flow has permissive built-in defaults for work types,
-executors, worker timeouts, session naming, and dashboard host/port. The default
-workflow is designed to guide the live agent thread through Flow with minimal
-capability gating. Configure `workTypes`, `executors`, or `runtime.worker` only
-when a host needs to replace the default workflow categories or worker adapter.
+executors, execution timeouts, session naming, and dashboard host/port. The
+default workflow is designed to guide the live agent thread through Flow with
+minimal capability gating. Configure `workTypes` or `executors` only when a host
+needs to replace the default workflow categories or result contract.
 
 For a bare local setup with no hosted issue tracker or code review provider, use
 Flow's local issue adapter and disable collaboration:
@@ -139,10 +151,10 @@ ledger:
 through Flow's ledger. `ledger.type: flow` means the native append-only workflow
 ledger remains the durable state backend.
 
-For spike work that should stay out of hosted trackers, use `flow adopt-branch`.
-It records the current branch/worktree as local Flow work and marks hosted issue
-and code review projections as unpublished until a later checkpoint promotes
-them.
+For spike work that should stay out of hosted trackers, use
+`flow '{"op":"issue","mode":"adoptBranch",...}'`. It records the current
+branch/worktree as local Flow work and marks hosted issue and code review
+projections as unpublished until a later checkpoint promotes them.
 
 ## State
 
@@ -167,7 +179,7 @@ decisions through Work Runtime; legacy adapters can be enabled explicitly.
 
 `.flow/runtime` is session-local scratch state for CLI selection, pending
 confirmations, and transient runtime traces. It is not a second workflow ledger.
-Durable issue, worker, job, evidence, and handoff state belongs in
+Durable issue, execution result, job, evidence, and handoff state belongs in
 `.flow/ledger/workflow.jsonl` and its generated issue projections.
 
 ## Contracts
