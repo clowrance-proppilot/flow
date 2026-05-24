@@ -129,7 +129,7 @@ default workflow is designed to guide the live agent thread through Flow with
 minimal capability gating. Configure `workTypes` or `executors` only when a host
 needs to replace the default workflow categories or result contract.
 
-For a bare local setup with no hosted issue tracker or code review provider, use
+For stealth mode with no hosted issue tracker or code review provider, use
 Flow's local issue adapter and disable collaboration:
 
 ```yaml
@@ -151,9 +151,9 @@ ledger:
 through Flow's ledger. `ledger.type: flow` means the native append-only workflow
 ledger remains the durable state backend.
 
-For spike work that should stay out of hosted trackers, use
+For stealth-mode spike work that should stay out of hosted trackers, use
 `flow '{"op":"issue","mode":"adoptBranch",...}'`. It records the current
-branch/worktree as local Flow work and marks hosted issue and code review
+branch/worktree as stealth-mode Flow work and marks hosted issue and code review
 projections as unpublished until a later checkpoint promotes them.
 
 ## State

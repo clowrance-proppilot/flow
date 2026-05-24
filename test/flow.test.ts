@@ -1404,7 +1404,7 @@ test("Work Runtime adopts an existing worktree into issue metadata", async () =>
   assert.notEqual(advanced.message, "Prepare workspace for ISSUE-3026 in app_api.");
 });
 
-test("Work Runtime adopts a branch as local-only Flow work", async () => {
+test("Work Runtime adopts a branch as stealth-mode Flow work", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
   const ledger = new MemoryWorkflowLedger();
   const workRuntime = testWorkRuntime({

@@ -1016,7 +1016,7 @@ export class FlowWorkRuntime {
       sessionId,
       type: "branch.adopted",
       issueRef: updated.ref,
-      message: `Adopted branch ${branch} as local Flow work ${updated.ref}.`,
+      message: `Adopted branch ${branch} as stealth-mode Flow work ${updated.ref}.`,
       payload: { repoKey, worktreePath: preparedWorktreePath, branch, baseRef },
     });
     return updated;

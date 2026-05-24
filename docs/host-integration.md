@@ -85,7 +85,7 @@ Then update:
   retry, scaling, provider credentials, logs, and cost.
 
 Hosts that cannot or do not want to use hosted issue tracking or code review can
-keep the workflow local:
+run Flow in stealth mode:
 
 ```yaml
 issueTracker:
@@ -102,17 +102,17 @@ ledger:
   type: "flow"
 ```
 
-In that shape, the CLI creates local issue refs and the Flow ledger is the
+In stealth mode, the CLI creates local issue refs and the Flow ledger is the
 durable issue/workflow record. Git remains available for local branch and
 worktree inspection, but no hosted code review provider is required.
 
-When the branch already exists and the work should stay local, use:
+When the branch already exists and the work should stay in stealth mode, use:
 
 ```bash
 flow '{"op":"issue","mode":"adoptBranch","summary":"Spike checkout workflow","repoKey":"main"}'
 ```
 
-That records the branch/worktree as a local Flow item without publishing an
+That records the branch/worktree as a stealth-mode Flow item without publishing an
 issue or code review. Hosted systems can be added later as checkpoint
 projections.
 
