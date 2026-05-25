@@ -2964,11 +2964,11 @@ function doctorNextAction(
     .filter((finding) => finding.severity === "blocker")
     .map((finding) => finding.summary);
   if (!visibility.repoRouting) {
-    return {
-      type: "route_issue",
-      command: `flow '{"op":"runtime","method":"routeIssue","params":{"issueRef":"${issue.ref}","repoKeys":["<repo_key>"]}}'`,
-      summary: "Route the issue to a component repo, then rerun Flow.",
-    };
+      return {
+        type: "route_issue",
+        command: `flow '{"op":"issue","mode":"route","id":"${issue.ref}","repoKeys":["<repo_key>"]}'`,
+        summary: "Route the issue to a component repo, then rerun Flow.",
+      };
   }
   if (blockerSummaries.includes("Prepared worktree is missing.")) {
     if (visibility.codeReview) {
@@ -2979,13 +2979,13 @@ function doctorNextAction(
       const pathHint = branch ? `<path-to-worktree-for-${branch.replace(/\//g, "-")}>` : "<worktree_path>";
       return {
         type: "adopt_workspace",
-        command: `flow adopt-workspace ${issue.ref} --repo ${repoKey} --path ${pathHint}`,
+        command: `flow '{"op":"issue","mode":"adoptWorkspace","id":"${issue.ref}","repoKey":"${repoKey}","worktreePath":"${pathHint}"}'`,
         summary: "Adopt the existing code review worktree into Flow, or let Flow prepare a new routed workspace.",
       };
     }
     return {
       type: "prepare_workspace",
-      command: `flow advance ${issue.ref}`,
+      command: `flow '{"op":"workflow","mode":"advance","id":"${issue.ref}"}'`,
       summary: "Let Flow prepare the routed workspace or approve the prepare-workspace confirmation.",
     };
   }
@@ -2995,7 +2995,7 @@ function doctorNextAction(
   ) {
     return {
       type: "remediate_review",
-      command: `flow advance ${issue.ref}`,
+      command: `flow '{"op":"workflow","mode":"advance","id":"${issue.ref}"}'`,
       summary: "Remediate code review feedback through the normal Flow advance path.",
     };
   }
@@ -3029,13 +3029,13 @@ function doctorNextAction(
   if (visibility.codeReview) {
     return {
       type: "advance",
-      command: `flow advance ${issue.ref}`,
+      command: `flow '{"op":"workflow","mode":"advance","id":"${issue.ref}"}'`,
       summary: "Flow can continue from the reconciled code review state.",
     };
   }
   return {
     type: "advance",
-    command: `flow advance ${issue.ref}`,
+    command: `flow '{"op":"workflow","mode":"advance","id":"${issue.ref}"}'`,
     summary: "Run Flow advance to choose the next valid workflow action.",
   };
 }

@@ -90,17 +90,18 @@ From the repo root:
 
 ```bash
 flow manifest
+flow --help
 flow '{"op":"manifest","target":"workflow"}'
 flow '{"op":"queue"}'
 flow '{"op":"issue","mode":"create","issueType":"Bug","summary":"Fix provider parquet schema","description":"Follow-up from ISSUE-15461.","repoKeys":["app_api"]}'
-flow '{"op":"issue","mode":"select","issueRef":"ISSUE-123","sessionId":"codex-issue-123"}'
-flow '{"op":"workflow","mode":"advance","issueRef":"ISSUE-123","sessionId":"codex-issue-123"}'
+flow '{"op":"issue","mode":"select","id":"ISSUE-123"}'
+flow '{"op":"workflow","mode":"advance","id":"ISSUE-123"}'
 flow-dashboard
 ```
 
-`flow manifest` is the compact CLI discovery contract. It returns a small
-capability index, not the full operation catalog. Detailed examples and accepted
-modes are opt-in through targeted discovery, such as
+`flow manifest` and `flow --help` are compact CLI discovery contracts. They
+return a small capability index, not the full operation catalog. Detailed
+examples and accepted modes are opt-in through targeted discovery, such as
 `flow '{"op":"manifest","target":"workflow"}'` or
 `flow '{"op":"manifest","target":"runtime"}'`.
 
@@ -117,8 +118,10 @@ and restart the local stack automatically.
 
 `start:all` prints the dashboard URL but does not open a browser by default.
 
-Use `--session <id>` to persist CLI sessions under
-`.flow/runtime/sessions/`.
+Work-item-scoped requests use `id` as the public identifier. Flow may keep local
+runtime scratch state under `.flow/runtime/sessions/<id>.json`, but agents
+should treat that as an implementation detail rather than a separate control
+surface.
 
 ## Endpoints
 
@@ -151,7 +154,7 @@ the current bootstrap storage's ledger path. The default
 `runtime.workflowLedgerPath` to use a different local ledger file.
 
 Flow also maintains per-issue projection snapshots under
-`.flow/ledger/issues/<issueRef>.json` so issue-level reads do not need to replay
+`.flow/ledger/issues/<id>.json` so issue-level reads do not need to replay
 the whole JSONL ledger. The JSONL file remains the authoritative audit log and
 can rebuild missing projections.
 

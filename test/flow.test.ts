@@ -3590,7 +3590,7 @@ test("Work Runtime doctor reports visibility, blockers, and next action", async 
   assert.equal(result.visibility.preparedWorktree, false);
   assert.equal(result.codeReview?.prUrl, "https://github.com/ExampleOrg/public-api/pull/3026");
   assert.equal(result.nextAction.type, "adopt_workspace");
-  assert.match(result.nextAction.command ?? "", /flow adopt-workspace ISSUE-15397 --repo public_api/);
+  assert.match(result.nextAction.command ?? "", /"op":"issue","mode":"adoptWorkspace","id":"ISSUE-15397","repoKey":"public_api"/);
   assert.equal(
     result.findings.some((finding) => finding.summary === "Auto review has must-fix feedback."),
     true,

@@ -86,19 +86,20 @@ Agent surface:
 
 ```text
 flow manifest
+flow --help
 flow
 flow '{"op":"manifest","target":"workflow"}'
 flow '{"op":"bootstrap"}'
 flow '{"op":"queue"}'
 flow '{"op":"issue","mode":"create","issueType":"Bug","summary":"Fix provider parquet schema","description":"Follow-up from ISSUE-15461.","repoKeys":["app_api"]}'
 flow '{"op":"issue","mode":"adoptBranch","summary":"Spike provider parquet schema","repoKey":"app_api"}'
-flow '{"op":"issue","mode":"select","issueRef":"ISSUE-123","sessionId":"codex-issue-123"}'
-flow '{"op":"workflow","mode":"advance","issueRef":"ISSUE-123","sessionId":"codex-issue-123"}'
-flow '{"op":"workflow","mode":"autoflow","issueRef":"ISSUE-123","sessionId":"codex-issue-123"}'
-flow '{"op":"workflow","mode":"recordResult","issueRef":"ISSUE-123","sessionId":"codex-issue-123","repoKey":"app_api","summary":"Patch applied and focused tests passed","changedFiles":["src/example.ts"],"testsRun":["npm test"]}'
+flow '{"op":"issue","mode":"select","id":"ISSUE-123"}'
+flow '{"op":"workflow","mode":"advance","id":"ISSUE-123"}'
+flow '{"op":"workflow","mode":"autoflow","id":"ISSUE-123"}'
+flow '{"op":"workflow","mode":"recordResult","id":"ISSUE-123","repoKey":"app_api","summary":"Patch applied and focused tests passed","changedFiles":["src/example.ts"],"testsRun":["npm test"]}'
 ```
 
-`flow` with no input and `flow manifest` emit a compact capability index only.
+`flow`, `flow manifest`, and `flow --help` emit a compact capability index only.
 Detailed examples and accepted modes are opt-in by target, such as
 `{"op":"manifest","target":"workflow"}`. This keeps agent discovery from
 turning into a large MCP-style context dump.

@@ -93,9 +93,11 @@ await runJsonCli({
 async function routeFlowRequest(request: Record<string, unknown>): Promise<unknown> {
   const op = requireString(request, "op");
   if (op === "manifest") return flowManifest(optionalString(request, "target"));
+  if (op !== "runtime") rejectLegacyPublicFields(request);
   if (op === "state") {
-    await ensureSession(sessionId(request));
-    return runtime.summarizeHandoff(sessionId(request));
+    const activeSessionId = sessionId(request);
+    await ensureSession(activeSessionId);
+    return runtime.summarizeHandoff(activeSessionId);
   }
   if (op === "queue") return runtime.inspectQueue(limit(request));
   if (op === "backlog") return runtime.inspectBacklog(limit(request));
@@ -111,7 +113,6 @@ async function routeFlowRequest(request: Record<string, unknown>): Promise<unkno
   if (op === "issue") return handleIssueRequest(request);
   if (op === "workflow") return handleWorkflowRequest(request);
   if (op === "runtime") return dispatch(requireString(request, "method"), paramsFromRequest(request));
-  if (rawWorkRuntimeMethods.includes(op)) return dispatch(op, paramsFromRequest(request));
   throw new JsonCliError("BAD_OP", `Unsupported Flow op: ${op}`, {
     details: { supportedOps: ["manifest", "state", "queue", "backlog", "bootstrap", "config", "ledger", "issue", "workflow", "runtime"] },
   });
@@ -190,7 +191,9 @@ async function handleIssueRequest(request: Record<string, unknown>): Promise<unk
   await ensureSession(activeSessionId);
   switch (mode) {
     case "select":
-      return runtime.selectIssue(activeSessionId, await queueIssue(requireString(request, "issueRef")));
+      return runtime.selectIssue(activeSessionId, await queueIssue(requireId(request)));
+    case "route":
+      return runtime.routeIssue(activeSessionId, requireId(request), asStringArray(request.repoKeys) ?? []);
     case "create":
       return runtime.createIssue(activeSessionId, {
         projectKey: optionalString(request, "projectKey"),
@@ -203,7 +206,7 @@ async function handleIssueRequest(request: Record<string, unknown>): Promise<unk
       });
     case "adoptBranch":
       return runtime.adoptBranch(activeSessionId, {
-        issueRef: optionalString(request, "issueRef"),
+        issueRef: optionalString(request, "id"),
         summary: optionalString(request, "summary"),
         description: optionalString(request, "description"),
         repoKey: optionalString(request, "repoKey"),
@@ -213,13 +216,13 @@ async function handleIssueRequest(request: Record<string, unknown>): Promise<unk
         select: typeof request.select === "boolean" ? request.select : true,
       });
     case "adoptWorkspace":
-      return runtime.adoptWorkspace(activeSessionId, requireString(request, "issueRef"), {
+      return runtime.adoptWorkspace(activeSessionId, requireId(request), {
         repoKey: optionalString(request, "repoKey"),
         worktreePath: requireString(request, "worktreePath"),
         baseBranch: optionalString(request, "baseBranch"),
       });
     default:
-      throw badMode("issue", mode, ["select", "create", "adoptBranch", "adoptWorkspace"]);
+      throw badMode("issue", mode, ["select", "create", "route", "adoptBranch", "adoptWorkspace"]);
   }
 }
 
@@ -227,7 +230,10 @@ async function handleWorkflowRequest(request: Record<string, unknown>): Promise<
   const mode = requireString(request, "mode");
   const activeSessionId = sessionId(request);
   await ensureSession(activeSessionId);
-  const issueRef = optionalString(request, "issueRef") ?? optionalString(request, "id");
+  const issueRef = optionalString(request, "id");
+  if (["advance", "autoflow", "doctor", "audit", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation", "observe"].includes(mode)) {
+    requireValue(issueRef, "id");
+  }
   if (issueRef && ["advance", "autoflow", "doctor", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation"].includes(mode)) {
     await runtime.selectIssue(activeSessionId, await queueIssue(issueRef));
   }
@@ -306,14 +312,14 @@ function flowManifest(target?: string) {
         stderr: "diagnostics",
       },
       invocation: {
-        manifest: ["flow", "flow manifest"],
+        manifest: ["flow", "flow manifest", "flow --help"],
         body: ["flow '{\"op\":\"state\"}'", "printf '%s\\n' '{\"op\":\"state\"}' | flow"],
       },
       detail: { op: "manifest", target: "<op>" },
       targets: ["workflow", "issue", "runtime", "config", "layout"],
       ops: {
         manifest: "Get compact or targeted capability metadata.",
-        state: "Read current session state.",
+        state: "Read current Flow state, optionally scoped by id.",
         queue: "Inspect active issue queue.",
         backlog: "Inspect backlog.",
         bootstrap: "Create Flow config from repo metadata.",
@@ -331,19 +337,22 @@ function flowManifest(target?: string) {
       modes: ["advance", "audit", "autoflow", "doctor", "handoff", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation", "observe"],
       examples: [
         { op: "workflow", mode: "audit", id: "FLOW-123" },
-        { op: "workflow", mode: "autoflow", issueRef: "FLOW-123", limit: 20 },
-        { op: "workflow", mode: "recordEvidence", issueRef: "FLOW-123", summary: "npm test passed", criteria: ["tests"] },
+        { op: "workflow", mode: "autoflow", id: "FLOW-123", limit: 20 },
+        { op: "workflow", mode: "recordEvidence", id: "FLOW-123", summary: "npm test passed", criteria: ["tests"] },
       ],
+      id: "Required issue/work item id for issue-scoped workflow modes.",
     };
   }
   if (target === "issue") {
     return {
       target,
-      modes: ["select", "create", "adoptBranch", "adoptWorkspace"],
+      modes: ["select", "create", "route", "adoptBranch", "adoptWorkspace"],
       examples: [
-        { op: "issue", mode: "select", issueRef: "FLOW-123" },
-        { op: "issue", mode: "adoptWorkspace", issueRef: "FLOW-123", repoKey: "main", worktreePath: "/path/to/worktree" },
+        { op: "issue", mode: "select", id: "FLOW-123" },
+        { op: "issue", mode: "route", id: "FLOW-123", repoKeys: ["main"] },
+        { op: "issue", mode: "adoptWorkspace", id: "FLOW-123", repoKey: "main", worktreePath: "/path/to/worktree" },
       ],
+      id: "Required issue/work item id for existing work items; create/adoptBranch may omit id to allocate one.",
     };
   }
   if (target === "runtime") {
@@ -654,7 +663,16 @@ function limit(request: Record<string, unknown>, fallback = 10): number {
 }
 
 function sessionId(request: Record<string, unknown>): string {
-  return optionalString(request, "sessionId") ?? defaultSessionId;
+  return optionalString(request, "id") ?? defaultSessionId;
+}
+
+function requireId(request: Record<string, unknown>): string {
+  return requireString(request, "id");
+}
+
+function rejectLegacyPublicFields(request: Record<string, unknown>): void {
+  if (Object.hasOwn(request, "issueRef")) throw badField("issueRef", "unsupported; use id");
+  if (Object.hasOwn(request, "sessionId")) throw badField("sessionId", "unsupported; work-item id scopes runtime state");
 }
 
 function paramsFromRequest(request: Record<string, unknown>): Record<string, unknown> {
@@ -691,6 +709,11 @@ function badMode(target: string, mode: string, supportedModes: string[]): JsonCl
 }
 
 function badField(field: string, expected: string): JsonCliError {
+  if (expected.startsWith("unsupported")) {
+    return new JsonCliError("BAD_FIELD", `Unsupported field: ${field}`, {
+      details: { field, expected },
+    });
+  }
   return new JsonCliError("BAD_FIELD", `Expected ${expected} field: ${field}`, {
     details: { field, expected },
   });
