@@ -1,8 +1,8 @@
 {
   "name": "@camden-lowrance/flow",
-  "version": "0.1.0",
+  "version": "0.1.4",
   "type": "module",
-  "description": "Flow durable workflow authority for agent-assisted developer work.",
+  "description": "Workflow state for coding agents.",
   "license": "MIT",
   "repository": {
     "type": "git",

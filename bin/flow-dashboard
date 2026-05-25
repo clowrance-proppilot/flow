@@ -1,11 +1,25 @@
 #!/usr/bin/env node
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(scriptDir, "..");
+
+if (process.argv.slice(2).some((arg) => arg === "--help" || arg === "-h" || arg === "help")) {
+  process.stdout.write(`${JSON.stringify({
+    surface: "flow-dashboard",
+    transport: { stdout: "single-json-document", stderr: "diagnostics" },
+    invocation: ["flow-dashboard", "flow-dashboard --help"],
+    defaultUrl: "http://127.0.0.1:8767/dashboard",
+    config: {
+      path: ".flow/config.yaml",
+      keys: ["runtime.dashboard.host", "runtime.dashboard.port", "runtime.dashboard.customCssPath"],
+    },
+  })}\n`);
+  process.exit(0);
+}
 
 const entryCandidates = [
   join(rootDir, "dist", "bin", "src", "dashboard-server.js"),
@@ -17,9 +31,26 @@ const dashboardCandidates = [
   join(rootDir, "dist", "dashboard", "index.html"),
   join(rootDir, ".tmp", "dashboard", "index.html"),
 ];
+const runtimeSourceDir = join(rootDir, "src");
+const dashboardSourceDir = join(rootDir, "src", "dashboard");
+const runtimeConfigFiles = [
+  join(rootDir, "package.json"),
+  join(rootDir, "package-lock.json"),
+  join(rootDir, "tsconfig.json"),
+];
+const dashboardConfigFiles = [
+  join(rootDir, "package.json"),
+  join(rootDir, "package-lock.json"),
+  join(rootDir, "vite.dashboard.config.ts"),
+  join(rootDir, "postcss.config.mjs"),
+  join(rootDir, "tailwind.config.ts"),
+];
 
-if (!resolveEntry(entryCandidates)) await buildRuntime();
-if (!resolveEntry(dashboardCandidates)) buildDashboard();
+const runtimeEntry = resolveEntry(entryCandidates);
+if (!runtimeEntry || needsRuntimeBuild(runtimeEntry)) await buildRuntime();
+
+const dashboardEntry = resolveEntry(dashboardCandidates);
+if (!dashboardEntry || needsDashboardBuild(dashboardEntry)) buildDashboard();
 
 const entry = resolveEntry(entryCandidates);
 if (!entry) {
@@ -93,4 +124,56 @@ function resolveEntry(candidates) {
     if (existsSync(candidate)) return candidate;
   }
   return undefined;
+}
+
+function needsRuntimeBuild(entry) {
+  if (entry.includes(join("dist", "bin"))) return false;
+  const entryMtime = statSync(entry).mtimeMs;
+  return latestTypeScriptMtime(runtimeSourceDir) > entryMtime || latestExistingMtime(runtimeConfigFiles) > entryMtime;
+}
+
+function needsDashboardBuild(entry) {
+  if (entry.includes(join("dist", "dashboard"))) return false;
+  const entryMtime = statSync(entry).mtimeMs;
+  return latestPathMtime(dashboardSourceDir) > entryMtime || latestExistingMtime(dashboardConfigFiles) > entryMtime;
+}
+
+function latestTypeScriptMtime(dir) {
+  let latest = 0;
+  for (const item of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, item.name);
+    if (item.isDirectory()) {
+      if (item.name === "node_modules" || item.name === ".tmp" || item.name === "dist") continue;
+      latest = Math.max(latest, latestTypeScriptMtime(path));
+    } else if (item.isFile() && path.endsWith(".ts")) {
+      latest = Math.max(latest, statSync(path).mtimeMs);
+    }
+  }
+  return latest;
+}
+
+function latestPathMtime(path) {
+  if (!existsSync(path)) return 0;
+  const current = statSync(path);
+  if (!current.isDirectory()) return current.mtimeMs;
+
+  let latest = current.mtimeMs;
+  for (const item of readdirSync(path, { withFileTypes: true })) {
+    const childPath = join(path, item.name);
+    if (item.isDirectory()) {
+      if (item.name === "node_modules" || item.name === ".tmp" || item.name === "dist") continue;
+      latest = Math.max(latest, latestPathMtime(childPath));
+    } else if (item.isFile()) {
+      latest = Math.max(latest, statSync(childPath).mtimeMs);
+    }
+  }
+  return latest;
+}
+
+function latestExistingMtime(paths) {
+  let latest = 0;
+  for (const path of paths) {
+    if (existsSync(path)) latest = Math.max(latest, statSync(path).mtimeMs);
+  }
+  return latest;
 }

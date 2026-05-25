@@ -5,6 +5,12 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(scriptDir, "..");
+const runtimeSourceDir = join(rootDir, "src");
+const runtimeConfigFiles = [
+  join(rootDir, "package.json"),
+  join(rootDir, "package-lock.json"),
+  join(rootDir, "tsconfig.json"),
+];
 
 const entry = resolveEntry([
   join(rootDir, "dist", "bin", "src", "flow.js"),
@@ -79,9 +85,9 @@ function resolveEntry(candidates) {
 }
 
 function needsBuild(entry) {
-  if (entry.includes(`${join("dist", "bin")}`)) return false;
+  if (entry.includes(join("dist", "bin"))) return false;
   const entryMtime = statSync(entry).mtimeMs;
-  return latestSourceMtime(join(rootDir, "src")) > entryMtime;
+  return latestSourceMtime(runtimeSourceDir) > entryMtime || latestExistingMtime(runtimeConfigFiles) > entryMtime;
 }
 
 function latestSourceMtime(dir) {
@@ -94,6 +100,14 @@ function latestSourceMtime(dir) {
     } else if (item.isFile() && path.endsWith(".ts")) {
       latest = Math.max(latest, statSync(path).mtimeMs);
     }
+  }
+  return latest;
+}
+
+function latestExistingMtime(paths) {
+  let latest = 0;
+  for (const path of paths) {
+    if (existsSync(path)) latest = Math.max(latest, statSync(path).mtimeMs);
   }
   return latest;
 }

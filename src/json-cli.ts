@@ -106,7 +106,7 @@ async function resolveInput(argv: string[]): Promise<
     const stdin = await readStdin();
     return stdin.trim() ? { kind: "body", body: stdin, source: "stdin" } : { kind: "manifest" };
   }
-  if (argv.length === 1 && (argv[0] === "manifest" || argv[0] === "--help" || argv[0] === "-h")) {
+  if (argv.length === 1 && ["manifest", "help", "--help", "-h"].includes(argv[0])) {
     return { kind: "manifest" };
   }
   if (argv.length === 1) {

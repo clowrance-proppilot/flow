@@ -23,6 +23,9 @@ if (stdoutWrites.length !== 1) {
 if (!/function writeJson\(value: unknown\): void \{\s*process\.stdout\.write\(`\$\{JSON\.stringify\(value\)\}\\n`\);\s*\}/m.test(jsonCliSource)) {
   violations.push("Flow CLI writeJson must remain the only stdout serializer and must emit JSON.");
 }
+if (!/\["manifest", "help", "--help", "-h"\]\.includes\(argv\[0\]\)/m.test(jsonCliSource)) {
+  violations.push("Flow CLI must support flow --help as a JSON manifest alias.");
+}
 
 if (violations.length > 0) {
   console.error("Flow CLI JSON contract check failed:");

@@ -10,6 +10,8 @@ const flowRoot = join(scriptDir, "..");
 const stateDir = mkdtempSync(join(tmpdir(), "flow-smoke-"));
 const repoRoot = join(stateDir, "project");
 const statePath = join(stateDir, "state.json");
+const originalCwd = process.cwd();
+const sdkModulePath = join(flowRoot, "test-runtime", "pi-sdk-mock.mjs").replace(/\\/g, "/");
 
 try {
   buildFlow();
@@ -25,7 +27,7 @@ try {
     '      name: "smoke"',
     "runtime:",
     "  worker:",
-    `    sdkModulePath: "${join(flowRoot, "test-runtime", "pi-sdk-mock.mjs")}"`,
+    `    sdkModulePath: "${sdkModulePath}"`,
     "",
   ].join("\n"));
   globalThis.flowSmokeStatePath = statePath;
@@ -59,6 +61,7 @@ try {
 
   console.log("flow smoke: ok");
 } finally {
+  process.chdir(originalCwd);
   rmSync(stateDir, { recursive: true, force: true });
 }
 

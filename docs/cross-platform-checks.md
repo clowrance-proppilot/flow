@@ -1,11 +1,9 @@
 # Cross-Platform Checks
 
-Flow should stay portable across Linux, macOS, and Windows.
+Release matrix:
 
-Run this matrix before a public release or after path/bootstrap changes:
-
-- OS: Linux, macOS, Windows
-- Node: 22, 24
+- Linux, macOS, Windows
+- Node 22 and 24
 
 Commands:
 
@@ -16,7 +14,5 @@ npm test
 npm run build
 npm run smoke:flow
 npm run smoke:dashboard
+npm run readiness:public
 ```
-
-`npm run readiness:public` is a release gate. It should pass before the repo is
-made public.
