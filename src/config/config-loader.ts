@@ -212,33 +212,15 @@ async function inferBootstrapFlowConfig(projectRoot: string, storage: FlowConfig
         },
       },
       branchPattern: "{kind}/{issueRef}-{slug}",
-      ...(github
-        ? { pullRequestUrlPattern: `https://github.com/${github.owner}/{repoName}/pull/{number}` }
-        : {}),
       issueInference: [],
     },
-    ...(github
-      ? {
-        issueTracker: {
-          type: "github",
-          owner: github.owner,
-          repo: github.repo,
-        },
-        collaboration: {
-          type: "github",
-          owner: github.owner,
-          repo: github.repo,
-        },
-      }
-      : {
-        issueTracker: {
-          type: "local",
-          prefix: normalizeIssuePrefix(projectName),
-        },
-        collaboration: {
-          type: "none",
-        },
-      }),
+    issueTracker: {
+      type: "local",
+      prefix: normalizeIssuePrefix(projectName),
+    },
+    collaboration: {
+      type: "none",
+    },
     sourceControl: {
       type: "git",
     },
@@ -265,7 +247,6 @@ async function inferBootstrapFlowConfig(projectRoot: string, storage: FlowConfig
     projectName,
     repoName,
     baseBranch,
-    owner: github?.owner,
   };
 }
 

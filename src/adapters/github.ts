@@ -255,12 +255,12 @@ export class GhGitHubAdapter implements CodeCollaborationProvider {
       )
     );
     const payload = JSON.parse(stdout) as { comments?: Array<{ author?: { login?: string }; body?: string }> };
-    const codexComments = (payload.comments ?? [])
+    const reviewComments = (payload.comments ?? [])
       .filter((comment) => comment?.author?.login === "github-actions")
       .map((comment) => comment.body ?? "")
-      .filter((body) => body.includes("<!-- codex-pr-review -->"));
-    if (codexComments.length === 0) return undefined;
-    const latest = codexComments.at(-1) ?? "";
+      .filter((body) => body.includes("<!-- flow-pr-review -->"));
+    if (reviewComments.length === 0) return undefined;
+    const latest = reviewComments.at(-1) ?? "";
     return extractAutoReviewFeedback(latest);
   }
 
@@ -657,7 +657,7 @@ function autoReviewStatus(value: unknown): "passed" | "failed" | "pending" | "mi
       status: String(record.status ?? "").toUpperCase(),
       conclusion: String(record.conclusion ?? "").toUpperCase(),
     }))
-    .find((check) => /run codex review|codex review|auto.?review/i.test(check.name));
+    .find((check) => /flow review|pr review|auto.?review/i.test(check.name));
   if (!normalized) return "missing";
   if (normalized.status !== "COMPLETED") return "pending";
   if (["SUCCESS", "NEUTRAL", "SKIPPED"].includes(normalized.conclusion)) return "passed";

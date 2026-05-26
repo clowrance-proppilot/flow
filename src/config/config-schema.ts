@@ -72,17 +72,6 @@ export const dashboardRuntimeConfigSchema = serviceEndpointConfigSchema.extend({
   defaultMode: z.enum(["dark", "light"]).optional(),
 });
 
-export const workerRuntimeConfigSchema = z.object({
-  executor: z.enum(["pi", "codex", "live_agent_thread"]).optional(),
-  provider: z.string().min(1).optional(),
-  model: z.string().min(1).optional(),
-  timeoutMs: z.number().int().positive().optional(),
-  sdkModulePath: z.string().min(1).optional(),
-  extensionPath: z.string().min(1).optional(),
-  agentDir: z.string().min(1).optional(),
-  codexCommand: z.string().min(1).optional(),
-}).catchall(z.unknown());
-
 export const runtimeConfigSchema = z.object({
   stateDir: z.string().min(1).optional(),
   storeDir: z.string().min(1).optional(),
@@ -91,7 +80,6 @@ export const runtimeConfigSchema = z.object({
   defaultSessionId: z.string().min(1).optional(),
   autoflowBlockedThreshold: z.number().int().positive().optional(),
   debug: z.boolean().optional(),
-  worker: workerRuntimeConfigSchema.optional(),
   dashboard: dashboardRuntimeConfigSchema.optional(),
 }).catchall(z.unknown());
 
@@ -241,6 +229,5 @@ export type TopologyConfig = z.infer<typeof topologyConfigSchema>;
 export type WorkTypeConfig = z.infer<typeof workTypeConfigSchema>;
 export type ExecutorConfig = z.infer<typeof executorConfigSchema>;
 export type RuntimeConfig = z.infer<typeof runtimeConfigSchema>;
-export type WorkerRuntimeConfig = z.infer<typeof workerRuntimeConfigSchema>;
 export type DashboardThemeConfig = z.infer<typeof dashboardThemeConfigSchema>;
 export type FlowConfig = z.infer<typeof flowConfigSchema>;

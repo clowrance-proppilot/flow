@@ -163,14 +163,6 @@ async function handleConfigRequest(request: Record<string, unknown>): Promise<un
             defaultThemeId: config.runtime.dashboard.defaultThemeId,
           }
           : undefined,
-        worker: config.runtime.worker
-          ? {
-            executor: config.runtime.worker.executor,
-            provider: config.runtime.worker.provider,
-            model: config.runtime.worker.model,
-            timeoutMs: config.runtime.worker.timeoutMs,
-          }
-          : undefined,
       }
       : undefined,
   };
@@ -243,7 +235,6 @@ async function handleWorkflowRequest(request: Record<string, unknown>): Promise<
     case "autoflow":
       return runtime.autoFlowIssue(activeSessionId, {
         autoPrepareWorkspace: true,
-        autoApproveWorker: true,
         maxSteps: limit(request, 20),
       });
     case "doctor":
@@ -761,7 +752,7 @@ function errorMessage(error: unknown): string {
 
 function createIssueTracker() {
   const issueTracker = flowConfig?.issueTracker;
-  const type = configString(issueTracker, "type") ?? "jira";
+  const type = configString(issueTracker, "type") ?? "local";
   if (type === "local") {
     return new LocalIssueTrackerAdapter({
       ledger: workflowLedger,
@@ -792,7 +783,7 @@ function createIssueTracker() {
 
 function createCollaboration() {
   const collaboration = flowConfig?.collaboration;
-  const type = configString(collaboration, "type") ?? (configString(flowConfig?.issueTracker, "type") === "local" ? "none" : "github");
+  const type = configString(collaboration, "type") ?? "none";
   if (type === "none" || type === "local") {
     return new NoopCodeCollaborationAdapter();
   }

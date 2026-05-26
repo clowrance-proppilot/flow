@@ -1,9 +1,3 @@
-import type { WorkerTaskRequest, WorkerTaskResult } from "../contracts.js";
-
-export interface WorkerSpawner {
-  run(request: WorkerTaskRequest, onProgress?: WorkerProgressSink): Promise<WorkerTaskResult>;
-}
-
 export interface WorkerProgressEvent {
   taskId: string;
   issueRef: string;

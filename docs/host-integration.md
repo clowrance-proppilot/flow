@@ -8,10 +8,12 @@ Durable config belongs in `.flow/config.yaml`:
 - provider selection
 - ledger settings
 - dashboard settings
-- executor policy
 
 Do not use environment variables as the source of truth for durable workflow
 behavior.
+
+Flow records agent handoff and result state. It does not choose, launch, retry,
+or supervise agents.
 
 Minimal local config:
 

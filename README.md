@@ -5,7 +5,8 @@ Flow is workflow state for coding agents.
 Agents and adapters use its JSON contract for issue state, handoff, evidence,
 readiness, and closeout. Humans use the dashboard.
 
-Flow does not replace the IDE, issue tracker, Git, PRs, or CI.
+Flow does not replace the IDE, issue tracker, Git, PRs, CI, or agent runtime.
+It records handoff and results; it does not run agents.
 
 ## Install
 
@@ -25,8 +26,8 @@ Package: [@camden-lowrance/flow](https://www.npmjs.com/package/@camden-lowrance/
 
 - `flow` accepts one JSON body.
 - `flow` writes one JSON document to stdout.
-- `.flow/config.yaml` owns durable topology, providers, dashboard, executor, and
-  ledger settings.
+- `.flow/config.yaml` owns durable topology, adapters, dashboard, and ledger
+  settings.
 - Flow writes runtime state and the workflow ledger.
 
 Examples:

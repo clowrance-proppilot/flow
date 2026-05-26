@@ -85,6 +85,14 @@ function configString(config: Record<string, unknown> | undefined, key: string):
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+async function commandPath(command: string): Promise<string> {
+  const finder = process.platform === "win32" ? "where" : "which";
+  const { stdout } = await execFileAsync(finder, [command]);
+  const first = stdout.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
+  if (!first) throw new Error(`Could not resolve ${command}.`);
+  return first;
+}
+
 test("Typed work contracts and registry validate supported jobs", () => {
   const workTypes = createDefaultFlowWorkTypeRegistry();
   const now = nowIso();
@@ -111,8 +119,7 @@ test("Typed work contracts and registry validate supported jobs", () => {
 
   assert.equal(workTypes.get(job.workType)?.outputType, "worker_result");
   assert.equal(workTypes.executorCanRun("live_agent_thread", job.workType, job.requiredCapabilities), true);
-  assert.equal(workTypes.executorCanRun("pi_worker", job.workType, job.requiredCapabilities), true);
-  assert.equal(workTypes.executorCanRun("pi_worker", "flow.prepare_workspace"), false);
+  assert.equal(workTypes.executorCanRun("background_worker", job.workType, job.requiredCapabilities), false);
   assert.equal(result.jobId, job.id);
   assert.equal(workTypes.has("flow.unknown"), false);
 });
@@ -331,7 +338,7 @@ test("Flow config bootstrap can create tracked repo config", async () => {
   assert.equal(result.path, flowConfigPath(root));
 });
 
-test("Flow config bootstrap defaults to GitHub providers when a GitHub remote exists", async () => {
+test("Flow config bootstrap keeps providers local when a GitHub remote exists", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-bootstrap-github-"));
   await execFileAsync("git", ["init"], { cwd: root });
   await execFileAsync("git", ["remote", "add", "origin", "git@github.com:example-org/example.git"], { cwd: root });
@@ -340,13 +347,49 @@ test("Flow config bootstrap defaults to GitHub providers when a GitHub remote ex
   const config = await loadFlowConfig({ projectRoot: root });
 
   assert.ok(config);
-  assert.equal(result.owner, "example-org");
-  assert.equal(config.issueTracker?.type, "github");
-  assert.equal(config.issueTracker?.owner, "example-org");
-  assert.equal(config.issueTracker?.repo, "example");
-  assert.equal(config.collaboration?.type, "github");
-  assert.equal(config.collaboration?.owner, "example-org");
-  assert.equal(config.collaboration?.repo, "example");
+  assert.equal(result.owner, undefined);
+  assert.equal(config.topology.repos.main.name, "example");
+  assert.equal(config.issueTracker?.type, "local");
+  assert.equal(config.collaboration?.type, "none");
+  assert.equal(config.sourceControl?.type, "git");
+});
+
+test("Flow CLI core works with only git available on PATH", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-git-only-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  const gitPath = await commandPath("git");
+  const gitOnlyPath = dirname(gitPath);
+  const env = {
+    ...process.env,
+    PATH: gitOnlyPath,
+    Path: gitOnlyPath,
+  };
+  const flowBin = join(process.cwd(), "bin", "flow");
+  const callFlow = async (body: Record<string, unknown>) => {
+    const { stdout } = await execFileAsync(process.execPath, [flowBin, JSON.stringify(body)], {
+      cwd: root,
+      env,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+    const parsed = JSON.parse(stdout) as { ok?: boolean; result?: unknown; error?: unknown };
+    if (parsed.ok === false) throw new Error(`Flow CLI failed: ${JSON.stringify(parsed.error)}`);
+    return parsed.result as Record<string, unknown>;
+  };
+
+  await callFlow({ op: "bootstrap", storage: "repo-tracked" });
+  const config = await loadFlowConfig({ projectRoot: root });
+  assert.equal(config?.issueTracker?.type, "local");
+  assert.equal(config?.collaboration?.type, "none");
+  assert.equal(config?.sourceControl?.type, "git");
+  assert.equal(config?.runtime && "worker" in config.runtime, false);
+
+  const issue = await callFlow({
+    op: "issue",
+    mode: "create",
+    summary: "Git-only Flow core",
+    issueType: "Task",
+  });
+  assert.equal(issue.title, "Git-only Flow core");
 });
 
 test("Flow config bootstrap can keep repo-local config in local git exclude", async () => {
@@ -587,7 +630,7 @@ test("Readiness supports local no-PR workflows when code review is disabled", ()
   assert.equal(assessment.findings.some((finding) => finding.summary === "Pull request is missing."), false);
 });
 
-test("Readiness treats retryable Worker timeout after success as warning", () => {
+test("Readiness treats retryable handoff timeout after success as warning", () => {
   const assessment = assessIssue({
     issue: {
       ref: "ISSUE-12",
@@ -603,7 +646,7 @@ test("Readiness treats retryable Worker timeout after success as warning", () =>
         repoKey: "app_api",
         executor: "live_agent_thread",
         status: "succeeded",
-        summary: "Existing Codex thread evidence is valid",
+        summary: "Existing agent-thread evidence is valid",
         changedFiles: [],
         testsRun: ["pixi run pytest shared/provider/tests/test_panorama_one_click_contract.py"],
         blockers: [],
@@ -614,10 +657,10 @@ test("Readiness treats retryable Worker timeout after success as warning", () =>
         issueRef: "ISSUE-12",
         repoKey: "app_api",
         status: "blocked",
-        summary: "Pi Worker timed out or was interrupted before returning a structured result.",
+        summary: "Agent handoff timed out or was interrupted before returning a structured result.",
         changedFiles: [],
         testsRun: [],
-        blockers: ["Pi Worker timed out or was interrupted before returning a structured result."],
+        blockers: ["Agent handoff timed out or was interrupted before returning a structured result."],
         completedAt: nowIso(),
       },
     ],
@@ -673,10 +716,10 @@ test("Readiness ignores obsolete undraft executor blockers once PR is ready", ()
         issueRef: "ISSUE-15272",
         repoKey: "app_api",
         status: "blocked",
-        summary: "Pi Worker could not find provider credentials.",
+        summary: "Agent handoff could not find provider credentials.",
         changedFiles: [],
         testsRun: [],
-        blockers: ["Pi Worker could not find provider credentials."],
+        blockers: ["Agent handoff could not find provider credentials."],
         nextPickup: "Configure credentials, then undraft PR #1406.",
         handoffPrompt: "Convert PR https://github.com/ExampleOrg/app-api/pull/1406 from draft to ready for review.",
         completedAt: nowIso(),
@@ -716,10 +759,10 @@ test("Readiness ignores obsolete missing-workspace blockers once a worktree exis
         issueRef: "ISSUE-15389",
         repoKey: "app_api",
         status: "blocked",
-        summary: "Worker workspace path is missing for app_api.",
+        summary: "Handoff workspace path is missing for app_api.",
         changedFiles: [],
         testsRun: [],
-        blockers: ["Worker workspace path is missing."],
+        blockers: ["Handoff workspace path is missing."],
         nextPickup: "Run prepare workspace for the routed repo, then retry advance/autoflow.",
         completedAt: nowIso(),
       },
@@ -760,11 +803,11 @@ test("Readiness treats provider-credential executor failures as retryable", () =
         issueRef: "ISSUE-15738",
         repoKey: "app_api",
         status: "blocked",
-        summary: "Pi Worker could not find provider credentials.",
+        summary: "Agent handoff could not find provider credentials.",
         changedFiles: [],
         testsRun: [],
-        blockers: ["Pi Worker could not find provider credentials."],
-        nextPickup: "Configure Pi provider credentials, then rerun the Worker request.",
+        blockers: ["Agent handoff could not find provider credentials."],
+        nextPickup: "Configure provider credentials, then retry the handoff.",
         completedAt: nowIso(),
       },
     ],
@@ -1275,7 +1318,7 @@ test("Work Runtime rejects non-component repo keys", async () => {
   );
 });
 
-test("Work Runtime prepares workspace before Worker confirmation", async () => {
+test("Work Runtime prepares workspace before handoff confirmation", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
   const ledger = new MemoryWorkflowLedger();
   const workRuntime = testWorkRuntime({
@@ -1319,8 +1362,8 @@ test("Work Runtime prepares workspace before Worker confirmation", async () => {
   );
   assert.equal(result.status, "needs_confirmation");
   assert.equal(result.session.pendingConfirmation?.payload.repoKey, "app_api");
-  assert.equal(approved.workerRequest?.workspacePath, "/repo/app-api/.worktrees/feature-issue-21-prepare-workspace");
-  assert.match(approved.workerRequest?.prompt ?? "", /Prepared workspace: \/repo\/app-api\/.worktrees/);
+  assert.equal(approved.handoffRequest?.workspacePath, "/repo/app-api/.worktrees/feature-issue-21-prepare-workspace");
+  assert.match(approved.handoffRequest?.prompt ?? "", /Prepared workspace: \/repo\/app-api\/.worktrees/);
 });
 
 test("Work Runtime records actual existing worktree path returned by source control", async () => {
@@ -1415,7 +1458,7 @@ test("Work Runtime adopts a branch as stealth-mode Flow work", async () => {
       async inspect(repoPath) {
         assert.equal(repoPath, "/repo/public-api");
         return {
-          branch: "codex/spike-local-work",
+          branch: "work/spike-local-work",
           headSha: "branch-sha",
           dirty: false,
           entries: [],
@@ -1444,7 +1487,7 @@ test("Work Runtime adopts a branch as stealth-mode Flow work", async () => {
   assert.equal(adopted.metadata["workflow.issue.origin"], "branch");
   assert.equal(adopted.metadata["workflow.external.issue.status"], "unpublished");
   assert.equal(adopted.metadata["workflow.external.code_review.status"], "unpublished");
-  assert.equal(adopted.metadata["workflow.repos.public_api.branch"], "codex/spike-local-work");
+  assert.equal(adopted.metadata["workflow.repos.public_api.branch"], "work/spike-local-work");
   assert.equal(adopted.metadata["workflow.repos.public_api.head_sha"], "branch-sha");
   assert.match(selected, /FLOW-1: Spike local work/);
 });
@@ -2079,14 +2122,14 @@ test("Work Runtime infers app_api routing from Jira summary keywords", async () 
   assert.deepEqual(queue[0].repoKeys, ["app_api"]);
 });
 
-test("Work Runtime approval creates a worker request", async () => {
+test("Work Runtime approval creates a handoff request", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
   const ledger = new MemoryWorkflowLedger();
   const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
   const session = await workRuntime.createSession("session-approve");
   await workRuntime.selectIssue(session.id, {
     ref: "ISSUE-3",
-    title: "Spawn worker",
+    title: "Create handoff",
     repoKeys: ["app_api"],
     state: "queued",
     metadata: {
@@ -2100,14 +2143,14 @@ test("Work Runtime approval creates a worker request", async () => {
   const approved = await workRuntime.advanceIssue(session.id, confirmationId);
 
   assert.equal(approved.status, "execution_handoff");
-  assert.equal(approved.workerRequest?.issueRef, "ISSUE-3");
-  assert.ok(approved.workerRequest?.workJobId);
-  assert.match(approved.workerRequest?.prompt ?? "", /Return only a JSON object/);
+  assert.equal(approved.handoffRequest?.issueRef, "ISSUE-3");
+  assert.ok(approved.handoffRequest?.workJobId);
+  assert.match(approved.handoffRequest?.prompt ?? "", /Use Flow to work this prompt/);
   const jobs = await workRuntime.listWorkJobs(session.id, "ISSUE-3");
   assert.equal(jobs.length, 1);
   assert.equal(jobs[0].workType, "flow.implement");
   assert.equal(jobs[0].status, "queued");
-  assert.equal(approved.workerRequest?.workJobId, jobs[0].id);
+  assert.equal(approved.handoffRequest?.workJobId, jobs[0].id);
 });
 
 test("Work Runtime prepares bug-prefixed branches from agent-selected branch kind", async () => {
@@ -2453,7 +2496,7 @@ test("Workflow ledger upserts typed work jobs and results", async () => {
     status: "running",
     input: {},
     requiredCapabilities: ["code.edit"],
-    claimedBy: "pi_worker",
+    claimedBy: "live_agent_thread",
     createdAt: now,
     updatedAt: nowIso(),
   });
@@ -2472,7 +2515,7 @@ test("Workflow ledger upserts typed work jobs and results", async () => {
   const results = await ledger.listWorkJobResults("ISSUE-10");
   assert.equal(jobs.length, 1);
   assert.equal(jobs[0].status, "running");
-  assert.equal(jobs[0].claimedBy, "pi_worker");
+  assert.equal(jobs[0].claimedBy, "live_agent_thread");
   assert.equal(results.length, 1);
   assert.equal(results[0].summary, "Done");
 });
@@ -2578,10 +2621,10 @@ test("Work Runtime blocked message suppresses obsolete satisfied PR executor pro
     issueRef: "ISSUE-15272",
     repoKey: "app_api",
     status: "blocked",
-    summary: "Pi Worker could not find provider credentials.",
+    summary: "Agent handoff could not find provider credentials.",
     changedFiles: [],
     testsRun: [],
-    blockers: ["Pi Worker could not find provider credentials."],
+    blockers: ["Agent handoff could not find provider credentials."],
     nextPickup: "Configure credentials, then undraft PR #1406.",
     handoffPrompt: "Convert PR https://github.com/ExampleOrg/app-api/pull/1406 from draft to ready for review.",
     completedAt: nowIso(),
@@ -2596,14 +2639,14 @@ test("Work Runtime blocked message suppresses obsolete satisfied PR executor pro
   assert.doesNotMatch(advanced.message, /Paste-ready local-thread executor prompt/);
 });
 
-test("Work Runtime synthesizes paste-ready handoff for existing blocked workers", async () => {
+test("Work Runtime synthesizes paste-ready handoff for existing blocked handoffs", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
   const ledger = new MemoryWorkflowLedger();
   const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
   const session = await workRuntime.createSession("session-legacy-blocked-handoff");
   await workRuntime.selectIssue(session.id, {
     ref: "ISSUE-78",
-    title: "Existing blocked worker",
+    title: "Existing blocked handoff",
     repoKeys: ["app_api"],
     state: "queued",
     metadata: {
@@ -2628,16 +2671,13 @@ test("Work Runtime synthesizes paste-ready handoff for existing blocked workers"
 
   assert.equal(advanced.status, "blocked");
   assert.match(advanced.message, /Paste-ready local-thread executor prompt/);
-  assert.match(advanced.message, /You are a local-thread executor for Flow issue ISSUE-78/);
-  assert.match(advanced.message, /Work through Flow/);
-  assert.match(advanced.message, /First reconcile\/adopt this executor task/);
-  assert.match(advanced.message, /If Flow asks for an adoption payload/);
+  assert.match(advanced.message, /Use Flow to work this prompt/);
   assert.doesNotMatch(advanced.message, /Direct Jira\/GitHub/);
   assert.match(advanced.message, /feature-issue-78/);
   assert.match(advanced.message, /Requested work/);
 });
 
-test("Work Runtime lets a live agent thread adopt and close a Worker run", async () => {
+test("Work Runtime lets a live agent thread adopt and close a handoff run", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
   const ledger = new MemoryWorkflowLedger();
   const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
@@ -2681,7 +2721,7 @@ test("Work Runtime lets a live agent thread adopt and close a Worker run", async
     workJobId: request.workJobId,
     executor: "live_agent_thread",
     status: "succeeded",
-    summary: "Live thread completed the Worker assignment.",
+    summary: "Live thread completed the handoff assignment.",
     changedFiles: ["src/work-runtime.ts"],
     testsRun: ["npm test"],
     blockers: [],
@@ -2700,7 +2740,7 @@ test("Work Runtime lets a live agent thread adopt and close a Worker run", async
   assert.equal(jobResults[0].jobId, request.workJobId);
 });
 
-test("Work Runtime adopts the pending Worker request into a live thread", async () => {
+test("Work Runtime adopts the pending handoff request into a live thread", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
   const ledger = new MemoryWorkflowLedger();
   const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
@@ -2715,7 +2755,7 @@ test("Work Runtime adopts the pending Worker request into a live thread", async 
     },
   });
 
-  const request = await workRuntime.adoptPendingLiveWorker(session.id, { adopter: "codex-thread" });
+  const request = await workRuntime.adoptPendingLiveWorker(session.id, { adopter: "agent-thread" });
   const runs = await workRuntime.observeWorkers(session.id);
   const jobs = await ledger.listWorkJobs("ISSUE-31");
 
@@ -2728,7 +2768,7 @@ test("Work Runtime adopts the pending Worker request into a live thread", async 
   assert.equal(runs[0].workJobId, request.workJobId);
   assert.equal(runs[0].executor, "live_agent_thread");
   assert.equal(runs[0].status, "running");
-  assert.match(runs[0].summary ?? "", /codex-thread/);
+  assert.match(runs[0].summary ?? "", /agent-thread/);
   assert.equal(jobs.length, 1);
   assert.equal(jobs[0].id, request.workJobId);
   assert.equal(jobs[0].status, "running");
@@ -2750,14 +2790,14 @@ test("Work Runtime infers typed work job when live thread records result without
     },
   });
 
-  const request = await workRuntime.adoptPendingLiveWorker(session.id, { adopter: "codex-thread" });
+  const request = await workRuntime.adoptPendingLiveWorker(session.id, { adopter: "agent-thread" });
   await workRuntime.recordWorkerResult(session.id, {
     taskId: request.id,
     issueRef: request.issueRef,
     repoKey: request.repoKey,
     executor: "live_agent_thread",
     status: "succeeded",
-    summary: "Codex thread completed the Worker assignment.",
+    summary: "Agent thread completed the handoff assignment.",
     changedFiles: ["worker/tests/services/controller_data/etl/test_provider_parquet.py"],
     testsRun: ["pixi run pytest worker/tests/services/controller_data/etl/test_provider_parquet.py"],
     blockers: [],
@@ -2775,14 +2815,14 @@ test("Work Runtime infers typed work job when live thread records result without
   assert.equal(jobResults[0].workerResult?.executor, "live_agent_thread");
 });
 
-test("Work Runtime records current local thread against a pending Worker request", async () => {
+test("Work Runtime records current local thread against a pending handoff request", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
   const ledger = new MemoryWorkflowLedger();
   const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
-  const session = await workRuntime.createSession("session-codex-worker-result");
+  const session = await workRuntime.createSession("session-agent-handoff-result");
   await workRuntime.selectIssue(session.id, {
     ref: "ISSUE-33",
-    title: "Codex worker result",
+    title: "Agent handoff result",
     repoKeys: ["app_api"],
     state: "ready_to_run",
     metadata: {
@@ -2800,7 +2840,7 @@ test("Work Runtime records current local thread against a pending Worker request
     issueRef: "ISSUE-33",
     repoKey: "app_api",
     status: "succeeded",
-    summary: "Codex thread completed the Worker assignment.",
+    summary: "Agent thread completed the handoff assignment.",
     changedFiles: ["src/work-runtime.ts"],
     testsRun: ["npm test"],
   });
@@ -2811,14 +2851,14 @@ test("Work Runtime records current local thread against a pending Worker request
   const jobResults = await ledger.listWorkJobResults("ISSUE-33");
   const advanced = await workRuntime.advanceIssue(session.id);
 
-  assert.equal(record.result.taskId, requested.workerRequest?.id);
-  assert.equal(record.result.workJobId, requested.workerRequest?.workJobId);
+  assert.equal(record.result.taskId, requested.handoffRequest?.id);
+  assert.equal(record.result.workJobId, requested.handoffRequest?.workJobId);
   assert.equal(record.result.executor, "live_agent_thread");
   assert.equal(results[0].executor, "live_agent_thread");
   assert.equal(runs.at(-1)?.status, "succeeded");
   assert.equal(jobs[0].claimedBy, "live_agent_thread");
   assert.equal(jobs[0].status, "succeeded");
-  assert.equal(jobResults[0].workerResult?.taskId, requested.workerRequest?.id);
+  assert.equal(jobResults[0].workerResult?.taskId, requested.handoffRequest?.id);
   assert.notEqual(advanced.session.pendingConfirmation?.action, "request_execution");
 });
 
@@ -2866,7 +2906,7 @@ test("Work Runtime routes and prepares main work in the project root", async () 
   );
 });
 
-test("Work Runtime autoflow can approve, run Worker, and stop on Readiness blocker", async () => {
+test("Work Runtime autoflow stops at execution handoff confirmation", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
   const ledger = new MemoryWorkflowLedger();
   const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
@@ -2881,15 +2921,13 @@ test("Work Runtime autoflow can approve, run Worker, and stop on Readiness block
     },
   });
 
-  const result = await workRuntime.autoFlowIssue(session.id, { autoApproveWorker: true });
+  const result = await workRuntime.autoFlowIssue(session.id);
 
-  assert.equal(result.status, "execution_handoff");
+  assert.equal(result.status, "needs_confirmation");
   assert.equal(result.workerResults.length, 0);
-  assert.equal(result.steps.map((step) => step.status).join(","), "needs_confirmation,execution_handoff");
-  assert.match(result.message, /Record result for execution handoff/);
-  assert.equal(result.workerRequest?.issueRef, "ISSUE-16");
-  assert.equal(result.executionContext?.issueRef, "ISSUE-16");
-  assert.match(result.workerRequest?.prompt ?? "", /Work ISSUE-16 in app_api/);
+  assert.equal(result.steps.map((step) => step.status).join(","), "needs_confirmation");
+  assert.equal(result.session.pendingConfirmation?.action, "request_execution");
+  assert.equal(result.handoffRequest, undefined);
   const issue = await ledger.readIssue("ISSUE-16");
   assert.equal(issue?.metadata["workflow.autoflow.attempts"], 1);
   assert.equal(typeof issue?.metadata["workflow.autoflow.last_attempted_at"], "string");
@@ -3867,7 +3905,7 @@ test("Work Runtime reconciliation selects blocking pull request across routed re
   assert.equal(issue.metadata["workflow.repos.web_app.pr_url"], "https://github.com/ExampleOrg/web-app/pull/3178");
 });
 
-test("Work Runtime turns remediable PR review blockers into Worker requests", async () => {
+test("Work Runtime turns remediable PR review blockers into handoff requests", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
   const ledger = new MemoryWorkflowLedger();
   const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
@@ -3899,12 +3937,12 @@ test("Work Runtime turns remediable PR review blockers into Worker requests", as
   const approved = await workRuntime.advanceIssue(session.id, confirmationId);
 
   assert.equal(approved.status, "execution_handoff");
-  assert.match(approved.workerRequest?.prompt ?? "", /Review remediation target:/);
-  assert.match(approved.workerRequest?.prompt ?? "", /Keep TEMP_PATH type-compatible/);
+  assert.match(approved.handoffRequest?.prompt ?? "", /Prompt: address these review findings/);
+  assert.match(approved.handoffRequest?.prompt ?? "", /Keep TEMP_PATH type-compatible/);
   const jobs = await ledger.listWorkJobs("ISSUE-72");
   assert.equal(jobs.length, 1);
   assert.equal(jobs[0].workType, "flow.remediate");
-  assert.equal(approved.workerRequest?.workJobId, jobs[0].id);
+  assert.equal(approved.handoffRequest?.workJobId, jobs[0].id);
 });
 
 test("Work Runtime turns failed PR checks into review remediation work", async () => {
@@ -3935,8 +3973,8 @@ test("Work Runtime turns failed PR checks into review remediation work", async (
   assert.ok(confirmationId);
   const approved = await workRuntime.advanceIssue(session.id, confirmationId);
   assert.equal(approved.status, "execution_handoff");
-  assert.match(approved.workerRequest?.prompt ?? "", /Pull request checks are not passing/);
-  assert.match(approved.workerRequest?.prompt ?? "", /Auto review checks failed/);
+  assert.match(approved.handoffRequest?.prompt ?? "", /Pull request checks are not passing/);
+  assert.match(approved.handoffRequest?.prompt ?? "", /Auto review checks failed/);
 });
 
 test("Work Runtime records review confirmation and posts it to GitHub", async () => {
@@ -4545,14 +4583,14 @@ test("GitHub issue tracker parses issue list JSON", () => {
       body: "Use Flow to drive Flow.",
       updatedAt: "2026-05-20T12:00:00Z",
       labels: [{ name: "enhancement" }, { name: "main" }],
-      assignees: [{ login: "codex" }],
+      assignees: [{ login: "agent" }],
     },
   ]);
 
   assert.equal(issues.length, 1);
   assert.equal(issues[0].number, 12);
   assert.equal(issues[0].labels.join(","), "enhancement,main");
-  assert.equal(issues[0].assignees.join(","), "codex");
+  assert.equal(issues[0].assignees.join(","), "agent");
 });
 
 test("Provider CLI errors are classified for actionable Flow blockers", () => {
@@ -4655,8 +4693,8 @@ test("GitHub adapter does not enforce a PR template when none is provided", () =
   assert.equal(prs[0].templateMissingHeadings, undefined);
 });
 
-test("GitHub adapter parses Codex review must-fix sections", () => {
-  const feedback = extractAutoReviewFeedback(`<!-- codex-pr-review -->
+test("GitHub adapter parses auto review must-fix sections", () => {
+  const feedback = extractAutoReviewFeedback(`<!-- flow-pr-review -->
 ## Summary
 - Tests were added.
 
@@ -4674,8 +4712,8 @@ None.
   assert.equal(feedback.needsConfirmation, false);
 });
 
-test("GitHub adapter treats empty Codex review sections as no feedback", () => {
-  const feedback = extractAutoReviewFeedback(`<!-- codex-pr-review -->
+test("GitHub adapter treats empty auto review sections as no feedback", () => {
+  const feedback = extractAutoReviewFeedback(`<!-- flow-pr-review -->
 ## Summary
 No issues found.
 

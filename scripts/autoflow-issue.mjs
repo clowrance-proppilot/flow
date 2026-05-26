@@ -25,8 +25,6 @@ for (let cycle = 0; cycle < maxCycles; cycle += 1) {
     sessionId: session.id,
     options: {
       autoPrepareWorkspace: true,
-      autoApproveWorker: true,
-      runWorker: true,
       maxSteps,
     },
   });

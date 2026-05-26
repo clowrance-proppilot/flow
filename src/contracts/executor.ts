@@ -11,9 +11,7 @@ export const LifecycleStatusValue = {
 export const WorkerStatusValue = LifecycleStatusValue;
 
 export const WorkerExecutorValue = {
-  Pi: "pi",
   LiveAgentThread: "live_agent_thread",
-  Codex: "codex",
 } as const;
 
 export const workerStatusValues = [
@@ -31,9 +29,7 @@ export const terminalWorkerStatusValues = [
 ] as const;
 
 export const workerExecutorValues = [
-  WorkerExecutorValue.Pi,
   WorkerExecutorValue.LiveAgentThread,
-  WorkerExecutorValue.Codex,
 ] as const;
 
 export const workerStatusSchema = z.enum(workerStatusValues);

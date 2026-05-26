@@ -5,7 +5,6 @@ import {
   FlowStore,
   WorkerExecutorValue,
   WorkerStatusValue,
-  createDefaultWorkerSpawner,
   createWorkflowLedger,
   configToProjectTopology,
   configToWorkTypeRegistry,
@@ -47,25 +46,7 @@ async function workRuntime() {
     projectRoot: repoRoot,
     defaultJiraProjectKey: configString(flowConfig?.issueTracker, "projectKey"),
     autoflowBlockedThreshold: flowConfig?.runtime?.autoflowBlockedThreshold,
-    workerTimeoutMs: flowConfig?.runtime?.worker?.timeoutMs,
     debugEnabled: flowConfig?.runtime?.debug,
-  });
-}
-
-async function configuredWorkerSpawner() {
-  const repoRoot = flowRoot();
-  const flowConfig = await loadFlowConfig({ projectRoot: repoRoot });
-  const worker = flowConfig?.runtime?.worker;
-  return createDefaultWorkerSpawner({
-    flowRoot: repoRoot,
-    executor: parseConfiguredWorkerExecutor(worker?.executor),
-    provider: worker?.provider,
-    model: worker?.model,
-    timeoutMs: worker?.timeoutMs,
-    sdkModulePath: worker?.sdkModulePath,
-    extensionPath: worker?.extensionPath,
-    agentDir: worker?.agentDir,
-    command: worker?.codexCommand,
   });
 }
 
@@ -115,11 +96,6 @@ function createCollaboration(flowConfig: Awaited<ReturnType<typeof loadFlowConfi
   const type = configString(collaboration, "type") ?? (configString(flowConfig?.issueTracker, "type") === "local" ? "none" : "github");
   if (type === "none" || type === "local") return new NoopCodeCollaborationAdapter();
   return new GhGitHubAdapter({ cwd: repoRoot, owner: configString(collaboration, "owner") });
-}
-
-function parseConfiguredWorkerExecutor(value: unknown) {
-  if (value === WorkerExecutorValue.Pi || value === WorkerExecutorValue.Codex || value === WorkerExecutorValue.LiveAgentThread) return value;
-  return undefined;
 }
 
 function stringLiteralUnion(values: readonly string[]) {
@@ -749,7 +725,7 @@ export default function (pi: ExtensionAPI) {
       return {
         content: [{
           type: "text",
-          text: `Live agent thread adopted pending executor ${request.id} for ${request.issueRef} in ${request.repoKey}`,
+          text: `Live agent thread adopted pending handoff ${request.id} for ${request.issueRef} in ${request.repoKey}`,
         }],
         details: { request },
       };
@@ -759,7 +735,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "flow_record_executor_result",
     label: "Flow Executor Result",
-    description: "Record the structured closeout result for a local-thread or background executor.",
+    description: "Record the structured closeout result for a local-thread handoff.",
     parameters: Type.Object({
       sessionId: Type.String(),
       taskId: Type.String(),
@@ -802,56 +778,19 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "flow_run_background_executor",
-    label: "Flow Run Background Executor",
-    description: "Run a background executor request and record the result in the workflow ledger.",
-    parameters: Type.Object({
-      sessionId: Type.String(),
-      id: Type.String(),
-      issueRef: Type.String(),
-      repoKey: Type.String(),
-      executor: Type.Optional(stringLiteralUnion(workerExecutorValues)),
-      prompt: Type.String(),
-      workspacePath: Type.Optional(Type.String()),
-      createdAt: Type.String(),
-    }),
-    async execute(_toolCallId, params) {
-      const result = await (await workRuntime()).runBackgroundExecutor(
-        params.sessionId,
-        {
-          id: params.id,
-          issueRef: params.issueRef,
-          repoKey: params.repoKey,
-          executor: params.executor,
-          prompt: params.prompt,
-          workspacePath: params.workspacePath,
-          createdAt: params.createdAt,
-        },
-        await configuredWorkerSpawner(),
-      );
-      return { content: [{ type: "text", text: result.summary }], details: result };
-    },
-  });
-
-  pi.registerTool({
     name: "flow_autoflow_issue",
     label: "Flow Autoflow",
-    description: "Advance a selected issue until it needs human input, is blocked, or reaches review-ready.",
+    description: "Advance a selected issue until it needs human input, is blocked, or reaches a handoff/review-ready state.",
     parameters: Type.Object({
       sessionId: Type.String(),
       autoPrepareWorkspace: Type.Optional(Type.Boolean()),
-      autoApproveWorker: Type.Optional(Type.Boolean()),
-      runBackgroundExecutor: Type.Optional(Type.Boolean()),
       maxSteps: Type.Optional(Type.Number()),
     }),
     async execute(_toolCallId, params) {
       const result = await (await workRuntime()).autoFlowIssue(
         params.sessionId,
-        await configuredWorkerSpawner(),
         {
           autoPrepareWorkspace: params.autoPrepareWorkspace ?? true,
-          autoApproveWorker: params.autoApproveWorker ?? true,
-          runWorker: params.runBackgroundExecutor ?? true,
           maxSteps: params.maxSteps,
         },
       );
@@ -974,12 +913,12 @@ function flowCommandPrompt(args: string): string {
         : "Ask me which issue key and repo key to prepare.";
     case "advance":
       return target
-        ? `Create or reuse an Flow Work Runtime session, select ${target}, reconcile it, and advance it until confirmation, blocker, worker request, or review-ready.`
-        : "Advance the currently selected Flow issue until confirmation, blocker, worker request, or review-ready.";
+        ? `Create or reuse an Flow Work Runtime session, select ${target}, reconcile it, and advance it until confirmation, blocker, handoff, or review-ready.`
+        : "Advance the currently selected Flow issue until confirmation, blocker, handoff, or review-ready.";
     case "autoflow":
       return target
-        ? `Create or reuse an Flow Work Runtime session, select ${target}, then run Flow autoflow. Prepare routed workspaces automatically, approve Worker confirmation, run the Worker, and stop at blocker, review-ready, done, or human input required. Report the exact state.`
-        : "Run Flow autoflow on the currently selected issue. Prepare routed workspaces automatically, approve Worker confirmation, run the Worker, and stop at blocker, review-ready, done, or human input required. Report the exact state.";
+        ? `Create or reuse an Flow Work Runtime session, select ${target}, then run Flow autoflow. Prepare routed workspaces automatically and stop at blocker, handoff, review-ready, done, or human input required. Report the exact state.`
+        : "Run Flow autoflow on the currently selected issue. Prepare routed workspaces automatically and stop at blocker, handoff, review-ready, done, or human input required. Report the exact state.";
     case "help":
     default:
       return [

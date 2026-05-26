@@ -28,9 +28,7 @@ export const WorkJobStatusValue = {
 } as const;
 
 export const WorkJobExecutorValue = {
-  PiWorker: "pi_worker",
   LiveAgentThread: "live_agent_thread",
-  CodexWorker: "codex_worker",
 } as const;
 
 export const issueStateValues = [
@@ -67,9 +65,7 @@ export const terminalWorkJobStatusValues = [
 ] as const;
 
 export const workJobExecutorValues = [
-  WorkJobExecutorValue.PiWorker,
   WorkJobExecutorValue.LiveAgentThread,
-  WorkJobExecutorValue.CodexWorker,
 ] as const;
 
 export const issueStateSchema = z.enum(issueStateValues);

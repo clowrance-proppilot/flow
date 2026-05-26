@@ -184,20 +184,11 @@ type EvidenceRecordInput = Omit<EvidenceRecord, "recordedAt" | "criteria"> & {
 };
 
 export interface AdvanceIssueResult {
-  status: "needs_issue" | "needs_confirmation" | "blocked" | "execution_handoff" | "worker_requested" | "awaiting_review";
+  status: "needs_issue" | "needs_confirmation" | "blocked" | "execution_handoff" | "awaiting_review";
   session: WorkRuntimeSession;
   issue?: WorkItem;
   message: string;
-  workerRequest?: {
-    id: string;
-    issueRef: string;
-    repoKey: string;
-    workJobId?: string;
-    prompt: string;
-    workspacePath?: string;
-    createdAt?: string;
-  };
-  executionContext?: {
+  handoffRequest?: {
     id: string;
     issueRef: string;
     repoKey: string;
@@ -210,8 +201,6 @@ export interface AdvanceIssueResult {
 
 export interface AutoFlowIssueOptions {
   autoPrepareWorkspace?: boolean;
-  /** Compatibility name. Flow approves an execution handoff; it does not run a worker. */
-  autoApproveWorker?: boolean;
   maxSteps?: number;
 }
 
@@ -313,8 +302,7 @@ export interface AutoFlowIssueResult {
   workerResults: WorkerTaskResult[];
   session: WorkRuntimeSession;
   issue?: WorkItem;
-  workerRequest?: AdvanceIssueResult["workerRequest"];
-  executionContext?: AdvanceIssueResult["executionContext"];
+  handoffRequest?: AdvanceIssueResult["handoffRequest"];
 }
 
 export interface FlowDoctorResult {
@@ -1334,7 +1322,6 @@ export class FlowWorkRuntime {
       maxSteps,
       options: {
         autoPrepareWorkspace: options.autoPrepareWorkspace !== false,
-        autoApproveWorker: options.autoApproveWorker === true,
         executionMode: "handoff_only",
       },
       initialStatus: last.status,
@@ -1364,19 +1351,16 @@ export class FlowWorkRuntime {
           last = await this.advanceIssue(sessionId, confirmationId);
           continue;
         }
-        if (!options.autoApproveWorker) return this.autoFlowResult(last, steps, workerResults);
-        this.debug("autoflow.confirmation.approve", { sessionId, step, action, confirmationId });
-        last = await this.advanceIssue(sessionId, confirmationId);
-        continue;
+        return this.autoFlowResult(last, steps, workerResults);
       }
 
-      if (last.status === "execution_handoff" || last.status === "worker_requested") {
+      if (last.status === "execution_handoff") {
         this.debug("autoflow.execution_handoff.ready", {
           sessionId,
           step,
-          issueRef: last.workerRequest?.issueRef,
-          repoKey: last.workerRequest?.repoKey,
-          workspacePath: last.workerRequest?.workspacePath,
+          issueRef: last.handoffRequest?.issueRef,
+          repoKey: last.handoffRequest?.repoKey,
+          workspacePath: last.handoffRequest?.workspacePath,
         });
         return this.autoFlowResult(last, steps, workerResults);
       }
@@ -1677,7 +1661,7 @@ export class FlowWorkRuntime {
 
     const taskId = input.taskId ??
       latestActiveRun?.taskId ??
-      stringFromRecord(targetJob?.input, "workerTaskId") ??
+      stringFromRecord(targetJob?.input, "handoffTaskId") ??
       createId("worker-local");
     const completedAt = input.completedAt ?? nowIso();
     let adoptedRun: WorkerRunRecord | undefined;
@@ -1765,7 +1749,7 @@ export class FlowWorkRuntime {
       type: "worker.live_adopted",
       issueRef: adoptedWithJob.issueRef,
       message: `Live agent thread adopted execution handoff ${adoptedWithJob.id}.`,
-      payload: { workerRequest: adoptedWithJob, adopter: options.adopter },
+      payload: { handoffRequest: adoptedWithJob, adopter: options.adopter },
     });
     this.debug("worker.live_adopted", {
       sessionId,
@@ -1798,20 +1782,20 @@ export class FlowWorkRuntime {
       advanced = await this.advanceIssue(sessionId, nextPending.id);
     }
 
-    if ((advanced.status !== "execution_handoff" && advanced.status !== "worker_requested") || !advanced.workerRequest) {
-      throw new Error(`No Work Runtime-created Worker request is available to adopt. Current state: ${advanced.status}.`);
+    if (advanced.status !== "execution_handoff" || !advanced.handoffRequest) {
+      throw new Error(`No Work Runtime-created handoff request is available to adopt. Current state: ${advanced.status}.`);
     }
 
     return this.adoptLiveWorker(
       sessionId,
       {
-        id: advanced.workerRequest.id,
-        issueRef: advanced.workerRequest.issueRef,
-        repoKey: advanced.workerRequest.repoKey,
-        workJobId: advanced.workerRequest.workJobId,
-        prompt: advanced.workerRequest.prompt,
-        workspacePath: advanced.workerRequest.workspacePath,
-        createdAt: advanced.workerRequest.createdAt ?? nowIso(),
+        id: advanced.handoffRequest.id,
+        issueRef: advanced.handoffRequest.issueRef,
+        repoKey: advanced.handoffRequest.repoKey,
+        workJobId: advanced.handoffRequest.workJobId,
+        prompt: advanced.handoffRequest.prompt,
+        workspacePath: advanced.handoffRequest.workspacePath,
+        createdAt: advanced.handoffRequest.createdAt ?? nowIso(),
       },
       options,
     );
@@ -1826,13 +1810,12 @@ export class FlowWorkRuntime {
 
   private async ensureWorkerWorkJob(sessionId: string, request: WorkerTaskRequest): Promise<WorkerTaskRequest & { workJobId: string }> {
     if (request.workJobId) return { ...request, workJobId: request.workJobId };
-    const executionMode = request.executor === WorkerExecutorValue.LiveAgentThread ? ExecutionModeValue.LocalThread : ExecutionModeValue.Background;
     const job = await this.submitWorkEnvelope(sessionId, [
       "---",
       `workType: ${this.workTypeForCategory("implement")}`,
       `issueRef: ${request.issueRef}`,
       `repoKey: ${request.repoKey}`,
-      `executionMode: ${executionMode}`,
+      `executionMode: ${ExecutionModeValue.LocalThread}`,
       `idempotencyKey: ${request.issueRef}:${request.repoKey}:${request.id}`,
       "---",
       request.prompt,
@@ -1859,7 +1842,7 @@ export class FlowWorkRuntime {
         job.status !== "cancelled" &&
         job.input &&
         typeof job.input === "object" &&
-        (job.input as { workerTaskId?: unknown }).workerTaskId === result.taskId
+        (job.input as { handoffTaskId?: unknown }).handoffTaskId === result.taskId
       );
     if (matchingJob) return matchingJob.id;
 
@@ -2445,8 +2428,7 @@ export class FlowWorkRuntime {
       workerResults,
       session: last.session,
       issue: last.issue,
-      workerRequest: last.workerRequest,
-      executionContext: last.executionContext,
+      handoffRequest: last.handoffRequest,
     };
   }
 
@@ -2513,16 +2495,16 @@ export class FlowWorkRuntime {
       issueRef: issue.ref,
       repoKey,
       workType,
-      executionMode: "background",
+      executionMode: ExecutionModeValue.LocalThread,
       idempotencyKey: `${issue.ref}:${repoKey}:${workerId}`,
       body: prompt,
       metadata: {
         workspacePath: worktreePathForRepo(issue, repoKey),
-        workerTaskId: workerId,
+        handoffTaskId: workerId,
       },
       requiredCapabilities: [],
     });
-    const workerRequest = {
+    const handoffRequest = {
       id: workerId,
       issueRef: issue.ref,
       repoKey,
@@ -2538,18 +2520,17 @@ export class FlowWorkRuntime {
     await this.ledger.writeIssue({ ...issue, state: "running" });
       await this.store.appendEvent({
         sessionId: session.id,
-        type: "worker.requested",
+        type: "handoff.requested",
         issueRef: issue.ref,
         message: `Execution handoff requested for ${issue.ref} in ${repoKey}.`,
-        payload: { workerRequest },
+        payload: { handoffRequest },
       });
       return {
         status: "execution_handoff",
         session: updatedSession,
         issue,
-        message: `Record result for execution handoff ${workerRequest.id}.`,
-        workerRequest,
-        executionContext: workerRequest,
+        message: `Record result for execution handoff ${handoffRequest.id}.`,
+        handoffRequest,
       };
   }
 
@@ -3267,7 +3248,7 @@ function liveWorkerAdoptionSummary(adopter?: string): string {
 }
 
 function isExecutionHandoffAction(action: string | undefined): boolean {
-  return action === "request_execution" || action === "spawn_worker";
+  return action === "request_execution";
 }
 
 function branchKindFromJiraIssueType(issueType: unknown): BranchKind | undefined {
@@ -3315,17 +3296,14 @@ function buildWorkerPrompt(issue: WorkItem, repoKey: string): string {
   const workspacePath = worktreePathForRepo(issue, repoKey);
   const branch = branchForRepo(issue, repoKey);
   return [
-    `Work ${issue.ref} in ${repoKey}.`,
+    "Use Flow to work this prompt.",
+    "",
+    `Issue: ${issue.ref}`,
     `Title: ${issue.title}`,
-    issue.summary ? `Issue context:\n${issue.summary}` : undefined,
+    `Repo key: ${repoKey}`,
+    issue.summary ? `Context: ${issue.summary}` : undefined,
     workspacePath ? `Prepared workspace: ${workspacePath}` : undefined,
     branch ? `Branch: ${branch}` : undefined,
-    "Use only the prepared workspace.",
-    "Read AGENTS.md before editing.",
-    `You may call flow_record_worker_progress for task-scoped progress only. Do not write issue phase or review readiness directly.`,
-    "Implement the smallest correct change for this issue. Do not commit.",
-    "Run the smallest useful verification command you can.",
-    'Return only a JSON object: {"status":"succeeded|blocked|failed","summary":"...","changedFiles":[],"testsRun":[],"blockers":[],"nextPickup":"...","handoffPrompt":"...","evidenceCandidate":"..."}',
   ].filter(Boolean).join("\n");
 }
 
@@ -3335,31 +3313,22 @@ function buildReviewRemediationWorkerPrompt(
   findings: ReadinessFinding[],
 ): string {
   return [
-    buildWorkerPrompt(issue, repoKey),
+    "Use Flow to work this prompt.",
     "",
-    "Review remediation target:",
-    "Address only the PR review blockers listed below. Keep the change narrow and do not resolve needs-confirmation items unless the fix is directly required by a must-fix.",
+    `Issue: ${issue.ref}`,
+    `Title: ${issue.title}`,
+    `Repo key: ${repoKey}`,
+    worktreePathForRepo(issue, repoKey) ? `Prepared workspace: ${worktreePathForRepo(issue, repoKey)}` : undefined,
+    branchForRepo(issue, repoKey) ? `Branch: ${branchForRepo(issue, repoKey)}` : undefined,
+    "",
+    "Prompt: address these review findings.",
     ...findings.map((finding, index) =>
       [
         `${index + 1}. ${finding.summary}`,
         finding.detail ? finding.detail : undefined,
       ].filter(Boolean).join("\n")
     ),
-    "After editing, run the smallest verification command that covers the remediated review feedback.",
-  ].join("\n");
-}
-
-function withLiveWorkerHandoffPrompt(
-  sessionId: string,
-  request: WorkerTaskRequest,
-  result: WorkerTaskResult,
-): WorkerTaskResult {
-  if (result.status !== "blocked" && result.status !== "failed") return result;
-  if (result.handoffPrompt?.trim()) return result;
-  return {
-    ...result,
-    handoffPrompt: buildLiveWorkerHandoffPrompt(sessionId, request, result),
-  };
+  ].filter(Boolean).join("\n");
 }
 
 function buildLegacyLiveWorkerHandoffPrompt(
@@ -3387,36 +3356,17 @@ function buildLiveWorkerHandoffPrompt(
 ): string {
   const blockers = result.blockers.length ? result.blockers.map((blocker) => `- ${blocker}`).join("\n") : "- No structured blocker was recorded.";
   return [
-    `You are a local-thread executor for Flow issue ${request.issueRef}.`,
-    `Name this thread "${threadTitleForHandoff(request)}".`,
-    "",
-    "Work through Flow. First reconcile/adopt this executor task using the metadata below, then keep going until Flow reports a real blocker or the work is review-ready.",
+    "Use Flow to work this prompt.",
     "",
     "Flow context:",
     `- Flow session: ${sessionId}`,
-    `- Executor task: ${request.id}`,
+    `- Handoff: ${request.id}`,
     `- Repo key: ${request.repoKey}`,
     request.workspacePath ? `- Last known worktree: ${request.workspacePath}` : "- Last known worktree: missing",
-    `- Prior executor status: ${result.status}`,
-    `- Prior executor summary: ${result.summary}`,
+    `- Prior status: ${result.status}`,
+    `- Prior summary: ${result.summary}`,
     "- Prior blockers:",
     blockers,
-    "",
-    "If Flow asks for an adoption payload:",
-    "```json",
-    JSON.stringify({
-      sessionId,
-      id: request.id,
-      issueRef: request.issueRef,
-      repoKey: request.repoKey,
-      workJobId: request.workJobId,
-      prompt: request.prompt,
-      workspacePath: request.workspacePath,
-      createdAt: request.createdAt,
-      adopter: "local_agent_thread",
-      summary: `Local agent thread took over after ${result.status} background executor result.`,
-    }, null, 2),
-    "```",
     "",
     "Requested work:",
     "```text",

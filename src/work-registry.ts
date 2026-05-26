@@ -1,5 +1,4 @@
 import {
-  WorkerExecutorValue,
   WorkJobExecutorValue,
   type WorkerExecutor,
   type WorkJobExecutor,
@@ -93,37 +92,25 @@ export function createDefaultFlowWorkTypeRegistry(): WorkTypeRegistry {
         workType: "flow.implement",
         category: "implement",
         requiredCapabilities: [],
-        allowedExecutors: [WorkJobExecutorValue.PiWorker, WorkJobExecutorValue.LiveAgentThread, WorkJobExecutorValue.CodexWorker],
+        allowedExecutors: [WorkJobExecutorValue.LiveAgentThread],
         outputType: "worker_result",
       },
       {
         workType: "flow.remediate",
         category: "remediate",
         requiredCapabilities: [],
-        allowedExecutors: [WorkJobExecutorValue.PiWorker, WorkJobExecutorValue.LiveAgentThread, WorkJobExecutorValue.CodexWorker],
+        allowedExecutors: [WorkJobExecutorValue.LiveAgentThread],
         outputType: "worker_result",
       },
       {
         workType: "flow.verify",
         category: "verify",
         requiredCapabilities: [],
-        allowedExecutors: [WorkJobExecutorValue.PiWorker, WorkJobExecutorValue.LiveAgentThread],
+        allowedExecutors: [WorkJobExecutorValue.LiveAgentThread],
         outputType: "evidence_result",
       },
     ],
     [
-      {
-        executor: WorkJobExecutorValue.PiWorker,
-        capabilities: ["code.edit", "test.run", "review.remediate"],
-        canSubmit: [],
-        outputs: ["worker_result", "blocked_result"],
-      },
-      {
-        executor: WorkJobExecutorValue.CodexWorker,
-        capabilities: ["code.edit", "test.run", "review.remediate"],
-        canSubmit: [],
-        outputs: ["worker_result", "blocked_result"],
-      },
       {
         executor: WorkJobExecutorValue.LiveAgentThread,
         capabilities: ["repo.worktree.prepare", "code.edit", "test.run", "review.remediate", "evidence.record"],
@@ -139,7 +126,6 @@ export function createDefaultFlowWorkTypeRegistry(): WorkTypeRegistry {
   );
 }
 
-export function workerExecutorToWorkExecutor(executor: WorkerExecutor | undefined): WorkJobExecutor {
-  if (executor === WorkerExecutorValue.Codex) return WorkJobExecutorValue.CodexWorker;
-  return executor === WorkerExecutorValue.LiveAgentThread ? WorkJobExecutorValue.LiveAgentThread : WorkJobExecutorValue.PiWorker;
+export function workerExecutorToWorkExecutor(_executor: WorkerExecutor | undefined): WorkJobExecutor {
+  return WorkJobExecutorValue.LiveAgentThread;
 }
