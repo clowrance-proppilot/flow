@@ -569,6 +569,7 @@ export default function (pi: ExtensionAPI) {
       repo: Type.String(),
       number: Type.Number(),
       url: Type.String(),
+      headRefName: Type.Optional(Type.String()),
       isDraft: Type.Boolean(),
       checksPassing: Type.Optional(Type.Boolean()),
     }),

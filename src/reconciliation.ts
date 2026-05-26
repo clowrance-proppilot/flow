@@ -61,6 +61,13 @@ export class ReconciliationEngine {
     return normalizeRepoKey(repoName);
   }
 
+  private repoNameForKey(repoKey: string): string {
+    const normalized = normalizeRepoKey(repoKey);
+    return this.topology.isValidRepoKey(normalized)
+      ? this.topology.repoName(normalized)
+      : normalized.replace(/_/g, "-");
+  }
+
   async reconcile(
     issue: WorkItem,
     pullRequestsByRepo?: PullRequestsByRepo,
@@ -74,7 +81,9 @@ export class ReconciliationEngine {
     if (repoKeys.length === 0) {
       repoKeys = await this.discoverRepoKeysFromOpenPullRequests(issue.ref, pullRequestsByRepo);
       changed = repoKeys.length > 0;
-    } else if (issue.repoKeys.length === 0) {
+    }
+    const routedRepoKeys = repoKeys.filter((repoKey) => this.topology.isValidRepoKey(normalizeRepoKey(repoKey)));
+    if (issue.repoKeys.length === 0 && routedRepoKeys.length > 0) {
       changed = true;
     }
 
@@ -84,7 +93,7 @@ export class ReconciliationEngine {
       changed = true;
     }
 
-    for (const repoKey of repoKeys) {
+    for (const repoKey of routedRepoKeys) {
       const repoMetadata = await this.reconcileRepo(issue, repoKey, metadata, pullRequestsByRepo);
       if (Object.keys(repoMetadata).length > 0) {
         Object.assign(metadata, repoMetadata);
@@ -95,7 +104,7 @@ export class ReconciliationEngine {
     const aggregatePrMetadata = aggregatePullRequestMetadata(
       metadata,
       repoKeys,
-      (k) => this.topology.repoName(k),
+      (k) => this.repoNameForKey(k),
     );
     if (Object.keys(aggregatePrMetadata).length > 0) {
       Object.assign(metadata, aggregatePrMetadata);
@@ -116,8 +125,9 @@ export class ReconciliationEngine {
 
     const state = externallyDrivenState(issue.state, metadata);
     if (!changed && state === issue.state) return issue;
-    if (!persist) return { ...issue, repoKeys, state, metadata };
-    return this.ledger.writeIssue({ ...issue, repoKeys, state, metadata });
+    const persistedRepoKeys = issue.repoKeys.length ? issue.repoKeys : routedRepoKeys;
+    if (!persist) return { ...issue, repoKeys: persistedRepoKeys, state, metadata };
+    return this.ledger.writeIssue({ ...issue, repoKeys: persistedRepoKeys, state, metadata });
   }
 
   async reconcileSafely(
@@ -166,7 +176,7 @@ export class ReconciliationEngine {
     for (const issue of issues) {
       const repoKeys = issue.repoKeys.length ? issue.repoKeys : inferredRepoKeys(issue.metadata, (n) => this.repoKeyFromRepoName(n));
       for (const repoKey of repoKeys) {
-        repoNames.add(this.topology.repoName(repoKey));
+        repoNames.add(this.repoNameForKey(repoKey));
       }
     }
     if (repoNames.size === 0) return undefined;
@@ -240,7 +250,7 @@ export class ReconciliationEngine {
   ): Promise<Record<string, unknown>> {
     if (!this.collaboration?.getPullRequest && !pullRequestsByRepo) return {};
     const updates: Record<string, unknown> = {};
-    const snapshots = collectPullRequestSnapshots(metadata, repoKeys, (k) => this.topology.repoName(k));
+    const snapshots = collectPullRequestSnapshots(metadata, repoKeys, (k) => this.repoNameForKey(k));
     for (const snapshot of snapshots) {
       const repo = snapshot.repo ?? repoFromPullRequestUrl(snapshot.url);
       const number = snapshot.number;

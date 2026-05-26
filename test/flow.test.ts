@@ -3522,14 +3522,55 @@ test("Work Runtime records pull request metadata", async () => {
     repo: "app-api",
     number: 1401,
     url: "https://github.com/ExampleOrg/app-api/pull/1401",
+    headRefName: "feature/issue-14-test",
     isDraft: true,
   });
 
   const issue = await ledger.readIssue("ISSUE-14");
   assert.equal(issue?.metadata.prUrl, "https://github.com/ExampleOrg/app-api/pull/1401");
+  assert.equal(issue?.metadata.prHeadRefName, "feature/issue-14-test");
+  assert.equal(issue?.metadata["workflow.repos.app_api.pr_head_ref_name"], "feature/issue-14-test");
   assert.equal(issue?.metadata.prIsDraft, true);
   assert.equal(issue?.metadata["workflow.repos.app_api.head_sha"], "abc123");
   assert.equal(issue?.metadata["workflow.repos.app_api.dirty"], false);
+});
+
+test("Work Runtime records pull request metadata for repos outside configured topology", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+  });
+  const session = await workRuntime.createSession("session-pr-external-record");
+  await workRuntime.selectIssue(session.id, {
+    ref: "ISSUE-15407",
+    title: "External PR metadata",
+    repoKeys: [],
+    state: "queued",
+    metadata: {
+      prRepo: "fs-python",
+      prNumber: 1416,
+      prUrl: "https://github.com/ExampleOrg/fs-python/pull/1416",
+      "workflow.repos.fs_python.pr_repo": "fs-python",
+      "workflow.repos.fs_python.pr_number": 1416,
+      "workflow.repos.fs_python.pr_url": "https://github.com/ExampleOrg/fs-python/pull/1416",
+    },
+  });
+
+  await workRuntime.recordPullRequest(session.id, {
+    issueRef: "ISSUE-15407",
+    repo: "fs-python",
+    number: 1416,
+    url: "https://github.com/ExampleOrg/fs-python/pull/1416",
+    headRefName: "feature/issue-15407-sedona",
+    isDraft: true,
+  });
+
+  const issue = await ledger.readIssue("ISSUE-15407");
+  assert.deepEqual(issue?.repoKeys, []);
+  assert.equal(issue?.metadata.prHeadRefName, "feature/issue-15407-sedona");
+  assert.equal(issue?.metadata["workflow.repos.fs_python.pr_head_ref_name"], "feature/issue-15407-sedona");
 });
 
 test("Work Runtime reconciliation adopts matching pull request into Beads state", async () => {

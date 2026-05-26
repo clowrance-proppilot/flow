@@ -2260,6 +2260,7 @@ export class FlowWorkRuntime {
       repo: string;
       number: number;
       url: string;
+      headRefName?: string;
       isDraft: boolean;
       checksPassing?: boolean;
       reviewDecision?: string;
@@ -2279,7 +2280,7 @@ export class FlowWorkRuntime {
           number: record.number,
           title: "",
           url: record.url,
-          headRefName: "",
+          headRefName: record.headRefName ?? "",
           isDraft: record.isDraft,
           checksPassing: record.checksPassing,
           reviewDecision: record.reviewDecision,
