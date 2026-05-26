@@ -805,6 +805,19 @@ export class FlowWorkRuntime {
     );
   }
 
+  async inspectIssue(issueRef: string): Promise<WorkItem> {
+    if (this.issueTracker?.viewIssue) {
+      const issue = await this.issueTracker.viewIssue(issueRef);
+      const existing = await this.ledger.readIssue(issue.key);
+      const projected = this.mergeJiraQueueIssue(issue, existing);
+      return this.reconcileExternalStateSafely(projected, undefined, { persist: false });
+    }
+
+    const issue = await this.ledger.readIssue(issueRef);
+    if (!issue) throw new Error(`Issue ${issueRef} was not found in the Flow ledger.`);
+    return this.reconcileExternalStateSafely(issue, undefined, { persist: false });
+  }
+
   async routeIssue(sessionId: string, issueRef: string, repoKeys: string[]): Promise<WorkItem> {
     const session = await this.requireSession(sessionId);
     const issue = await this.reconcileIssue(sessionId, issueRef);

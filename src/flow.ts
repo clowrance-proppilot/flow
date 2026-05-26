@@ -20,6 +20,7 @@ import {
   validateFlowConfig,
   verifyJsonlWorkflowLedger,
   type CreateIssueOptions,
+  type IssueTrackerProvider,
   type WorkerExecutor,
   type WorkerStatus,
   type WorkItem,
@@ -38,6 +39,8 @@ const workflowLedger = createWorkflowLedger({
   adapter: configString(flowConfig?.ledger, "type"),
   path: resolveWorkflowLedgerPath(),
 });
+const configuredIssueTracker: IssueTrackerProvider = createIssueTracker();
+const configuredCollaboration = createCollaboration();
 const rawWorkRuntimeMethods = [
   "inspectDashboardQueue",
   "inspectQueue",
@@ -70,8 +73,8 @@ const rawWorkRuntimeMethods = [
 const runtime = new FlowWorkRuntime({
   store: new FlowStore({ root: resolveRuntimeStorePath() }),
   ledger: workflowLedger,
-  collaboration: createCollaboration(),
-  issueTracker: createIssueTracker(),
+  collaboration: configuredCollaboration,
+  issueTracker: configuredIssueTracker,
   defaultJiraProjectKey: configString(flowConfig?.issueTracker, "projectKey"),
   autoflowBlockedThreshold: flowConfig?.runtime?.autoflowBlockedThreshold,
   debugEnabled: flowConfig?.runtime?.debug,
@@ -179,6 +182,7 @@ async function handleLedgerRequest(request: Record<string, unknown>): Promise<un
 
 async function handleIssueRequest(request: Record<string, unknown>): Promise<unknown> {
   const mode = requireString(request, "mode");
+  if (mode === "view") return runtime.inspectIssue(requireId(request));
   const activeSessionId = sessionId(request);
   await ensureSession(activeSessionId);
   switch (mode) {
@@ -214,7 +218,7 @@ async function handleIssueRequest(request: Record<string, unknown>): Promise<unk
         baseBranch: optionalString(request, "baseBranch"),
       });
     default:
-      throw badMode("issue", mode, ["select", "create", "route", "adoptBranch", "adoptWorkspace"]);
+      throw badMode("issue", mode, ["view", "select", "create", "route", "adoptBranch", "adoptWorkspace"]);
   }
 }
 
@@ -316,7 +320,7 @@ function flowManifest(target?: string) {
         bootstrap: "Create Flow config from repo metadata.",
         config: "Validate or explain Flow config.",
         ledger: "Verify workflow ledger.",
-        issue: "Create, select, or adopt issue/workspace state.",
+        issue: "Inspect, create, select, or adopt issue/workspace state through the configured issue tracker.",
         workflow: "Advance, audit, autoflow, record, or observe workflow state.",
         runtime: "Call a raw Work Runtime method by name.",
       },
@@ -337,8 +341,16 @@ function flowManifest(target?: string) {
   if (target === "issue") {
     return {
       target,
-      modes: ["select", "create", "route", "adoptBranch", "adoptWorkspace"],
+      issueTracker: issueTrackerManifest(),
+      recommendedAgentFlow: [
+        "If the user gives an issue id, call issue view first.",
+        "Use queue/backlog for active configured-tracker work discovery.",
+        "Use create only when the user asks to create new tracked work.",
+        "Use adoptBranch/adoptWorkspace for local work that should stay Flow-local until published.",
+      ],
+      modes: ["view", "select", "create", "route", "adoptBranch", "adoptWorkspace"],
       examples: [
+        { op: "issue", mode: "view", id: issueRefExample() },
         { op: "issue", mode: "select", id: "FLOW-123" },
         { op: "issue", mode: "route", id: "FLOW-123", repoKeys: ["main"] },
         { op: "issue", mode: "adoptWorkspace", id: "FLOW-123", repoKey: "main", worktreePath: "/path/to/worktree" },
@@ -377,6 +389,33 @@ function flowManifest(target?: string) {
       targets: ["workflow", "issue", "runtime", "config", "layout"],
     },
   };
+}
+
+function issueTrackerManifest() {
+  const issueTracker = flowConfig?.issueTracker;
+  const type = configString(issueTracker, "type") ?? "local";
+  const capabilities = configuredIssueTracker.capabilities;
+  return {
+    type,
+    refHint: issueRefExample(),
+    sourceOfTruth: ".flow/config.yaml",
+    capabilities: {
+      view: typeof configuredIssueTracker.getIssue === "function",
+      queue: typeof configuredIssueTracker.fetchActiveQueue === "function",
+      backlog: typeof configuredIssueTracker.fetchBacklogQueue === "function",
+      create: Boolean(capabilities?.canCreateIssues && configuredIssueTracker.createIssue),
+      transition: Boolean(capabilities?.canTransitionIssues && configuredIssueTracker.transitionIssue),
+      comments: Boolean(capabilities?.canPostComments && configuredIssueTracker.postComment),
+      planningLane: Boolean(capabilities?.canManageActivePlanningLane && configuredIssueTracker.moveIssuesToActivePlanningLane),
+    },
+  };
+}
+
+function issueRefExample(): string {
+  const type = configString(flowConfig?.issueTracker, "type") ?? "local";
+  if (type === "github" || type === "github_issues") return "GH-123";
+  if (type === "jira") return `${configString(flowConfig?.issueTracker, "projectKey") ?? "PROJ"}-123`;
+  return `${configString(flowConfig?.issueTracker, "prefix") ?? "FLOW"}-123`;
 }
 
 async function ensureSession(sessionId: string): Promise<void> {

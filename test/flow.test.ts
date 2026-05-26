@@ -390,6 +390,26 @@ test("Flow CLI core works with only git available on PATH", async () => {
     issueType: "Task",
   });
   assert.equal(issue.title, "Git-only Flow core");
+
+  const manifest = await callFlow({ op: "manifest", target: "issue" });
+  const issueTrackerManifest = manifest.issueTracker as Record<string, unknown>;
+  assert.deepEqual(manifest.modes, ["view", "select", "create", "route", "adoptBranch", "adoptWorkspace"]);
+  assert.equal(issueTrackerManifest.type, "local");
+  assert.match(String(issueTrackerManifest.refHint), /^FLOW-GIT-ONLY-[A-Z0-9]+-123$/);
+  assert.equal(issueTrackerManifest.sourceOfTruth, ".flow/config.yaml");
+  assert.deepEqual(issueTrackerManifest.capabilities, {
+    view: true,
+    queue: true,
+    backlog: true,
+    create: true,
+    transition: true,
+    comments: true,
+    planningLane: false,
+  });
+
+  const viewed = await callFlow({ op: "issue", mode: "view", id: issue.ref });
+  assert.equal(viewed.ref, issue.ref);
+  assert.equal(viewed.title, "Git-only Flow core");
 });
 
 test("Flow config bootstrap can keep repo-local config in local git exclude", async () => {
@@ -1562,6 +1582,44 @@ test("Work Runtime accepts pure issue tracker providers", async () => {
   assert.equal(queue[0].metadata.issueStatus, "Ready for Dev");
   assert.equal(queue[0].metadata.issueType, "story");
   assert.equal(queue[0].metadata.jiraStatus, undefined);
+});
+
+test("Work Runtime inspects a configured issue tracker issue without writing ledger state", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    projectRoot: "/repo",
+    issueTracker: {
+      capabilities: {
+        canCreateIssues: false,
+        canTransitionIssues: false,
+        canPostComments: false,
+        canManageActivePlanningLane: false,
+      },
+      async getIssue(ref) {
+        return {
+          ref,
+          title: "Provider issue view",
+          status: "Ready for Dev",
+          statusCategory: "To Do",
+          type: "story",
+          url: `https://tracker.example/${ref}`,
+          labels: ["app-api"],
+        };
+      },
+    },
+  });
+
+  const issue = await workRuntime.inspectIssue("ISSUE-901");
+  const stored = await ledger.readIssue("ISSUE-901");
+
+  assert.equal(issue.ref, "ISSUE-901");
+  assert.equal(issue.title, "Provider issue view");
+  assert.deepEqual(issue.repoKeys, ["app_api"]);
+  assert.equal(issue.metadata.issueStatus, "Ready for Dev");
+  assert.equal(stored, undefined);
 });
 
 test("Work Runtime accepts pure source control providers", async () => {
