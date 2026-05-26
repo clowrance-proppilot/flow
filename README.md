@@ -63,6 +63,9 @@ npm run build
 npm run readiness:public
 ```
 
+Releases are published to npm from GitHub Releases. See
+[Releasing Flow](docs/releasing.md).
+
 More:
 
 - [Host integration](docs/host-integration.md)
