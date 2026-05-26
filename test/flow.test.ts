@@ -208,22 +208,6 @@ test("Flow config schema validates topology and adapter declarations", () => {
     }),
     /activeLabels must be an array/,
   );
-  assert.throws(() =>
-    flowConfigSchema.parse({
-      version: "1",
-      project: { name: "Bad dashboard theme" },
-      topology: {
-        repos: { main: { name: "example" } },
-      },
-      runtime: {
-        dashboard: {
-          themes: [{ id: "default", name: "Default", primary: "#111", primaryDark: "#000", primaryFg: "#fff" }],
-          defaultThemeId: "missing",
-        },
-      },
-    }),
-    /defaultThemeId must match/,
-  );
 });
 
 test("Flow config loader reads YAML and builds topology", async () => {
@@ -2611,10 +2595,117 @@ test("Work Runtime does not create typed work while a Worker is active for the i
   assert.equal(result.status, "blocked");
   assert.match(result.message, /Execution handoff is already active/);
   assert.equal(jobs.length, 0);
-  assert.equal(queue.find((issue) => issue.ref === "ISSUE-71")?.workflowState, "running");
+  assert.equal(queue.find((issue) => issue.ref === "ISSUE-71")?.workStatus, "Running");
 });
 
-test("Work Runtime blocked handoff includes paste-ready local-thread executor prompt", async () => {
+test("Dashboard queue mirrors provider-neutral issue status without provider URLs", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-dashboard-queue-"));
+  const ledger = new MemoryWorkflowLedger();
+  const issueUrl = "https://github.com/example/flow/issues/9";
+  const workRuntime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    issueTracker: {
+      capabilities: {
+        canCreateIssues: false,
+        canTransitionIssues: false,
+        canPostComments: false,
+        canManageActivePlanningLane: false,
+      },
+      async getIssue(ref) {
+        return {
+          ref,
+          title: "Mirror generic provider metadata",
+          status: "Open",
+          statusCategory: "To Do",
+          type: "task",
+          url: issueUrl,
+          labels: ["app_api"],
+        };
+      },
+      async fetchActiveQueue() {
+        return [{
+          ref: "GH-9",
+          title: "Mirror generic provider metadata",
+          status: "Open",
+          statusCategory: "To Do",
+          type: "task",
+          url: issueUrl,
+          labels: ["app_api"],
+        }];
+      },
+    },
+  });
+
+  const queue = await workRuntime.inspectDashboardQueue(10);
+
+  assert.equal(queue[0].ref, "GH-9");
+  assert.equal(queue[0].statusLabel, "Open");
+  assert.equal(Object.hasOwn(queue[0] as unknown as Record<string, unknown>, "issueUrl"), false);
+});
+
+test("Dashboard queue omits source-control and provider internals", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-dashboard-public-contract-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  await ledger.writeIssue({
+    ref: "ISSUE-80",
+    title: "Prepared local workspace",
+    repoKeys: ["app_api"],
+    state: "ready_to_run",
+    metadata: {
+      "workflow.repos.app_api.branch": "feature/issue-80-work",
+      "workflow.repos.app_api.head_sha": "abc123",
+      "workflow.repos.app_api.worktree_path": "/repo/app-api/.worktrees/feature-issue-80-work",
+    },
+  });
+
+  const queue = await workRuntime.inspectDashboardQueue(10);
+  const issue = queue.find((candidate) => candidate.ref === "ISSUE-80") as Record<string, unknown> | undefined;
+
+  assert.ok(issue);
+  assert.equal(Object.hasOwn(issue, "branch"), false);
+  assert.equal(Object.hasOwn(issue, "repoKeys"), false);
+  assert.deepEqual(issue.repositories, ["app_api"]);
+  assert.equal(Object.hasOwn(issue, "headSha"), false);
+  assert.equal(Object.hasOwn(issue, "worktreePath"), false);
+  assert.equal(Object.hasOwn(issue, "issueUrl"), false);
+  assert.equal(Object.hasOwn(issue, "prUrl"), false);
+});
+
+test("Dashboard queue mirrors the current session selection", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-dashboard-session-"));
+  const ledger = new MemoryWorkflowLedger();
+  const store = new FlowStore({ root });
+  const workRuntime = testWorkRuntime({ store, ledger });
+  await ledger.writeIssue({
+    ref: "ISSUE-1",
+    title: "Stale selected issue",
+    repoKeys: ["app_api"],
+    state: "selected",
+    metadata: {},
+  });
+  await ledger.writeIssue({
+    ref: "ISSUE-2",
+    title: "Current session issue",
+    repoKeys: ["app_api"],
+    state: "ready_to_run",
+    metadata: {},
+  });
+  const session = await workRuntime.createSession("session-dashboard-selection");
+  await store.writeSession({
+    ...session,
+    selectedIssueRef: "ISSUE-2",
+    selectedRepoKey: "app_api",
+  });
+
+  const queue = await workRuntime.inspectDashboardQueue(10, session.id);
+
+  assert.equal(queue.find((issue) => issue.ref === "ISSUE-1")?.workStatus, "Queued");
+  assert.equal(queue.find((issue) => issue.ref === "ISSUE-2")?.workStatus, "Active");
+});
+
+test("Work Runtime blocked handoff includes copy-ready handoff prompt", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
   const ledger = new MemoryWorkflowLedger();
   const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
@@ -2646,7 +2737,7 @@ test("Work Runtime blocked handoff includes paste-ready local-thread executor pr
   const advanced = await workRuntime.advanceIssue(session.id);
 
   assert.equal(advanced.status, "blocked");
-  assert.match(advanced.message, /Paste-ready local-thread executor prompt/);
+  assert.match(advanced.message, /Copy-ready handoff prompt/);
   assert.match(advanced.message, /Take over ISSUE-77 from Flow/);
 });
 
@@ -2694,7 +2785,7 @@ test("Work Runtime blocked message suppresses obsolete satisfied PR executor pro
   assert.match(advanced.message, /Auto review requires confirmation/);
   assert.doesNotMatch(advanced.message, /1406/);
   assert.doesNotMatch(advanced.message, /provider credentials/);
-  assert.doesNotMatch(advanced.message, /Paste-ready local-thread executor prompt/);
+  assert.doesNotMatch(advanced.message, /Copy-ready handoff prompt/);
 });
 
 test("Work Runtime synthesizes paste-ready handoff for existing blocked handoffs", async () => {
@@ -2728,7 +2819,7 @@ test("Work Runtime synthesizes paste-ready handoff for existing blocked handoffs
   const advanced = await workRuntime.advanceIssue(session.id);
 
   assert.equal(advanced.status, "blocked");
-  assert.match(advanced.message, /Paste-ready local-thread executor prompt/);
+  assert.match(advanced.message, /Copy-ready handoff prompt/);
   assert.match(advanced.message, /Use Flow to work this prompt/);
   assert.doesNotMatch(advanced.message, /Direct Jira\/GitHub/);
   assert.match(advanced.message, /feature-issue-78/);

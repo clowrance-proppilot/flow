@@ -17,7 +17,7 @@ issueTracker:
   type: "github"
   owner: "camden-lowrance"
   repo: "flow"
-  assignee: "@me"
+  assignee: "*"
 
 collaboration:
   type: "github"

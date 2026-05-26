@@ -163,7 +163,6 @@ async function handleConfigRequest(request: Record<string, unknown>): Promise<un
             host: config.runtime.dashboard.host,
             port: config.runtime.dashboard.port,
             url: config.runtime.dashboard.url,
-            defaultThemeId: config.runtime.dashboard.defaultThemeId,
           }
           : undefined,
       }
@@ -489,7 +488,7 @@ function extractIssueRef(values: Array<string | undefined>): string | undefined 
 async function dispatch(method: string, params: Record<string, unknown>): Promise<unknown> {
   switch (method) {
     case "inspectDashboardQueue":
-      return runtime.inspectDashboardQueue(Number(params.limit ?? 10));
+      return runtime.inspectDashboardQueue(Number(params.limit ?? 10), String(params.sessionId ?? defaultSessionId));
     case "inspectQueue":
       return runtime.inspectQueue(Number(params.limit ?? 10));
     case "inspectBacklog":

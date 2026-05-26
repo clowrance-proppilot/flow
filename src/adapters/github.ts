@@ -281,7 +281,7 @@ export class GhGitHubIssueTrackerAdapter implements IssueTrackerProvider {
   private readonly cwd: string;
   private readonly owner: string;
   private readonly repo: string;
-  private readonly assignee: string;
+  private readonly assignee?: string;
   private readonly activeLabels: string[];
   private readonly backlogLabels: string[];
 
@@ -289,7 +289,10 @@ export class GhGitHubIssueTrackerAdapter implements IssueTrackerProvider {
     this.cwd = options.cwd;
     this.owner = options.owner ?? "";
     this.repo = options.repo;
-    this.assignee = options.assignee ?? "@me";
+    const assignee = options.assignee?.trim();
+    this.assignee = assignee && assignee !== "*" && assignee.toLowerCase() !== "all"
+      ? assignee
+      : assignee ? undefined : "@me";
     this.activeLabels = options.activeLabels ?? [];
     this.backlogLabels = options.backlogLabels ?? [];
   }

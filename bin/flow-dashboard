@@ -15,7 +15,7 @@ if (process.argv.slice(2).some((arg) => arg === "--help" || arg === "-h" || arg 
     defaultUrl: "http://127.0.0.1:8767/dashboard",
     config: {
       path: ".flow/config.yaml",
-      keys: ["runtime.dashboard.host", "runtime.dashboard.port", "runtime.dashboard.customCssPath"],
+      keys: ["runtime.dashboard.host", "runtime.dashboard.port"],
     },
   })}\n`);
   process.exit(0);
@@ -127,13 +127,11 @@ function resolveEntry(candidates) {
 }
 
 function needsRuntimeBuild(entry) {
-  if (entry.includes(join("dist", "bin"))) return false;
   const entryMtime = statSync(entry).mtimeMs;
   return latestTypeScriptMtime(runtimeSourceDir) > entryMtime || latestExistingMtime(runtimeConfigFiles) > entryMtime;
 }
 
 function needsDashboardBuild(entry) {
-  if (entry.includes(join("dist", "dashboard"))) return false;
   const entryMtime = statSync(entry).mtimeMs;
   return latestPathMtime(dashboardSourceDir) > entryMtime || latestExistingMtime(dashboardConfigFiles) > entryMtime;
 }

@@ -57,20 +57,7 @@ export const serviceEndpointConfigSchema = z.object({
   url: z.string().min(1).optional(),
 }).catchall(z.unknown());
 
-export const dashboardThemeConfigSchema = z.object({
-  id: z.string().min(1),
-  name: z.string().min(1),
-  primary: z.string().min(1),
-  primaryDark: z.string().min(1),
-  primaryFg: z.string().min(1),
-});
-
-export const dashboardRuntimeConfigSchema = serviceEndpointConfigSchema.extend({
-  customCssPath: z.string().min(1).optional(),
-  themes: z.array(dashboardThemeConfigSchema).optional(),
-  defaultThemeId: z.string().min(1).optional(),
-  defaultMode: z.enum(["dark", "light"]).optional(),
-});
+export const dashboardRuntimeConfigSchema = serviceEndpointConfigSchema;
 
 export const runtimeConfigSchema = z.object({
   stateDir: z.string().min(1).optional(),
@@ -118,26 +105,6 @@ export const flowConfigSchema = z.object({
         code: "custom",
         path: ["topology", "pullRequestUrlPattern"],
         message: "topology.pullRequestUrlPattern must include {number}.",
-      });
-    }
-  }
-
-  const dashboard = config.runtime?.dashboard;
-  if (dashboard) {
-    const themeIds = dashboard.themes?.map((theme) => theme.id) ?? [];
-    const duplicateThemeId = themeIds.find((id, index) => themeIds.indexOf(id) !== index);
-    if (duplicateThemeId) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["runtime", "dashboard", "themes"],
-        message: `runtime.dashboard.themes contains duplicate id "${duplicateThemeId}".`,
-      });
-    }
-    if (dashboard.defaultThemeId && !themeIds.includes(dashboard.defaultThemeId)) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["runtime", "dashboard", "defaultThemeId"],
-        message: "runtime.dashboard.defaultThemeId must match a configured theme id.",
       });
     }
   }
@@ -229,5 +196,4 @@ export type TopologyConfig = z.infer<typeof topologyConfigSchema>;
 export type WorkTypeConfig = z.infer<typeof workTypeConfigSchema>;
 export type ExecutorConfig = z.infer<typeof executorConfigSchema>;
 export type RuntimeConfig = z.infer<typeof runtimeConfigSchema>;
-export type DashboardThemeConfig = z.infer<typeof dashboardThemeConfigSchema>;
 export type FlowConfig = z.infer<typeof flowConfigSchema>;

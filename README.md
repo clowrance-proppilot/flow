@@ -3,7 +3,7 @@
 Flow is workflow state for coding agents.
 
 Agents and adapters use its JSON contract for issue state, handoff, evidence,
-readiness, and closeout. Humans use the dashboard.
+readiness, and closeout. Humans use the read-only dashboard mirror.
 
 Flow does not replace the IDE, issue tracker, Git, PRs, CI, or agent runtime.
 It records handoff and results; it does not run agents.
@@ -19,7 +19,7 @@ Package: [@camden-lowrance/flow](https://www.npmjs.com/package/@camden-lowrance/
 
 ## Surfaces
 
-- `flow-dashboard`: human view.
+- `flow-dashboard`: read-only human view.
 - `flow`: JSON protocol for agents and adapters.
 
 ## Agent Contract

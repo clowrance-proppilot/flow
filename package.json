@@ -43,9 +43,10 @@
     "tsconfig.json"
   ],
   "scripts": {
-    "check": "npm run check:cli-contract && tsc -p tsconfig.json --noEmit",
+    "check": "npm run check:cli-contract && npm run check:dashboard-readonly && tsc -p tsconfig.json --noEmit",
+    "check:dashboard-readonly": "node scripts/check-dashboard-readonly.mjs",
     "check:cli-contract": "node scripts/check-flow-cli-contract.mjs",
-    "test": "npm run check:cli-contract && node scripts/test-flow.mjs",
+    "test": "npm run check:cli-contract && npm run check:dashboard-readonly && node scripts/test-flow.mjs",
     "build:flow": "tsc -p tsconfig.json",
     "build:dashboard": "vite build --config vite.dashboard.config.ts",
     "build": "npm run build:flow && npm run build:dashboard",

@@ -1,6 +1,7 @@
 # Host Integration
 
-Flow is embedded by agents and adapters. Humans use the dashboard.
+Flow is embedded by agents and adapters. Humans use the read-only dashboard
+mirror.
 
 Durable config belongs in `.flow/config.yaml`:
 
@@ -12,8 +13,9 @@ Durable config belongs in `.flow/config.yaml`:
 Do not use environment variables as the source of truth for durable workflow
 behavior.
 
-Flow records agent handoff and result state. It does not choose, launch, retry,
-or supervise agents.
+Flow records handoff prompts and result state. It does not choose, launch,
+retry, or supervise agents. A handoff prompt is a copy-ready pickup note for the
+next local agent thread.
 
 Minimal local config:
 

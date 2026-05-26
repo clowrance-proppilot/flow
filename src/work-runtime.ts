@@ -110,26 +110,17 @@ export interface ReadinessEvaluator {
 export interface DashboardQueueIssue {
   ref: string;
   title: string;
-  workflowState: WorkItem["state"];
-  issueStatus?: string;
-  issueUrl: string;
-  repoKeys: string[];
-  branch?: string;
-  headSha?: string;
-  worktreePath?: string;
-  prUrl?: string;
-  prIsDraft?: boolean;
-  prChecksPassing?: boolean;
-  prReviewDecision?: string;
-  humanReviewRequired?: boolean;
-  evidenceRecorded: boolean;
-  documentationRecorded: boolean;
-  autoflowAttempts: number;
-  autoflowAttemptLimit: number;
-  autoflowLastAttemptedAt?: string;
-  autoflowExhausted: boolean;
-  updatedAt?: string;
-  blockers: string[];
+  workStatus: string;
+  statusLabel?: string;
+  repositories: string[];
+  prStatus?: string;
+  reviewStatus?: string;
+  evidenceStatus: string;
+  documentationStatus: string;
+  updatedLabel?: string;
+  blockerLabels: string[];
+  nextPickup?: string;
+  handoffPrompt?: string;
 }
 
 export interface GitInspector {
@@ -738,10 +729,11 @@ export class FlowWorkRuntime {
     );
   }
 
-  async inspectDashboardQueue(limit = 10): Promise<DashboardQueueIssue[]> {
+  async inspectDashboardQueue(limit = 10, sessionId?: string): Promise<DashboardQueueIssue[]> {
     const issues = await this.inspectQueue(limit);
+    const session = sessionId ? await this.store.readSession(sessionId) : undefined;
+    const selectedIssueRef = session?.selectedIssueRef;
     return mapWithConcurrency(issues, workRuntimeQueueConcurrency(), async (issue) => {
-      const repoKey = issue.repoKeys[0] ?? "";
       const review = reviewMetadata(issue);
       const workerResults = await this.ledger.listWorkerResults(issue.ref);
       const assessment = await this.readiness.assess({
@@ -755,34 +747,23 @@ export class FlowWorkRuntime {
       const blockers = assessment.findings
         .filter((finding) => finding.severity === "blocker" || finding.severity === "warning")
         .map((finding) => finding.summary);
-      const autoflowAttempts = metadataNumber(issue.metadata["workflow.autoflow.attempts"]) ?? 0;
-      const autoflowAttemptLimit = this.autoflowBlockedThreshold;
       const activeWorkerRun = await this.latestActiveWorkerRun(issue.ref);
-      const workflowState = activeWorkerRun ? "running" : issue.state;
-      const autoflowExhausted = blockers.length > 0 && (hasHardAutoflowBlocker(blockers) || autoflowAttempts >= autoflowAttemptLimit);
+      const workflowState = activeWorkerRun ? "running" : dashboardWorkflowState(issue, selectedIssueRef);
+      const latestWorkerResult = workerResults.at(-1);
       return {
         ref: issue.ref,
         title: issue.title,
-        workflowState,
-        issueStatus: existingString(issue.metadata.jiraStatus),
-        issueUrl: existingString(issue.metadata.jiraUrl) ?? "",
-        repoKeys: issue.repoKeys,
-        branch: repoKey ? branchForRepo(issue, repoKey) : undefined,
-        headSha: repoKey ? existingString(issue.metadata[`workflow.repos.${normalizeRepoKey(repoKey)}.head_sha`]) : undefined,
-        worktreePath: repoKey ? worktreePathForRepo(issue, repoKey) : undefined,
-        prUrl: review?.prUrl,
-        prIsDraft: review?.isDraft,
-        prChecksPassing: review?.checksPassing,
-        prReviewDecision: existingString(issue.metadata.prReviewDecision),
-        humanReviewRequired: review?.humanReviewRequired,
-        evidenceRecorded: hasRecordedEvidence(issue),
-        documentationRecorded: hasRecordedDocumentation(issue),
-        autoflowAttempts,
-        autoflowAttemptLimit,
-        autoflowLastAttemptedAt: existingString(issue.metadata["workflow.autoflow.last_attempted_at"]),
-        autoflowExhausted,
-        updatedAt: issue.updatedAt,
-        blockers,
+        workStatus: dashboardWorkStatusLabel(workflowState),
+        statusLabel: issueTrackerStatus(issue),
+        repositories: issue.repoKeys.map((key) => dashboardRepositoryLabel(key)),
+        prStatus: review ? dashboardPullRequestStatus(review.isDraft, review.checksPassing) : undefined,
+        reviewStatus: review ? dashboardReviewStatus(existingString(issue.metadata.prReviewDecision), review.humanReviewRequired === true) : undefined,
+        evidenceStatus: dashboardRecordStatus(hasRecordedEvidence(issue)),
+        documentationStatus: dashboardRecordStatus(hasRecordedDocumentation(issue)),
+        updatedLabel: dashboardRelativeTime(issue.updatedAt),
+        blockerLabels: blockers.map((blocker) => dashboardBlockerLabel(blocker)),
+        nextPickup: latestWorkerResult?.nextPickup?.trim() || undefined,
+        handoffPrompt: latestWorkerResult?.handoffPrompt?.trim() || undefined,
       };
     });
   }
@@ -3081,6 +3062,72 @@ function selectedWorkflowState(issueState: WorkItem["state"], existingState?: Wo
   return "selected";
 }
 
+function dashboardWorkflowState(issue: WorkItem, selectedIssueRef?: string): WorkItem["state"] {
+  if (!selectedIssueRef) return issue.state;
+  if (issue.ref === selectedIssueRef) return "selected";
+  if (issue.state === "selected") return "queued";
+  return issue.state;
+}
+
+function dashboardWorkStatusLabel(state: WorkItem["state"]): string {
+  if (state === "queued") return "Queued";
+  if (state === "selected") return "Active";
+  if (state === "ready_to_run") return "Ready";
+  if (state === "running") return "Running";
+  if (state === "blocked") return "Blocked";
+  if (state === "awaiting_review") return "In Review";
+  if (state === "awaiting_human") return "Needs Input";
+  if (state === "done") return "Done";
+  return "Unknown";
+}
+
+function dashboardRepositoryLabel(repoKey: string): string {
+  return repoKey.trim() || "Unknown";
+}
+
+function dashboardBlockerLabel(blocker: string): string {
+  const value = blocker.trim();
+  if (!value) return "Blocked";
+  if (/worktree/i.test(value)) return "Local setup not ready.";
+  if (/pull request is missing/i.test(value)) return "Pull request missing.";
+  return value;
+}
+
+function dashboardRecordStatus(recorded: boolean): string {
+  return recorded ? "Present" : "Needed";
+}
+
+function dashboardRelativeTime(value: unknown): string | undefined {
+  const raw = existingString(value);
+  if (!raw) return undefined;
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return "Unknown";
+  const seconds = Math.max(0, Math.round((Date.now() - date.getTime()) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
+function dashboardPullRequestStatus(isDraft: unknown, checksPassing: unknown): string {
+  const parts = [isDraft === true ? "Draft" : isDraft === false ? "Ready" : "Present"];
+  if (checksPassing === true) parts.push("Checks pass");
+  if (checksPassing === false) parts.push("Checks fail");
+  return parts.join(" - ");
+}
+
+function dashboardReviewStatus(decision: unknown, humanReviewRequired: boolean): string {
+  const value = existingString(decision)?.toUpperCase() ?? "";
+  if (value === "APPROVED") return "Approved";
+  if (value === "CHANGES_REQUESTED") return "Changes requested";
+  if (value === "REVIEW_REQUIRED") return "Review required";
+  if (value === "COMMENTED" || value === "REVIEWED") return "Reviewed";
+  if (value) return "Review updated";
+  return humanReviewRequired ? "Review required" : "Pending";
+}
+
 function isJiraIssueTrackerIssue(issue: JiraIssue): boolean {
   return (issue as { source?: unknown }).source !== "unified";
 }
@@ -3218,10 +3265,6 @@ function stableHash(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
-function hasHardAutoflowBlocker(blockers: string[]): boolean {
-  return blockers.some((blocker) => /credential|provider/i.test(blocker));
-}
-
 function parseNeedsConfirmationDisposition(value: unknown): "accept" | "reject" | "defer" | undefined {
   if (value === "accept" || value === "reject" || value === "defer") return value;
   return undefined;
@@ -3246,7 +3289,7 @@ function blockedFindingsMessage(
     const nextPickup = latestWorker.nextPickup?.trim();
     if (nextPickup) parts.push(`Next action: ${nextPickup}`);
     const handoffPrompt = latestWorker.handoffPrompt?.trim() ?? buildLegacyLiveWorkerHandoffPrompt(sessionId, issue, latestWorker);
-    if (handoffPrompt) parts.push(`Paste-ready local-thread executor prompt:\n${handoffPrompt}`);
+    if (handoffPrompt) parts.push(`Copy-ready handoff prompt:\n${handoffPrompt}`);
   }
   return parts.join("\n\n");
 }
