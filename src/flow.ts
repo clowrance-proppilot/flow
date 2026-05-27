@@ -1,46 +1,30 @@
 #!/usr/bin/env node
 
 import {
-  AcliJiraAdapter,
-  assessIssue,
   bootstrapFlowConfig,
-  createWorkflowLedger,
-  configToProjectTopology,
-  configToWorkTypeRegistry,
-  FlowStore,
-  FlowWorkRuntime,
   GhGitHubAdapter,
   IssueStateValue,
   flowLayout,
-  flowRuntimePath,
-  flowWorkflowLedgerPath,
-  resolveFlowPath,
   terminalWorkerStatusValues,
   type AcceptanceCriterionEvidence,
   validateFlowConfig,
   verifyJsonlWorkflowLedger,
   type CreateIssueOptions,
-  type IssueTrackerProvider,
   type WorkerExecutor,
   type WorkerStatus,
   type WorkItem,
   workerExecutorValues,
 } from "./index.js";
-import { GhGitHubIssueTrackerAdapter } from "./adapters/github.js";
-import { LocalIssueTrackerAdapter, NoopCodeCollaborationAdapter } from "./adapters/local.js";
 import { repoRoot } from "./flow-runtime.js";
 import { JsonCliError, runJsonCli } from "./json-cli.js";
+import { createConfiguredWorkRuntime } from "./runtime-factory.js";
 
 const configValidation = await validateFlowConfig({ projectRoot: repoRoot });
-const flowConfig = configValidation.config;
+const configuredRuntime = createConfiguredWorkRuntime({ projectRoot: repoRoot, flowConfig: configValidation.config });
+const flowConfig = configuredRuntime.flowConfig;
 const defaultSessionId = configString(flowConfig?.runtime, "defaultSessionId") ?? "cli";
-const workflowLedger = createWorkflowLedger({
-  cwd: repoRoot,
-  adapter: configString(flowConfig?.ledger, "type"),
-  path: resolveWorkflowLedgerPath(),
-});
-const configuredIssueTracker: IssueTrackerProvider = createIssueTracker();
-const configuredCollaboration = createCollaboration();
+const workflowLedger = configuredRuntime.workflowLedger;
+const configuredIssueTracker = configuredRuntime.issueTracker;
 const rawWorkRuntimeMethods = [
   "inspectDashboardQueue",
   "inspectQueue",
@@ -70,23 +54,7 @@ const rawWorkRuntimeMethods = [
   "summarizeHandoff",
   "observeFlowSubject",
 ];
-const runtime = new FlowWorkRuntime({
-  store: new FlowStore({ root: resolveRuntimeStorePath() }),
-  ledger: workflowLedger,
-  collaboration: configuredCollaboration,
-  issueTracker: configuredIssueTracker,
-  defaultJiraProjectKey: configString(flowConfig?.issueTracker, "projectKey"),
-  autoflowBlockedThreshold: flowConfig?.runtime?.autoflowBlockedThreshold,
-  debugEnabled: flowConfig?.runtime?.debug,
-  ...(flowConfig
-    ? {
-      topology: configToProjectTopology(flowConfig),
-      workTypes: configToWorkTypeRegistry(flowConfig),
-    }
-    : {}),
-  projectRoot: repoRoot,
-  readiness: { assess: assessIssue },
-});
+const runtime = configuredRuntime.runtime;
 
 await runJsonCli({
   manifest: ({ target }) => flowManifest(target),
@@ -174,7 +142,7 @@ async function handleLedgerRequest(request: Record<string, unknown>): Promise<un
   const mode = optionalString(request, "mode") ?? "verify";
   if (mode !== "verify") throw badMode("ledger", mode, ["verify"]);
   return verifyJsonlWorkflowLedger(
-    optionalString(request, "path") ?? resolveWorkflowLedgerPath(),
+    optionalString(request, "path") ?? configuredRuntime.workflowLedgerPath,
     { rebuildProjections: Boolean(request.rebuildProjections) },
   );
 }
@@ -668,16 +636,6 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
   }
 }
 
-function resolveRuntimeStorePath(): string {
-  const configured = configString(flowConfig?.runtime, "storeDir") ?? configString(flowConfig?.runtime, "stateDir");
-  return configured ? resolveFlowPath(repoRoot, configured) : flowRuntimePath(repoRoot);
-}
-
-function resolveWorkflowLedgerPath(): string {
-  const configured = configString(flowConfig?.runtime, "workflowLedgerPath");
-  return configured ? resolveFlowPath(repoRoot, configured) : flowWorkflowLedgerPath(repoRoot);
-}
-
 function parseBootstrapStorage(value: unknown): "user" | "repo-untracked" | "repo-tracked" {
   if (value === "user" || value === "repo-untracked" || value === "repo-tracked") return value;
   throw new Error(`Expected bootstrap storage user, repo-untracked, or repo-tracked, got ${String(value)}.`);
@@ -794,52 +752,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function createIssueTracker() {
-  const issueTracker = flowConfig?.issueTracker;
-  const type = configString(issueTracker, "type") ?? "local";
-  if (type === "local") {
-    return new LocalIssueTrackerAdapter({
-      ledger: workflowLedger,
-      projectName: flowConfig?.project.name,
-      prefix: configString(issueTracker, "prefix"),
-    });
-  }
-  if (type === "github" || type === "github_issues") {
-    return new GhGitHubIssueTrackerAdapter({
-      cwd: repoRoot,
-      owner: configString(issueTracker, "owner") ?? configString(flowConfig?.collaboration, "owner"),
-      repo: configString(issueTracker, "repo") ?? configString(flowConfig?.collaboration, "repo") ?? "flow",
-      assignee: configString(issueTracker, "assignee"),
-      activeLabels: configStringArray(issueTracker, "activeLabels"),
-      backlogLabels: configStringArray(issueTracker, "backlogLabels"),
-    });
-  }
-  return new AcliJiraAdapter({
-    cwd: repoRoot,
-    siteUrl: configString(issueTracker, "siteUrl"),
-    projectKey: configString(issueTracker, "projectKey"),
-    activeQueueJql: configString(issueTracker, "activeQueueJql"),
-    backlogQueueJql: configString(issueTracker, "backlogQueueJql"),
-    email: configString(issueTracker, "email"),
-    apiToken: configString(issueTracker, "apiToken"),
-  });
-}
-
-function createCollaboration() {
-  const collaboration = flowConfig?.collaboration;
-  const type = configString(collaboration, "type") ?? "none";
-  if (type === "none" || type === "local") {
-    return new NoopCodeCollaborationAdapter();
-  }
-  return new GhGitHubAdapter({ cwd: repoRoot, owner: configString(collaboration, "owner") });
-}
-
 function configString(config: Record<string, unknown> | undefined, key: string): string | undefined {
   const value = config?.[key];
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function configStringArray(config: Record<string, unknown> | undefined, key: string): string[] {
-  const value = config?.[key];
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
 }

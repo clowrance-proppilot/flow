@@ -5,8 +5,8 @@
     "repoKeys": [
       "flow"
     ],
-    "state": "selected",
-    "updatedAt": "2026-05-27T03:48:49.792Z",
+    "state": "awaiting_review",
+    "updatedAt": "2026-05-27T16:05:46.830Z",
     "metadata": {
       "issueStatus": "Open",
       "issueStatusCategory": "To Do",
@@ -18,40 +18,69 @@
       "workflow.external.code_review.status": "unpublished",
       "branchKind": "feature",
       "evidenceRecorded": true,
-      "evidenceSummary": "Dashboard API responds in <100ms. FlowWorkRuntime created at startup, inspectDashboardQueue called directly — no CLI spawn. 3s cache prevents runtime hammering.",
+      "evidenceSummary": "Dashboard payload no longer spawns the Flow CLI or performs live provider refresh on request. Built-code measurement returned firstMs=69, secondMs=0, firstIssues=19, secondIssues=19. Verification passed: npm run check, npm test, npm run build, npm run smoke:dashboard, npm run readiness:public, flow ledger verify, git diff --check.",
       "evidenceSource": "local",
       "evidenceCriteria": [
         {
-          "label": "/api/dashboard returns JSON with real issue data",
+          "label": "/api/dashboard responds under 2 seconds",
           "status": "passed",
-          "evidence": "Dashboard API responds in <100ms. FlowWorkRuntime created at startup, inspectDashboardQueue called directly — no CLI spawn. 3s cache prevents runtime hammering.",
+          "evidence": "Dashboard payload no longer spawns the Flow CLI or performs live provider refresh on request. Built-code measurement returned firstMs=69, secondMs=0, firstIssues=19, secondIssues=19. Verification passed: npm run check, npm test, npm run build, npm run smoke:dashboard, npm run readiness:public, flow ledger verify, git diff --check.",
           "source": "local"
         },
         {
-          "label": "Response time under 1 second",
+          "label": "Dashboard state uses FlowWorkRuntime directly instead of child_process",
           "status": "passed",
-          "evidence": "Dashboard API responds in <100ms. FlowWorkRuntime created at startup, inspectDashboardQueue called directly — no CLI spawn. 3s cache prevents runtime hammering.",
+          "evidence": "Dashboard payload no longer spawns the Flow CLI or performs live provider refresh on request. Built-code measurement returned firstMs=69, secondMs=0, firstIssues=19, secondIssues=19. Verification passed: npm run check, npm test, npm run build, npm run smoke:dashboard, npm run readiness:public, flow ledger verify, git diff --check.",
           "source": "local"
         },
         {
-          "label": "No CLI process spawned per request",
+          "label": "inspectDashboardQueue reads ledger state without provider refresh",
           "status": "passed",
-          "evidence": "Dashboard API responds in <100ms. FlowWorkRuntime created at startup, inspectDashboardQueue called directly — no CLI spawn. 3s cache prevents runtime hammering.",
+          "evidence": "Dashboard payload no longer spawns the Flow CLI or performs live provider refresh on request. Built-code measurement returned firstMs=69, secondMs=0, firstIssues=19, secondIssues=19. Verification passed: npm run check, npm test, npm run build, npm run smoke:dashboard, npm run readiness:public, flow ledger verify, git diff --check.",
+          "source": "local"
+        },
+        {
+          "label": "3 second dashboard snapshot cache is active",
+          "status": "passed",
+          "evidence": "Dashboard payload no longer spawns the Flow CLI or performs live provider refresh on request. Built-code measurement returned firstMs=69, secondMs=0, firstIssues=19, secondIssues=19. Verification passed: npm run check, npm test, npm run build, npm run smoke:dashboard, npm run readiness:public, flow ledger verify, git diff --check.",
+          "source": "local"
+        },
+        {
+          "label": "Tests, build, dashboard smoke, public readiness, and ledger verification pass",
+          "status": "passed",
+          "evidence": "Dashboard payload no longer spawns the Flow CLI or performs live provider refresh on request. Built-code measurement returned firstMs=69, secondMs=0, firstIssues=19, secondIssues=19. Verification passed: npm run check, npm test, npm run build, npm run smoke:dashboard, npm run readiness:public, flow ledger verify, git diff --check.",
           "source": "local"
         }
       ],
       "workflow.acceptance.status": "recorded",
-      "workflow.acceptance.criteria_json": "[{\"label\":\"/api/dashboard returns JSON with real issue data\",\"status\":\"passed\",\"evidence\":\"Dashboard API responds in <100ms. FlowWorkRuntime created at startup, inspectDashboardQueue called directly — no CLI spawn. 3s cache prevents runtime hammering.\",\"source\":\"local\"},{\"label\":\"Response time under 1 second\",\"status\":\"passed\",\"evidence\":\"Dashboard API responds in <100ms. FlowWorkRuntime created at startup, inspectDashboardQueue called directly — no CLI spawn. 3s cache prevents runtime hammering.\",\"source\":\"local\"},{\"label\":\"No CLI process spawned per request\",\"status\":\"passed\",\"evidence\":\"Dashboard API responds in <100ms. FlowWorkRuntime created at startup, inspectDashboardQueue called directly — no CLI spawn. 3s cache prevents runtime hammering.\",\"source\":\"local\"}]",
-      "evidenceRecordedAt": "2026-05-27T03:48:34.846Z",
+      "workflow.acceptance.criteria_json": "[{\"label\":\"/api/dashboard responds under 2 seconds\",\"status\":\"passed\",\"evidence\":\"Dashboard payload no longer spawns the Flow CLI or performs live provider refresh on request. Built-code measurement returned firstMs=69, secondMs=0, firstIssues=19, secondIssues=19. Verification passed: npm run check, npm test, npm run build, npm run smoke:dashboard, npm run readiness:public, flow ledger verify, git diff --check.\",\"source\":\"local\"},{\"label\":\"Dashboard state uses FlowWorkRuntime directly instead of child_process\",\"status\":\"passed\",\"evidence\":\"Dashboard payload no longer spawns the Flow CLI or performs live provider refresh on request. Built-code measurement returned firstMs=69, secondMs=0, firstIssues=19, secondIssues=19. Verification passed: npm run check, npm test, npm run build, npm run smoke:dashboard, npm run readiness:public, flow ledger verify, git diff --check.\",\"source\":\"local\"},{\"label\":\"inspectDashboardQueue reads ledger state without provider refresh\",\"status\":\"passed\",\"evidence\":\"Dashboard payload no longer spawns the Flow CLI or performs live provider refresh on request. Built-code measurement returned firstMs=69, secondMs=0, firstIssues=19, secondIssues=19. Verification passed: npm run check, npm test, npm run build, npm run smoke:dashboard, npm run readiness:public, flow ledger verify, git diff --check.\",\"source\":\"local\"},{\"label\":\"3 second dashboard snapshot cache is active\",\"status\":\"passed\",\"evidence\":\"Dashboard payload no longer spawns the Flow CLI or performs live provider refresh on request. Built-code measurement returned firstMs=69, secondMs=0, firstIssues=19, secondIssues=19. Verification passed: npm run check, npm test, npm run build, npm run smoke:dashboard, npm run readiness:public, flow ledger verify, git diff --check.\",\"source\":\"local\"},{\"label\":\"Tests, build, dashboard smoke, public readiness, and ledger verification pass\",\"status\":\"passed\",\"evidence\":\"Dashboard payload no longer spawns the Flow CLI or performs live provider refresh on request. Built-code measurement returned firstMs=69, secondMs=0, firstIssues=19, secondIssues=19. Verification passed: npm run check, npm test, npm run build, npm run smoke:dashboard, npm run readiness:public, flow ledger verify, git diff --check.\",\"source\":\"local\"}]",
+      "evidenceRecordedAt": "2026-05-27T16:04:17.411Z",
       "documentationRecorded": true,
       "documentationDisposition": "updated",
-      "documentationSummary": "Desktop main.ts documents runtime initialization and direct FlowWorkRuntime usage pattern. No separate doc needed — the code IS the doc for this internal refactor.",
-      "documentationRecordedAt": "2026-05-27T03:48:49.792Z"
+      "documentationSummary": "Dashboard request handling now documents its contract in code and readonly checks: DashboardState depends on a direct FlowWorkRuntime queue reader, avoids child_process/Flow CLI calls, uses a short snapshot cache, and inspectDashboardQueue reads ledger state without live provider refresh.",
+      "documentationRecordedAt": "2026-05-27T16:04:27.282Z",
+      "prRepo": "flow",
+      "prNumber": 41,
+      "prUrl": "https://github.com/camden-lowrance/flow/pull/41",
+      "prHeadRefName": "feature/gh-33-fix-dashboard-api-performance-inspectdashboardqueue-time",
+      "prIsDraft": false,
+      "humanReviewRequired": false,
+      "prRecordedAt": "2026-05-27T16:05:46.829Z",
+      "workflow.repos.flow.pr_repo": "flow",
+      "workflow.repos.flow.pr_number": 41,
+      "workflow.repos.flow.pr_url": "https://github.com/camden-lowrance/flow/pull/41",
+      "workflow.repos.flow.pr_head_ref_name": "feature/gh-33-fix-dashboard-api-performance-inspectdashboardqueue-time",
+      "workflow.repos.flow.pr_is_draft": false,
+      "workflow.repos.flow.pr_recorded_at": "2026-05-27T16:05:46.829Z",
+      "prChecksPassing": true,
+      "prTemplateMissingHeadings": [],
+      "workflow.repos.flow.pr_checks_passing": true,
+      "workflow.repos.flow.pr_template_missing_headings": []
     }
   },
   "workerRuns": [],
   "workerResults": [],
   "workJobs": [],
   "workJobResults": [],
-  "updatedAt": "2026-05-27T03:48:49.797Z"
+  "updatedAt": "2026-05-27T16:05:46.831Z"
 }

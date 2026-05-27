@@ -8,6 +8,7 @@ export * from "./contracts.js";
 export * from "./flow-layout.js";
 export * from "./project-topology.js";
 export * from "./runtime-utils.js";
+export * from "./runtime-factory.js";
 export * from "./reconciliation.js";
 export * from "./work-runtime.js";
 export * from "./readiness.js";

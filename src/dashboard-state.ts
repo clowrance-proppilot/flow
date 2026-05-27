@@ -1,11 +1,8 @@
-import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
-import { extname, join } from "node:path";
-import { promisify } from "node:util";
-import { flowRoot } from "./flow-runtime.js";
 import { normalizeRecordStatusLabel, normalizeWorkStatusLabel } from "./dashboard-labels.js";
+import type { DashboardQueueIssue, FlowWorkRuntime } from "./work-runtime.js";
 
-const execFileAsync = promisify(execFile);
+type DashboardQueueReader = Pick<FlowWorkRuntime, "inspectDashboardQueue">;
+
 const dashboardIssueFields = [
   "blockerLabels",
   "documentationStatus",
@@ -24,7 +21,7 @@ const dashboardIssueFields = [
 ] as const;
 
 export interface DashboardSnapshot {
-  issues: Record<string, unknown>[];
+  issues: DashboardQueueIssue[];
   refreshedAt: string;
 }
 
@@ -33,17 +30,18 @@ export interface DashboardPayloadOptions {
 }
 
 export interface DashboardStateOptions {
-  repoRoot?: string;
+  runtime: DashboardQueueReader;
   debugLog?: (event: string, details: Record<string, unknown>) => void;
 }
 
 export class DashboardState {
-  private readonly repoRoot: string;
+  private readonly runtime: DashboardQueueReader;
   private readonly debugLog: (event: string, details: Record<string, unknown>) => void;
-  private refresh: Promise<DashboardSnapshot> | undefined;
+  private snapshotCache: { limit: number; snapshot: DashboardSnapshot; cachedAt: number } | undefined;
+  private refresh: { limit: number; promise: Promise<DashboardSnapshot> } | undefined;
 
   constructor(options: DashboardStateOptions) {
-    this.repoRoot = options.repoRoot ?? process.cwd();
+    this.runtime = options.runtime;
     this.debugLog = options.debugLog ?? (() => undefined);
   }
 
@@ -59,57 +57,47 @@ export class DashboardState {
   }
 
   private async getLiveSnapshot(limit: number): Promise<DashboardSnapshot> {
-    if (!this.refresh) {
-      this.refresh = this.refreshSnapshot(limit).finally(() => {
-        this.refresh = undefined;
-      });
+    const now = Date.now();
+    if (this.snapshotCache && this.snapshotCache.limit === limit && now - this.snapshotCache.cachedAt < dashboardSnapshotCacheTtlMs()) {
+      return this.snapshotCache.snapshot;
     }
-    return await this.refresh;
+    if (!this.refresh || this.refresh.limit !== limit) {
+      const promise = this.refreshSnapshot(limit).finally(() => {
+        if (this.refresh?.promise === promise) this.refresh = undefined;
+      });
+      this.refresh = { limit, promise };
+    }
+    return await this.refresh.promise;
   }
 
   private async refreshSnapshot(limit: number): Promise<DashboardSnapshot> {
+    const startedAt = Date.now();
     const issues = await withTimeout(this.inspectQueue(limit), dashboardLiveRefreshTimeoutMs());
-    return {
+    const snapshot = {
       issues,
       refreshedAt: new Date().toISOString(),
     };
+    this.snapshotCache = { limit, snapshot, cachedAt: Date.now() };
+    this.debugLog("dashboard.runtime_snapshot", {
+      limit,
+      issueCount: issues.length,
+      durationMs: Date.now() - startedAt,
+    });
+    return snapshot;
   }
 
-  private async inspectQueue(limit: number): Promise<Record<string, unknown>[]> {
-    const parsed = await callFlowCli(this.repoRoot, "inspectDashboardQueue", { limit }, this.debugLog);
-    return Array.isArray(parsed) ? parsed as Record<string, unknown>[] : [];
+  private async inspectQueue(limit: number): Promise<DashboardQueueIssue[]> {
+    return await this.runtime.inspectDashboardQueue(limit);
   }
 
-}
-
-async function callFlowCli(
-  repoRoot: string,
-  method: string,
-  params: Record<string, unknown>,
-  debugLog: (event: string, details: Record<string, unknown>) => void = () => undefined,
-): Promise<unknown> {
-  const bin = join(flowRoot, "bin", "flow");
-  const args = [JSON.stringify({ op: "runtime", method, params })];
-  const command = shouldRunWithNode(bin) ? process.execPath : bin;
-  const commandArgs = shouldRunWithNode(bin) ? [bin, ...args] : args;
-  const { stdout, stderr } = await execFileAsync(command, commandArgs, {
-    cwd: repoRoot,
-    maxBuffer: 20 * 1024 * 1024,
-  });
-  if (stderr.trim()) debugLog("dashboard.flow_cli_stderr", { method, stderr: stderr.trim().slice(0, 1000) });
-  const parsed = JSON.parse(stdout) as { ok?: boolean; result?: unknown; error?: unknown };
-  if (parsed.ok === false) throw new Error(`Flow CLI failed: ${JSON.stringify(parsed.error)}`);
-  return parsed.result;
-}
-
-function shouldRunWithNode(bin: string): boolean {
-  if (!existsSync(bin)) return false;
-  const extension = extname(bin).toLowerCase();
-  return extension === "" || extension === ".js" || extension === ".mjs" || extension === ".cjs";
 }
 
 function dashboardLiveRefreshTimeoutMs(): number {
   return 60000;
+}
+
+function dashboardSnapshotCacheTtlMs(): number {
+  return 3000;
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
@@ -126,12 +114,11 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T
   }
 }
 
-function summarizeIssue(issue: Record<string, unknown>): Record<string, unknown> {
-  const ref = String(issue.ref ?? "");
-  const repositories = Array.isArray(issue.repositories) ? issue.repositories.map(String) : [];
-  const blockerLabels = Array.isArray(issue.blockerLabels) ? issue.blockerLabels.map(String) : [];
+function summarizeIssue(issue: DashboardQueueIssue): Record<string, unknown> {
+  const repositories = issue.repositories.map(String);
+  const blockerLabels = issue.blockerLabels.map(String);
   const summary: Record<string, unknown> = {
-    ref,
+    ref: issue.ref,
     repositories,
     evidenceStatus: normalizeRecordStatusLabel(issue.evidenceStatus),
     documentationStatus: normalizeRecordStatusLabel(issue.documentationStatus),

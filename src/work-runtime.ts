@@ -741,7 +741,7 @@ export class FlowWorkRuntime {
   }
 
   async inspectDashboardQueue(limit = 10, sessionId?: string): Promise<DashboardQueueIssue[]> {
-    const issues = await this.inspectQueue(limit);
+    const issues = await this.ledger.listIssues(limit);
     const session = sessionId ? await this.store.readSession(sessionId) : undefined;
     const selectedIssueRef = session?.selectedIssueRef;
     return mapWithConcurrency(issues, workRuntimeQueueConcurrency(), async (issue) => {

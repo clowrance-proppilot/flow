@@ -1,0 +1,126 @@
+import { AcliJiraAdapter } from "./adapters/jira.js";
+import { GhGitHubAdapter, GhGitHubIssueTrackerAdapter } from "./adapters/github.js";
+import { LocalIssueTrackerAdapter, NoopCodeCollaborationAdapter } from "./adapters/local.js";
+import type { CodeCollaborationProvider, IssueTrackerProvider } from "./adapters/provider-contracts.js";
+import type { FlowConfig } from "./config/config-schema.js";
+import { configToProjectTopology, configToWorkTypeRegistry } from "./config/config-loader.js";
+import { assessIssue } from "./readiness.js";
+import { FlowStore } from "./store.js";
+import { FlowWorkRuntime } from "./work-runtime.js";
+import { createWorkflowLedger, type WorkflowLedger } from "./ledger.js";
+import { flowRuntimePath, flowWorkflowLedgerPath, resolveFlowPath } from "./flow-layout.js";
+
+export interface ConfiguredWorkRuntimeOptions {
+  projectRoot: string;
+  flowConfig?: FlowConfig;
+}
+
+export interface ConfiguredWorkRuntime {
+  runtime: FlowWorkRuntime;
+  flowConfig?: FlowConfig;
+  workflowLedger: WorkflowLedger;
+  issueTracker: IssueTrackerProvider;
+  collaboration: CodeCollaborationProvider;
+  runtimeStorePath: string;
+  workflowLedgerPath: string;
+}
+
+export function createConfiguredWorkRuntime(options: ConfiguredWorkRuntimeOptions): ConfiguredWorkRuntime {
+  const { projectRoot, flowConfig } = options;
+  const workflowLedgerPath = resolveWorkflowLedgerPath(projectRoot, flowConfig);
+  const workflowLedger = createWorkflowLedger({
+    cwd: projectRoot,
+    adapter: configString(flowConfig?.ledger, "type"),
+    path: workflowLedgerPath,
+  });
+  const issueTracker = createIssueTracker(projectRoot, flowConfig, workflowLedger);
+  const collaboration = createCollaboration(projectRoot, flowConfig);
+  const runtimeStorePath = resolveRuntimeStorePath(projectRoot, flowConfig);
+  const runtime = new FlowWorkRuntime({
+    store: new FlowStore({ root: runtimeStorePath }),
+    ledger: workflowLedger,
+    collaboration,
+    issueTracker,
+    defaultJiraProjectKey: configString(flowConfig?.issueTracker, "projectKey"),
+    autoflowBlockedThreshold: flowConfig?.runtime?.autoflowBlockedThreshold,
+    debugEnabled: flowConfig?.runtime?.debug,
+    ...(flowConfig
+      ? {
+        topology: configToProjectTopology(flowConfig),
+        workTypes: configToWorkTypeRegistry(flowConfig),
+      }
+      : {}),
+    projectRoot,
+    readiness: { assess: assessIssue },
+  });
+
+  return {
+    runtime,
+    flowConfig,
+    workflowLedger,
+    issueTracker,
+    collaboration,
+    runtimeStorePath,
+    workflowLedgerPath,
+  };
+}
+
+function resolveRuntimeStorePath(projectRoot: string, flowConfig: FlowConfig | undefined): string {
+  const configured = configString(flowConfig?.runtime, "storeDir") ?? configString(flowConfig?.runtime, "stateDir");
+  return configured ? resolveFlowPath(projectRoot, configured) : flowRuntimePath(projectRoot);
+}
+
+function resolveWorkflowLedgerPath(projectRoot: string, flowConfig: FlowConfig | undefined): string {
+  const configured = configString(flowConfig?.runtime, "workflowLedgerPath");
+  return configured ? resolveFlowPath(projectRoot, configured) : flowWorkflowLedgerPath(projectRoot);
+}
+
+function createIssueTracker(projectRoot: string, flowConfig: FlowConfig | undefined, workflowLedger: WorkflowLedger): IssueTrackerProvider {
+  const issueTracker = flowConfig?.issueTracker;
+  const type = configString(issueTracker, "type") ?? "local";
+  if (type === "local") {
+    return new LocalIssueTrackerAdapter({
+      ledger: workflowLedger,
+      projectName: flowConfig?.project.name,
+      prefix: configString(issueTracker, "prefix"),
+    });
+  }
+  if (type === "github" || type === "github_issues") {
+    return new GhGitHubIssueTrackerAdapter({
+      cwd: projectRoot,
+      owner: configString(issueTracker, "owner") ?? configString(flowConfig?.collaboration, "owner"),
+      repo: configString(issueTracker, "repo") ?? configString(flowConfig?.collaboration, "repo") ?? "flow",
+      assignee: configString(issueTracker, "assignee"),
+      activeLabels: configStringArray(issueTracker, "activeLabels"),
+      backlogLabels: configStringArray(issueTracker, "backlogLabels"),
+    });
+  }
+  return new AcliJiraAdapter({
+    cwd: projectRoot,
+    siteUrl: configString(issueTracker, "siteUrl"),
+    projectKey: configString(issueTracker, "projectKey"),
+    activeQueueJql: configString(issueTracker, "activeQueueJql"),
+    backlogQueueJql: configString(issueTracker, "backlogQueueJql"),
+    email: configString(issueTracker, "email"),
+    apiToken: configString(issueTracker, "apiToken"),
+  });
+}
+
+function createCollaboration(projectRoot: string, flowConfig: FlowConfig | undefined): CodeCollaborationProvider {
+  const collaboration = flowConfig?.collaboration;
+  const type = configString(collaboration, "type") ?? "none";
+  if (type === "none" || type === "local") {
+    return new NoopCodeCollaborationAdapter();
+  }
+  return new GhGitHubAdapter({ cwd: projectRoot, owner: configString(collaboration, "owner") });
+}
+
+function configString(config: Record<string, unknown> | undefined, key: string): string | undefined {
+  const value = config?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function configStringArray(config: Record<string, unknown> | undefined, key: string): string[] {
+  const value = config?.[key];
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
+}

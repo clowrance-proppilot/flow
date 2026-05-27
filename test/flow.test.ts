@@ -2602,6 +2602,36 @@ test("Dashboard queue mirrors provider-neutral issue status without provider URL
   const root = await mkdtemp(join(tmpdir(), "flow-dashboard-queue-"));
   const ledger = new MemoryWorkflowLedger();
   const issueUrl = "https://github.com/example/flow/issues/9";
+  const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  await ledger.writeIssue({
+    ref: "GH-9",
+    title: "Mirror generic provider metadata",
+    repoKeys: ["app_api"],
+    state: "queued",
+    metadata: {
+      issueStatus: "Open",
+      issueStatusCategory: "To Do",
+      issueType: "task",
+      issueUrl,
+      issueLabels: ["app_api"],
+      "workflow.external.issue.status": "published",
+      "workflow.external.code_review.status": "unpublished",
+      branchKind: "feature",
+    },
+  });
+
+  const queue = await workRuntime.inspectDashboardQueue(10);
+
+  assert.equal(queue[0].ref, "GH-9");
+  assert.equal(queue[0].statusLabel, "Open");
+  assert.equal(Object.hasOwn(queue[0] as unknown as Record<string, unknown>, "issueUrl"), false);
+});
+
+test("Dashboard queue reads ledger state without provider refresh", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-dashboard-ledger-only-"));
+  const ledger = new MemoryWorkflowLedger();
+  let issueTrackerCalls = 0;
+  let collaborationCalls = 0;
   const workRuntime = testWorkRuntime({
     store: new FlowStore({ root }),
     ledger,
@@ -2613,35 +2643,39 @@ test("Dashboard queue mirrors provider-neutral issue status without provider URL
         canManageActivePlanningLane: false,
       },
       async getIssue(ref) {
-        return {
-          ref,
-          title: "Mirror generic provider metadata",
-          status: "Open",
-          statusCategory: "To Do",
-          type: "task",
-          url: issueUrl,
-          labels: ["app_api"],
-        };
+        issueTrackerCalls += 1;
+        throw new Error(`provider refresh should not run for ${ref}`);
       },
       async fetchActiveQueue() {
-        return [{
-          ref: "GH-9",
-          title: "Mirror generic provider metadata",
-          status: "Open",
-          statusCategory: "To Do",
-          type: "task",
-          url: issueUrl,
-          labels: ["app_api"],
-        }];
+        issueTrackerCalls += 1;
+        throw new Error("provider queue should not run");
       },
     },
+    collaboration: {
+      capabilities: {
+        canMarkReady: false,
+        canPostComments: false,
+        canMerge: false,
+      },
+      async findCodeReviews() {
+        collaborationCalls += 1;
+        throw new Error("code review refresh should not run");
+      },
+    },
+  });
+  await ledger.writeIssue({
+    ref: "ISSUE-100",
+    title: "Ledger dashboard item",
+    repoKeys: ["app_api"],
+    state: "queued",
+    metadata: {},
   });
 
   const queue = await workRuntime.inspectDashboardQueue(10);
 
-  assert.equal(queue[0].ref, "GH-9");
-  assert.equal(queue[0].statusLabel, "Open");
-  assert.equal(Object.hasOwn(queue[0] as unknown as Record<string, unknown>, "issueUrl"), false);
+  assert.equal(queue.find((issue) => issue.ref === "ISSUE-100")?.title, "Ledger dashboard item");
+  assert.equal(issueTrackerCalls, 0);
+  assert.equal(collaborationCalls, 0);
 });
 
 test("Dashboard queue omits source-control and provider internals", async () => {

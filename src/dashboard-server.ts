@@ -8,8 +8,10 @@ import { DashboardState } from "./dashboard-state.js";
 import { flowRoot, repoRoot } from "./flow-runtime.js";
 import { loadFlowConfig } from "./config/config-loader.js";
 import type { FlowConfig } from "./config/config-schema.js";
+import { createConfiguredWorkRuntime } from "./runtime-factory.js";
 
 const flowConfig = await loadFlowConfig({ projectRoot: repoRoot });
+const configuredRuntime = createConfiguredWorkRuntime({ projectRoot: repoRoot, flowConfig });
 const host = resolveDashboardHost(flowConfig);
 const port = resolveDashboardPort(flowConfig);
 const publicUrl = resolveDashboardUrl(flowConfig);
@@ -18,7 +20,7 @@ const dashboardAssetsPath = join(dirname(dashboardFilePath), "assets");
 const debugEnabled = flowConfig?.runtime?.debug === true;
 
 const dashboardState = new DashboardState({
-  repoRoot,
+  runtime: configuredRuntime.runtime,
   debugLog,
 });
 

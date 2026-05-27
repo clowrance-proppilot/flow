@@ -59,7 +59,10 @@ checkRequired("src/dashboard-server.ts", /X-Frame-Options["'],\s*["']DENY/, "Das
 checkRequired("src/dashboard-server.ts", /express\.static\(dashboardAssetsPath,\s*\{\s*setHeaders:\s*setNoStore\s*\}\)/, "Dashboard assets must disable caching so stale command bundles cannot linger.");
 checkRequired("src/dashboard-server.ts", /app\.use\(\(_req,\s*res\)\s*=>\s*\{\s*res\.status\(404\)\.json\(\{\s*ok:\s*false\s*\}\);[\s\S]*?\}\)/, "Dashboard server must own 404 responses so missing routes keep mirror headers.");
 checkAbsent("src/dashboard-state.ts", /\bruntimeAction\s*\(/, "Dashboard state must not expose runtime mutation helpers.");
-checkAbsent("src/dashboard-state.ts", /\bexport\s+async\s+function\s+callFlowCli\b/, "Dashboard Flow CLI bridge must stay private to the read-only state module.");
+checkAbsent("src/dashboard-state.ts", /node:child_process|\bexecFile\b|\bcallFlowCli\b/, "Dashboard state must call FlowWorkRuntime directly instead of spawning the Flow CLI.");
+checkRequired("src/dashboard-state.ts", /runtime:\s*DashboardQueueReader/, "Dashboard state must receive a configured FlowWorkRuntime reader.");
+checkRequired("src/dashboard-state.ts", /this\.runtime\.inspectDashboardQueue\(limit\)/, "Dashboard state must read dashboard queue data through FlowWorkRuntime.");
+checkRequired("src/dashboard-state.ts", /function dashboardSnapshotCacheTtlMs\(\): number[\s\S]*?return 3000;/, "Dashboard state must cache snapshots briefly to avoid hammering the runtime.");
 checkAbsent("src/dashboard-state.ts", /autoflow/i, "Dashboard API must not expose Autoflow orchestration fields.");
 checkAbsent("src/dashboard-state.ts", /degraded|degradedError|refreshing:|stale:|source:/, "Dashboard API should expose only snapshot freshness and issue mirror data.");
 checkAbsent("src/dashboard-state.ts", /\bisRefreshing\b|startRefreshDaemon|stopRefreshDaemon/, "Dashboard state should not expose unused daemon or refresh status surfaces.");
