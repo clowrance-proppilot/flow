@@ -65,4 +65,7 @@ jobs:
         run: npm run readiness:public
 
       - name: Publish
+        env:
+          # Use npm trusted publishing via OIDC for release automation.
+          NODE_AUTH_TOKEN: ""
         run: npm publish --access public --provenance
