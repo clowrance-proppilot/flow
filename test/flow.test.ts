@@ -42,6 +42,7 @@ import {
 import type { ProjectTopology } from "../src/project-topology.js";
 import { parseGitHubIssues, parsePullRequests } from "../src/adapters/github.js";
 import { currentUserBacklogJql, currentUserOpenSprintJql, parseJiraCommentUrl, parseJiraIssue, parseJiraSearch } from "../src/adapters/jira.js";
+import { PiSessionDriver } from "../desktop/pi-session-driver.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -527,6 +528,67 @@ test("Flow config bootstrap can keep repo-local config in local git exclude", as
   assert.equal(result.path, flowConfigPath(root));
   assert.equal(result.localExcludeUpdated, true);
   assert.match(exclude, /^\.flow\/$/m);
+});
+
+test("Pi session driver starts issue-linked sessions and records FlowSessionLink", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-session-start-"));
+  const ledger = new MemoryWorkflowLedger();
+  const runtime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  await ledger.writeIssue({
+    ref: "GH-34",
+    title: "Wire issue click to pi coding agent session",
+    repoKeys: ["app_api"],
+    state: "queued",
+    metadata: {
+      "workflow.repos.app_api.worktree_path": "/repo/app-api/.worktrees/feature-gh-34",
+    },
+  });
+
+  const driver = new PiSessionDriver({
+    runtime,
+    repoRoot: root,
+    flowSessionId: "desktop",
+  });
+
+  const session = await driver.startSession("gh-34");
+  assert.equal(session.issueRef, "GH-34");
+  assert.equal(session.flowSessionId, "desktop");
+  assert.equal(session.timeline.length, 1);
+  assert.match(session.timeline[0].content, /Pi session started/);
+
+  const linksRaw = await readFile(join(root, ".flow", "runtime", "pi-session-links.json"), "utf8");
+  const linksPayload = JSON.parse(linksRaw) as { links: Array<{ issueRef: string; flowSessionId: string; piSessionId: string }> };
+  assert.equal(linksPayload.links[0].issueRef, "GH-34");
+  assert.equal(linksPayload.links[0].flowSessionId, "desktop");
+  assert.equal(linksPayload.links[0].piSessionId, session.id);
+});
+
+test("Pi session driver appends user prompt and assistant response", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-session-prompt-"));
+  const ledger = new MemoryWorkflowLedger();
+  const runtime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  await ledger.writeIssue({
+    ref: "GH-35",
+    title: "Add composer to send prompts to pi sessions",
+    repoKeys: [],
+    state: "queued",
+    metadata: {},
+  });
+
+  const driver = new PiSessionDriver({
+    runtime,
+    repoRoot: root,
+    flowSessionId: "desktop",
+  });
+
+  const started = await driver.startSession("GH-35");
+  const updated = await driver.postPrompt(started.id, "Please draft implementation steps.");
+  const userMessage = updated.timeline.find((item) => item.role === "user");
+  const assistantMessage = updated.timeline.find((item) => item.role === "assistant");
+
+  assert.equal(userMessage?.content, "Please draft implementation steps.");
+  assert.match(assistantMessage?.content ?? "", /Queued prompt for GH-35/);
+  assert.equal(updated.timeline.length >= 3, true);
 });
 
 test("Local issue tracker creates issues through the Flow ledger surface", async () => {
