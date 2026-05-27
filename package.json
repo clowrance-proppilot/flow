@@ -59,7 +59,13 @@
     "start:all:watch": "node --watch --watch-path=src scripts/start-all.mjs",
     "flow": "bin/flow",
     "dashboard": "bin/flow-dashboard",
-    "autoflow": "node scripts/autoflow-issue.mjs"
+    "autoflow": "node scripts/autoflow-issue.mjs",
+    "dev:desktop": "node scripts/dev-desktop.mjs",
+    "build:desktop": "node scripts/build-desktop.mjs",
+    "start:desktop": "electron dist/desktop/main.js",
+    "package:desktop:win": "npm run build && npm run build:desktop && electron-builder --win nsis --config desktop/electron-builder.yml",
+    "package:desktop:mac": "npm run build && npm run build:desktop && electron-builder --mac --config desktop/electron-builder.yml",
+    "package:desktop:linux": "npm run build && npm run build:desktop && electron-builder --linux AppImage --config desktop/electron-builder.yml"
   },
   "keywords": [
     "flow",
@@ -105,6 +111,9 @@
     "@types/node": "^25.9.1",
     "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",
+    "electron": "^34.5.8",
+    "electron-builder": "^26.0.12",
+    "esbuild": "^0.25.0",
     "typescript": "^6.0.3"
   }
 }

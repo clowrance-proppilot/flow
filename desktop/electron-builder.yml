@@ -1,0 +1,42 @@
+appId: com.flow.desktop
+productName: Flow
+copyright: Copyright 2026 Camden Lowrance
+
+directories:
+  output: release
+  buildResources: desktop/resources
+
+files:
+  - dist/desktop/**/*
+  - dist/dashboard/**/*
+  - package.json
+
+asar: true
+
+artifactName: ${productName}-${version}-${arch}.${ext}
+
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - target: dmg
+      arch: arm64
+    - target: zip
+      arch: arm64
+  darkModeSupport: true
+
+linux:
+  category: Development
+  executableName: flow-desktop
+  target:
+    - target: AppImage
+
+win:
+  target:
+    - target: nsis
+      arch: x64
+  signAndEditExecutable: false
+
+publish:
+  provider: github
+  owner: camden-lowrance
+  repo: flow

@@ -5,6 +5,7 @@ import {
   GhGitHubAdapter,
   IssueStateValue,
   flowLayout,
+  migrateFlowConfig,
   terminalWorkerStatusValues,
   type AcceptanceCriterionEvidence,
   validateFlowConfig,
@@ -91,12 +92,20 @@ async function routeFlowRequest(request: Record<string, unknown>): Promise<unkno
 
 async function handleConfigRequest(request: Record<string, unknown>): Promise<unknown> {
   const mode = optionalString(request, "mode") ?? "validate";
-  const result = await validateFlowConfig({ projectRoot: repoRoot, configPath: optionalString(request, "path") });
+  const configPath = optionalString(request, "path");
+  const result = await validateFlowConfig({ projectRoot: repoRoot, configPath });
   if (mode === "validate") {
     const { config: _config, ...publicResult } = result;
     return publicResult;
   }
-  if (mode !== "explain") throw badMode("config", mode, ["validate", "explain"]);
+  if (mode === "migrate") {
+    return migrateFlowConfig({
+      projectRoot: repoRoot,
+      configPath,
+      write: request.write === true,
+    });
+  }
+  if (mode !== "explain") throw badMode("config", mode, ["validate", "explain", "migrate"]);
   const config = result.config;
   return {
     ok: result.ok,
@@ -210,8 +219,22 @@ async function handleWorkflowRequest(request: Record<string, unknown>): Promise<
         maxSteps: limit(request, 20),
       });
     case "doctor":
-    case "audit":
-      return runtime.diagnoseIssue(activeSessionId, issueRef);
+    case "audit": {
+      const diagnosis = await runtime.diagnoseIssue(activeSessionId, issueRef);
+      if (request.strict === true && doctorStrictFailure(diagnosis)) {
+        throw new JsonCliError("DOCTOR_STRICT_FAILED", `Flow doctor reported ${diagnosis.status} status for ${diagnosis.issueRef}.`, {
+          manifestTarget: "workflow",
+          details: {
+            issueRef: diagnosis.issueRef,
+            status: diagnosis.status,
+            blockers: diagnosis.findings.filter((finding) => finding.severity === "blocker").length,
+            warnings: diagnosis.findings.filter((finding) => finding.severity === "warning").length,
+            nextAction: diagnosis.nextAction,
+          },
+        });
+      }
+      return diagnosis;
+    }
     case "handoff":
       return runtime.summarizeHandoff(activeSessionId);
     case "recordResult":
@@ -337,10 +360,12 @@ function flowManifest(target?: string) {
   if (target === "config") {
     return {
       target,
-      modes: ["validate", "explain"],
+      modes: ["validate", "explain", "migrate"],
       examples: [
         { op: "config", mode: "validate" },
         { op: "config", mode: "explain" },
+        { op: "config", mode: "migrate" },
+        { op: "config", mode: "migrate", write: true },
       ],
     };
   }
@@ -639,6 +664,11 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
 function parseBootstrapStorage(value: unknown): "user" | "repo-untracked" | "repo-tracked" {
   if (value === "user" || value === "repo-untracked" || value === "repo-tracked") return value;
   throw new Error(`Expected bootstrap storage user, repo-untracked, or repo-tracked, got ${String(value)}.`);
+}
+
+function doctorStrictFailure(diagnosis: { status: string; findings: Array<{ severity: string }> }): boolean {
+  if (diagnosis.status !== "ok") return true;
+  return diagnosis.findings.some((finding) => finding.severity === "warning" || finding.severity === "blocker");
 }
 
 function asStringArray(value: unknown): string[] | undefined {

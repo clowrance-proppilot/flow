@@ -31,6 +31,7 @@ import {
   flowUserRuntimePath,
   flowConfigSchema,
   loadFlowConfig,
+  migrateFlowConfig,
   validateFlowConfig,
   LocalThreadExecutor,
   LocalIssueTrackerAdapter,
@@ -277,6 +278,67 @@ test("Flow config validator returns machine-readable diagnostics", async () => {
   assert.equal(result.config, undefined);
 });
 
+test("Flow config migrate reports current version as no-op", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-config-migrate-current-"));
+  await mkdir(dirname(flowConfigPath(root)), { recursive: true });
+  await writeFile(flowConfigPath(root), [
+    'version: "1"',
+    "project:",
+    '  name: "Example"',
+    "topology:",
+    "  repos:",
+    "    main:",
+    '      name: "example"',
+    '      baseBranch: "main"',
+    "",
+  ].join("\n"), "utf8");
+
+  const result = await migrateFlowConfig({ projectRoot: root });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.changed, false);
+  assert.equal(result.wrote, false);
+  assert.equal(result.fromVersion, "1");
+  assert.equal(result.toVersion, "1");
+  assert.equal(result.errors.length, 0);
+});
+
+test("Flow config migrate can add missing version metadata", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-config-migrate-versionless-"));
+  await mkdir(dirname(flowConfigPath(root)), { recursive: true });
+  await writeFile(flowConfigPath(root), [
+    "project:",
+    '  name: "Example"',
+    "topology:",
+    "  repos:",
+    "    main:",
+    '      name: "example"',
+    '      baseBranch: "main"',
+    "",
+  ].join("\n"), "utf8");
+
+  const preview = await migrateFlowConfig({ projectRoot: root });
+  assert.equal(preview.ok, true);
+  assert.equal(preview.changed, true);
+  assert.equal(preview.wrote, false);
+  assert.equal(preview.fromVersion, "0");
+  assert.equal(preview.toVersion, "1");
+
+  const beforeWrite = await readFile(flowConfigPath(root), "utf8");
+  assert.equal(beforeWrite.includes('version: "1"'), false);
+
+  const written = await migrateFlowConfig({ projectRoot: root, write: true });
+  assert.equal(written.ok, true);
+  assert.equal(written.changed, true);
+  assert.equal(written.wrote, true);
+
+  const afterWrite = await readFile(flowConfigPath(root), "utf8");
+  assert.match(afterWrite, /version:\s*"1"/);
+
+  const validation = await validateFlowConfig({ projectRoot: root });
+  assert.equal(validation.ok, true);
+});
+
 test("Flow config bootstrap creates hidden user-state config by default", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-bootstrap-"));
   const home = await mkdtemp(join(tmpdir(), "flow-home-"));
@@ -394,6 +456,64 @@ test("Flow CLI core works with only git available on PATH", async () => {
   const viewed = await callFlow({ op: "issue", mode: "view", id: issue.ref });
   assert.equal(viewed.ref, issue.ref);
   assert.equal(viewed.title, "Git-only Flow core");
+});
+
+test("Flow workflow doctor strict mode exits nonzero when readiness is not ok", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-doctor-strict-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  const flowCli = join(process.cwd(), ".tmp", "test", "src", "flow.js");
+
+  const callFlow = async (body: Record<string, unknown>) => {
+    const encoded = JSON.stringify(body);
+    try {
+      const { stdout } = await execFileAsync(process.execPath, [flowCli, encoded], {
+        cwd: root,
+        maxBuffer: 20 * 1024 * 1024,
+      });
+      return { exitCode: 0, payload: JSON.parse(stdout) as Record<string, unknown> };
+    } catch (error) {
+      const failed = error as { code?: number; stdout?: string };
+      return {
+        exitCode: failed.code ?? 1,
+        payload: failed.stdout ? JSON.parse(failed.stdout) as Record<string, unknown> : {},
+      };
+    }
+  };
+
+  const bootstrap = await callFlow({ op: "bootstrap", storage: "repo-tracked" });
+  assert.equal(bootstrap.exitCode, 0);
+  assert.equal(bootstrap.payload.ok, true);
+
+  const created = await callFlow({
+    op: "issue",
+    mode: "create",
+    summary: "Strict doctor check",
+    issueType: "Task",
+  });
+  assert.equal(created.exitCode, 0);
+  assert.equal(created.payload.ok, true);
+  const issue = created.payload.result as { ref: string };
+  assert.ok(issue.ref);
+
+  const doctor = await callFlow({
+    op: "workflow",
+    mode: "doctor",
+    id: issue.ref,
+  });
+  assert.equal(doctor.exitCode, 0);
+  assert.equal(doctor.payload.ok, true);
+
+  const strict = await callFlow({
+    op: "workflow",
+    mode: "doctor",
+    id: issue.ref,
+    strict: true,
+  });
+  assert.notEqual(strict.exitCode, 0);
+  assert.equal(strict.payload.ok, false);
+  const error = strict.payload.error as { code: string; details?: Record<string, unknown> };
+  assert.equal(error.code, "DOCTOR_STRICT_FAILED");
+  assert.equal(error.details?.status, "blocked");
 });
 
 test("Flow config bootstrap can keep repo-local config in local git exclude", async () => {

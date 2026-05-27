@@ -57,6 +57,21 @@ export interface ValidateFlowConfigResult {
   config?: FlowConfig;
 }
 
+export interface MigrateFlowConfigOptions extends LoadFlowConfigOptions {
+  write?: boolean;
+}
+
+export interface MigrateFlowConfigResult {
+  ok: boolean;
+  path?: string;
+  fromVersion?: string;
+  toVersion?: string;
+  changed: boolean;
+  wrote: boolean;
+  errors: string[];
+  notes: string[];
+}
+
 interface BootstrapFlowConfigDraft {
   config: FlowConfig;
   projectName: string;
@@ -116,6 +131,81 @@ export async function validateFlowConfig(options: LoadFlowConfigOptions = {}): P
       ok: false,
       path: configPath,
       errors: [errorMessage(error)],
+    };
+  }
+}
+
+export async function migrateFlowConfig(options: MigrateFlowConfigOptions = {}): Promise<MigrateFlowConfigResult> {
+  let configPath: string | undefined;
+  try {
+    configPath = findFlowConfigPath(options);
+  } catch (error) {
+    return {
+      ok: false,
+      changed: false,
+      wrote: false,
+      errors: [errorMessage(error)],
+      notes: [],
+    };
+  }
+  if (!configPath) {
+    return {
+      ok: false,
+      changed: false,
+      wrote: false,
+      errors: ["Flow config not found."],
+      notes: [],
+    };
+  }
+
+  try {
+    const raw = await readFile(configPath, "utf8");
+    const parsed = configPath.endsWith(".json")
+      ? JSON.parse(raw)
+      : parseYaml(raw);
+    const migrated = migrateParsedFlowConfig(parsed);
+    if (!migrated.ok) {
+      return {
+        ok: false,
+        path: configPath,
+        fromVersion: migrated.fromVersion,
+        toVersion: migrated.toVersion,
+        changed: false,
+        wrote: false,
+        errors: migrated.errors,
+        notes: migrated.notes,
+      };
+    }
+
+    const changed = stableJson(parsed) !== stableJson(migrated.config);
+    let wrote = false;
+    if (options.write && changed) {
+      if (configPath.endsWith(".json")) {
+        await writeFile(configPath, `${JSON.stringify(migrated.config, null, 2)}\n`, "utf8");
+      } else {
+        await writeFile(configPath, stringifyYaml(migrated.config), "utf8");
+      }
+      wrote = true;
+    }
+
+    return {
+      ok: true,
+      path: configPath,
+      fromVersion: migrated.fromVersion,
+      toVersion: migrated.toVersion,
+      changed,
+      wrote,
+      errors: [],
+      notes: migrated.notes,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      path: configPath,
+      changed: false,
+      wrote: false,
+      errors: [errorMessage(error)],
+      notes: [],
     };
   }
 }
@@ -248,6 +338,85 @@ async function inferBootstrapFlowConfig(projectRoot: string, storage: FlowConfig
     repoName,
     baseBranch,
   };
+}
+
+function migrateParsedFlowConfig(raw: unknown):
+  | { ok: true; config: FlowConfig; fromVersion: string; toVersion: string; notes: string[] }
+  | { ok: false; fromVersion: string; toVersion: string; errors: string[]; notes: string[] } {
+  if (!isRecord(raw)) {
+    return {
+      ok: false,
+      fromVersion: "unknown",
+      toVersion: "1",
+      errors: ["Flow config must parse to an object."],
+      notes: [],
+    };
+  }
+
+  const detectedVersion = normalizeVersion(raw.version);
+  if (detectedVersion !== "0" && detectedVersion !== "1") {
+    return {
+      ok: false,
+      fromVersion: detectedVersion,
+      toVersion: "1",
+      errors: [`Unsupported Flow config version "${detectedVersion}".`],
+      notes: [],
+    };
+  }
+
+  const candidate = detectedVersion === "1"
+    ? raw
+    : {
+      ...raw,
+      version: "1",
+    };
+
+  const parsed = flowConfigSchema.safeParse(candidate);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      fromVersion: detectedVersion,
+      toVersion: "1",
+      errors: parsed.error.issues.map((issue) => `${issue.path.join(".") || "<root>"}: ${issue.message}`),
+      notes: detectedVersion === "0" ? ["Added version: \"1\" before validation."] : [],
+    };
+  }
+
+  return {
+    ok: true,
+    config: candidate as FlowConfig,
+    fromVersion: detectedVersion,
+    toVersion: "1",
+    notes: detectedVersion === "0"
+      ? ["Upgraded config to version 1 by adding version metadata."]
+      : ["Config already matches the current schema version."],
+  };
+}
+
+function normalizeVersion(value: unknown): string {
+  if (typeof value !== "string") return "0";
+  const trimmed = value.trim();
+  return trimmed || "0";
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(normalizeForStableJson(value));
+}
+
+function normalizeForStableJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(normalizeForStableJson);
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, normalizeForStableJson(value[key])]),
+    );
+  }
+  return value;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function normalizeIssuePrefix(value: string): string {
