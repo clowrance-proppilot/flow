@@ -278,6 +278,17 @@ function checkDashboardQueueContract() {
   const interfaceSource = between(source, "export interface DashboardQueueIssue", "export interface GitInspector");
   const methodSource = between(source, "async inspectDashboardQueue", "async inspectBacklog");
   const returnSource = between(methodSource, "return {", "};");
+  const statusFunctionSource = between(source, "function dashboardWorkStatus(", "function dashboardWorkStatusDetail");
+  const statusReturnSource = between(statusFunctionSource, "return {", "};");
+  if (/\binspectQueue\s*\(/.test(methodSource) || /\breconcileExternalState/.test(methodSource)) {
+    violations.push("Dashboard queue must read stored Flow phase directly, not the reconciled runtime queue.");
+  }
+  if (!/\blabel:\s*dashboardWorkStatusLabel\(workflowState\)/.test(statusReturnSource)) {
+    violations.push("Dashboard workStatus label must be derived only from dashboardWorkflowState.");
+  }
+  if (/\b(?:activeWorkerRun|latestWorkerResult|review|reviewReady|evidenceRecorded|documentationRecorded|isPullRequestMetadataMerged)\b/.test(statusReturnSource)) {
+    violations.push("Dashboard workStatus label must not use worker, PR, readiness, evidence, or documentation artifacts.");
+  }
   if (/\b(?:worktreePath|headSha)\b/.test(interfaceSource) || /\b(?:worktreePath|headSha)\s*:/.test(returnSource)) {
     violations.push("Dashboard queue contract must not expose local worktree paths or raw commit heads.");
   }

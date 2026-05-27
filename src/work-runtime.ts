@@ -731,7 +731,7 @@ export class FlowWorkRuntime {
   }
 
   async inspectDashboardQueue(limit = 10, sessionId?: string): Promise<DashboardQueueIssue[]> {
-    const issues = await this.inspectQueue(limit);
+    const issues = await this.inspectDashboardIssues(limit);
     const session = sessionId ? await this.store.readSession(sessionId) : undefined;
     const selectedIssueRef = session?.selectedIssueRef;
     return mapWithConcurrency(issues, workRuntimeQueueConcurrency(), async (issue) => {
@@ -776,6 +776,22 @@ export class FlowWorkRuntime {
         nextPickup: latestWorkerResult?.nextPickup?.trim() || undefined,
         handoffPrompt: latestWorkerResult?.handoffPrompt?.trim() || undefined,
       };
+    });
+  }
+
+  private async inspectDashboardIssues(limit: number): Promise<WorkItem[]> {
+    if (!this.issueTracker?.searchCurrentUserOpenSprintIssues) {
+      return this.ledger.listIssues(limit);
+    }
+    const jiraIssues = await this.issueTracker.searchCurrentUserOpenSprintIssues(limit);
+    const activeIssues = jiraIssues.filter((jiraIssue) => !isJiraDone(jiraIssue));
+    const existingIssues = this.ledger.readIssues
+      ? await this.ledger.readIssues(activeIssues.map((jiraIssue) => jiraIssue.key))
+      : new Map<string, WorkItem>();
+    return activeIssues.map((jiraIssue) => {
+      const existing = existingIssues.get(jiraIssue.key);
+      const merged = this.mergeJiraQueueIssue(jiraIssue, existing);
+      return existing ? { ...merged, state: existing.state } : merged;
     });
   }
 
@@ -3090,102 +3106,66 @@ function dashboardWorkStatus(input: {
   evidenceRecorded: boolean;
   documentationRecorded: boolean;
 }): { label: string; detail?: string } {
-  const { issue, selectedIssueRef, activeWorkerRun, latestWorkerResult, review } = input;
-  if (activeWorkerRun) {
-    return {
-      label: "Running",
-      detail: `Active handoff ${activeWorkerRun.taskId} is ${activeWorkerRun.status}.`,
-    };
+  const { issue, selectedIssueRef } = input;
+  const workflowState = dashboardWorkflowState(issue, selectedIssueRef);
+  return {
+    // Dashboard status is the stored Flow phase only. Artifacts may explain it, never change it.
+    label: dashboardWorkStatusLabel(workflowState),
+    detail: dashboardWorkStatusDetail(input, workflowState),
+  };
+}
+
+function dashboardWorkStatusDetail(
+  input: {
+    issue: WorkItem;
+    selectedIssueRef?: string;
+    activeWorkerRun?: WorkerRunRecord;
+    latestWorkerResult?: WorkerTaskResult;
+    review?: ReturnType<typeof reviewMetadata>;
+    reviewReady: boolean;
+    evidenceRecorded: boolean;
+    documentationRecorded: boolean;
+  },
+  workflowState: WorkItem["state"],
+): string {
+  const details = [dashboardWorkflowStateDetail(workflowState)];
+  if (input.activeWorkerRun) {
+    details.push(`Active handoff ${input.activeWorkerRun.taskId} is ${input.activeWorkerRun.status}.`);
   }
-  if (review && isPullRequestMetadataMerged(review)) {
-    return {
-      label: "Done",
-      detail: `Pull request ${pullRequestDisplayRef(review.prUrl)} is merged.`,
-    };
+  if (input.review && isPullRequestMetadataMerged(input.review)) {
+    details.push(`Pull request ${pullRequestDisplayRef(input.review.prUrl)} is merged.`);
+  } else if (input.review?.humanReviewRequired === true || input.review?.autoReviewNeedsConfirmation === true) {
+    details.push("Code review requires human input.");
+  } else if (input.review) {
+    details.push(`Pull request ${pullRequestDisplayRef(input.review.prUrl)} is open.`);
   }
-  if (issue.state === "done") {
-    return {
-      label: "Done",
-      detail: "Flow has marked the issue complete.",
-    };
-  }
-  if (latestWorkerResult?.status === "blocked" || latestWorkerResult?.status === "failed") {
-    return {
-      label: "Blocked",
-      detail: `Latest handoff result ${latestWorkerResult.taskId} is ${latestWorkerResult.status}.`,
-    };
-  }
-  if (review?.humanReviewRequired === true || review?.autoReviewNeedsConfirmation === true) {
-    return {
-      label: "Needs Input",
-      detail: "Code review requires human input.",
-    };
-  }
-  if (review) {
-    return {
-      label: "In Review",
-      detail: `Pull request ${pullRequestDisplayRef(review.prUrl)} is open.`,
-    };
-  }
-  if (latestWorkerResult?.status === "succeeded") {
-    return {
-      label: "Ready",
-      detail: `Latest handoff result ${latestWorkerResult.taskId} succeeded.`,
-    };
+  if (input.latestWorkerResult) {
+    details.push(dashboardWorkerResultDetail(input.latestWorkerResult));
   }
   if (input.reviewReady) {
-    return {
-      label: "Ready",
-      detail: "Readiness checks say the issue is ready for review.",
-    };
+    details.push("Readiness checks say review-ready.");
   }
   if (input.evidenceRecorded && input.documentationRecorded) {
-    return {
-      label: "Ready",
-      detail: "Evidence and documentation are recorded.",
-    };
+    details.push("Evidence and documentation are recorded.");
   }
-  const workflowState = dashboardWorkflowState(issue, selectedIssueRef);
-  if (workflowState === "selected") {
-    return {
-      label: "Active",
-      detail: "Selected in the requested Flow session.",
-    };
-  }
-  if (workflowState === "running") {
-    return {
-      label: "Running",
-      detail: "Flow issue state is running.",
-    };
-  }
-  if (workflowState === "blocked") {
-    return {
-      label: "Blocked",
-      detail: "Flow issue state is blocked.",
-    };
-  }
-  if (workflowState === "awaiting_human") {
-    return {
-      label: "Needs Input",
-      detail: "Flow issue state is waiting for human input.",
-    };
-  }
-  if (workflowState === "awaiting_review") {
-    return {
-      label: "Ready",
-      detail: "Flow issue state is ready for review; no pull request is recorded yet.",
-    };
-  }
-  if (workflowState === "ready_to_run") {
-    return {
-      label: "Ready",
-      detail: "Flow issue state is ready to run.",
-    };
-  }
-  return {
-    label: dashboardWorkStatusLabel(workflowState),
-    detail: "No active handoff, result, or pull request is recorded.",
-  };
+  return details.join(" ");
+}
+
+function dashboardWorkerResultDetail(result: WorkerTaskResult): string {
+  if (result.status === "succeeded") return `Latest handoff result ${result.taskId} succeeded.`;
+  return `Latest handoff result ${result.taskId} is ${result.status}.`;
+}
+
+function dashboardWorkflowStateDetail(state: WorkItem["state"]): string {
+  if (state === "queued") return "Flow phase is queued.";
+  if (state === "selected") return "Selected in the requested Flow session.";
+  if (state === "ready_to_run") return "Flow phase is ready to run.";
+  if (state === "running") return "Flow phase is running.";
+  if (state === "blocked") return "Flow phase is blocked.";
+  if (state === "awaiting_review") return "Flow phase is awaiting review.";
+  if (state === "awaiting_human") return "Flow phase is waiting for human input.";
+  if (state === "done") return "Flow phase is done.";
+  return "Flow phase is unknown.";
 }
 
 function dashboardWorkStatusLabel(state: WorkItem["state"]): string {

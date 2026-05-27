@@ -2595,7 +2595,8 @@ test("Work Runtime does not create typed work while a Worker is active for the i
   assert.equal(result.status, "blocked");
   assert.match(result.message, /Execution handoff is already active/);
   assert.equal(jobs.length, 0);
-  assert.equal(queue.find((issue) => issue.ref === "ISSUE-71")?.workStatus, "Running");
+  assert.equal(queue.find((issue) => issue.ref === "ISSUE-71")?.workStatus, "Queued");
+  assert.match(queue.find((issue) => issue.ref === "ISSUE-71")?.workStatusDetail ?? "", /Active handoff worker-active is running/);
 });
 
 test("Dashboard queue mirrors provider-neutral issue status without provider URLs", async () => {
@@ -2636,10 +2637,18 @@ test("Dashboard queue mirrors provider-neutral issue status without provider URL
       },
     },
   });
+  await ledger.writeIssue({
+    ref: "GH-9",
+    title: "Mirror generic provider metadata",
+    repoKeys: ["app_api"],
+    state: "done",
+    metadata: {},
+  });
 
   const queue = await workRuntime.inspectDashboardQueue(10);
 
   assert.equal(queue[0].ref, "GH-9");
+  assert.equal(queue[0].workStatus, "Done");
   assert.equal(queue[0].statusLabel, "Open");
   assert.equal(Object.hasOwn(queue[0] as unknown as Record<string, unknown>, "issueUrl"), false);
 });
@@ -2673,7 +2682,7 @@ test("Dashboard queue omits source-control and provider internals", async () => 
   assert.equal(Object.hasOwn(issue, "prUrl"), false);
 });
 
-test("Dashboard queue derives work status from Flow artifacts", async () => {
+test("Dashboard queue uses Flow phase for work status and artifacts for source detail", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-dashboard-real-status-"));
   const ledger = new MemoryWorkflowLedger();
   const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
@@ -2714,6 +2723,16 @@ test("Dashboard queue derives work status from Flow artifacts", async () => {
     state: "queued",
     metadata: {},
   });
+  await ledger.writeIssue({
+    ref: "ISSUE-94",
+    title: "Ledger review phase",
+    repoKeys: ["app_api"],
+    state: "awaiting_review",
+    metadata: {
+      evidenceRecorded: true,
+      documentationRecorded: true,
+    },
+  });
   await ledger.recordWorkerResult({
     taskId: "worker-91",
     issueRef: "ISSUE-91",
@@ -2739,14 +2758,17 @@ test("Dashboard queue derives work status from Flow artifacts", async () => {
 
   const queue = await workRuntime.inspectDashboardQueue(10);
 
-  assert.equal(queue.find((issue) => issue.ref === "ISSUE-90")?.workStatus, "Done");
+  assert.equal(queue.find((issue) => issue.ref === "ISSUE-90")?.workStatus, "Queued");
   assert.match(queue.find((issue) => issue.ref === "ISSUE-90")?.workStatusDetail ?? "", /#20 is merged/);
-  assert.equal(queue.find((issue) => issue.ref === "ISSUE-91")?.workStatus, "Blocked");
+  assert.match(queue.find((issue) => issue.ref === "ISSUE-90")?.workStatusDetail ?? "", /Flow phase is queued/);
+  assert.equal(queue.find((issue) => issue.ref === "ISSUE-91")?.workStatus, "Queued");
   assert.match(queue.find((issue) => issue.ref === "ISSUE-91")?.workStatusDetail ?? "", /worker-91 is blocked/);
   assert.equal(queue.find((issue) => issue.ref === "ISSUE-92")?.workStatus, "In Review");
   assert.match(queue.find((issue) => issue.ref === "ISSUE-92")?.workStatusDetail ?? "", /#21 is open/);
-  assert.equal(queue.find((issue) => issue.ref === "ISSUE-93")?.workStatus, "Ready");
+  assert.equal(queue.find((issue) => issue.ref === "ISSUE-93")?.workStatus, "Queued");
   assert.match(queue.find((issue) => issue.ref === "ISSUE-93")?.workStatusDetail ?? "", /worker-93 succeeded/);
+  assert.equal(queue.find((issue) => issue.ref === "ISSUE-94")?.workStatus, "In Review");
+  assert.match(queue.find((issue) => issue.ref === "ISSUE-94")?.workStatusDetail ?? "", /awaiting review/);
 });
 
 test("Dashboard queue mirrors the current session selection", async () => {
