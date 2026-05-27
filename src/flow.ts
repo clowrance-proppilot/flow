@@ -488,7 +488,10 @@ function extractIssueRef(values: Array<string | undefined>): string | undefined 
 async function dispatch(method: string, params: Record<string, unknown>): Promise<unknown> {
   switch (method) {
     case "inspectDashboardQueue":
-      return runtime.inspectDashboardQueue(Number(params.limit ?? 10), String(params.sessionId ?? defaultSessionId));
+      return runtime.inspectDashboardQueue(
+        Number(params.limit ?? 10),
+        typeof params.sessionId === "string" ? params.sessionId : undefined,
+      );
     case "inspectQueue":
       return runtime.inspectQueue(Number(params.limit ?? 10));
     case "inspectBacklog":

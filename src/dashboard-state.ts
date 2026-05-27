@@ -20,6 +20,7 @@ const dashboardIssueFields = [
   "title",
   "updatedLabel",
   "workStatus",
+  "workStatusDetail",
 ] as const;
 
 export interface DashboardSnapshot {
@@ -138,6 +139,7 @@ function summarizeIssue(issue: Record<string, unknown>): Record<string, unknown>
   };
   assignString(summary, "title", issue.title);
   summary.workStatus = normalizeWorkStatusLabel(issue.workStatus);
+  assignString(summary, "workStatusDetail", issue.workStatusDetail);
   assignString(summary, "statusLabel", issue.statusLabel);
   assignString(summary, "prStatus", issue.prStatus);
   assignString(summary, "reviewStatus", issue.reviewStatus);

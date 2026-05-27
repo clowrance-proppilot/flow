@@ -24,6 +24,7 @@ type DashboardIssue = {
   ref: string;
   title?: string;
   workStatus?: string;
+  workStatusDetail?: string;
   statusLabel?: string;
   repositories?: string[];
   blockerLabels?: string[];
@@ -39,6 +40,7 @@ type DashboardIssue = {
 type DashboardIssueStringField =
   | "title"
   | "workStatus"
+  | "workStatusDetail"
   | "statusLabel"
   | "prStatus"
   | "reviewStatus"
@@ -369,6 +371,10 @@ function IssueDetails({
         <dl className="grid grid-cols-[4.75rem_minmax(0,1fr)] gap-x-3 gap-y-2.5 text-[0.8rem]">
           <dt className="text-[var(--th-fg-muted)]">Status</dt>
           <dd className="m-0 break-words text-[var(--th-fg)]">{statusLabel}</dd>
+          {issue.workStatusDetail && <>
+            <dt className="text-[var(--th-fg-muted)]">Source</dt>
+            <dd className="m-0 break-words text-[var(--th-fg-soft)]">{issue.workStatusDetail}</dd>
+          </>}
           {repositories.length > 0 && <>
             <dt className="text-[var(--th-fg-muted)]">Repos</dt>
             <dd className="m-0 break-words font-mono text-[var(--th-fg)] [overflow-wrap:anywhere]">{repositories.join(", ")}</dd>
@@ -521,6 +527,7 @@ function normalizeDashboardIssue(input: DashboardIssue): DashboardIssue {
   };
   assignDisplayString(issue, "title", input.title);
   issue.workStatus = normalizeWorkStatus(input.workStatus);
+  assignDisplayString(issue, "workStatusDetail", input.workStatusDetail);
   assignDisplayString(issue, "statusLabel", input.statusLabel);
   assignDisplayString(issue, "prStatus", input.prStatus);
   assignDisplayString(issue, "reviewStatus", input.reviewStatus);

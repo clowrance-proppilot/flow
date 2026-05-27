@@ -268,7 +268,7 @@ function checkDashboardStatePublicContract() {
   checkRequired("src/dashboard-state.ts", /const dashboardIssueFields = \[/, "Dashboard API must define an explicit public issue field allowlist.");
   checkRequired("src/dashboard-state.ts", /function publicDashboardIssue/, "Dashboard API must compact issue summaries through the public field allowlist.");
   checkRequired("src/dashboard-state.ts", /issues:\s*snapshot\.issues\.map\(\(issue\) => publicDashboardIssue\(summarizeIssue\(issue\)\)\)/, "Dashboard API must return only allowlisted issue fields.");
-  for (const field of ["ref", "title", "workStatus", "statusLabel", "repositories", "blockerLabels", "evidenceStatus", "documentationStatus", "updatedLabel", "nextPickup", "handoffPrompt"]) {
+  for (const field of ["ref", "title", "workStatus", "workStatusDetail", "statusLabel", "repositories", "blockerLabels", "evidenceStatus", "documentationStatus", "updatedLabel", "nextPickup", "handoffPrompt"]) {
     checkRequired("src/dashboard-state.ts", new RegExp(`["']${field}["']`), `Dashboard API issue allowlist must include ${field}.`);
   }
 }
@@ -291,7 +291,7 @@ function checkDashboardQueueContract() {
   if (!/\bworkStatus\s*:/.test(interfaceSource)) {
     violations.push("Dashboard queue contract must include a display workStatus label.");
   }
-  for (const field of ["statusLabel", "repositories", "blockerLabels", "evidenceStatus", "documentationStatus"]) {
+  for (const field of ["workStatusDetail", "statusLabel", "repositories", "blockerLabels", "evidenceStatus", "documentationStatus"]) {
     if (!new RegExp(`\\b${field}\\??\\s*:`).test(interfaceSource)) {
       violations.push(`Dashboard queue contract must include display ${field}.`);
     }
@@ -301,7 +301,8 @@ function checkDashboardQueueContract() {
 function checkDashboardSmokeContract() {
   checkRequired("scripts/smoke-dashboard.mjs", /allowedWorkStatuses/, "Dashboard smoke must allowlist display work status labels.");
   checkRequired("scripts/smoke-dashboard.mjs", /assertRuntimeDashboardQueueShape/, "Dashboard smoke must verify the runtime dashboard queue contract.");
-  checkRequired("scripts/smoke-dashboard.mjs", /assertSelectedIssueMirrorsAsActive/, "Dashboard smoke must prove selected internal state mirrors as Active.");
+  checkRequired("scripts/smoke-dashboard.mjs", /assertSelectedIssueUsesQueueState/, "Dashboard smoke must prove selected internal state does not mirror as Active without an explicit session.");
+  checkRequired("scripts/smoke-dashboard.mjs", /assertSelectedIssueMirrorsAsActive/, "Dashboard smoke must prove explicit session selection mirrors as Active.");
   checkRequired("scripts/smoke-dashboard.mjs", /assertNoRawWorkflowStates/, "Dashboard smoke must prove raw workflow states are absent from mirror payloads.");
   checkRequired("scripts/smoke-dashboard.mjs", /assertMirrorStateUnchanged/, "Dashboard smoke must prove blocked dashboard requests do not mutate mirrored state.");
   checkRequired("scripts/smoke-dashboard.mjs", /assertMirrorStateUnchanged\(dashboardFingerprintBeforeBlockedRequests,\s*queryPayload\.issues,\s*["']dashboard API with query input["']\)/, "Dashboard smoke must prove query input does not shape mirrored state.");

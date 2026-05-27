@@ -2673,6 +2673,82 @@ test("Dashboard queue omits source-control and provider internals", async () => 
   assert.equal(Object.hasOwn(issue, "prUrl"), false);
 });
 
+test("Dashboard queue derives work status from Flow artifacts", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-dashboard-real-status-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  await ledger.writeIssue({
+    ref: "ISSUE-90",
+    title: "Merged dashboard polish",
+    repoKeys: ["app_api"],
+    state: "selected",
+    metadata: {
+      prUrl: "https://github.com/ExampleOrg/app-api/pull/20",
+      prState: "MERGED",
+      prMergedAt: nowIso(),
+    },
+  });
+  await ledger.writeIssue({
+    ref: "ISSUE-91",
+    title: "Blocked worker",
+    repoKeys: ["app_api"],
+    state: "queued",
+    metadata: {},
+  });
+  await ledger.writeIssue({
+    ref: "ISSUE-92",
+    title: "Open review",
+    repoKeys: ["app_api"],
+    state: "awaiting_review",
+    metadata: {
+      prUrl: "https://github.com/ExampleOrg/app-api/pull/21",
+      prState: "OPEN",
+      prIsDraft: false,
+      prChecksPassing: true,
+    },
+  });
+  await ledger.writeIssue({
+    ref: "ISSUE-93",
+    title: "Successful handoff",
+    repoKeys: ["app_api"],
+    state: "queued",
+    metadata: {},
+  });
+  await ledger.recordWorkerResult({
+    taskId: "worker-91",
+    issueRef: "ISSUE-91",
+    repoKey: "app_api",
+    status: "blocked",
+    summary: "Needs local input",
+    changedFiles: [],
+    testsRun: [],
+    blockers: ["Need local context"],
+    completedAt: nowIso(),
+  });
+  await ledger.recordWorkerResult({
+    taskId: "worker-93",
+    issueRef: "ISSUE-93",
+    repoKey: "app_api",
+    status: "succeeded",
+    summary: "Implementation complete",
+    changedFiles: ["src/dashboard/main.tsx"],
+    testsRun: ["npm test"],
+    blockers: [],
+    completedAt: nowIso(),
+  });
+
+  const queue = await workRuntime.inspectDashboardQueue(10);
+
+  assert.equal(queue.find((issue) => issue.ref === "ISSUE-90")?.workStatus, "Done");
+  assert.match(queue.find((issue) => issue.ref === "ISSUE-90")?.workStatusDetail ?? "", /#20 is merged/);
+  assert.equal(queue.find((issue) => issue.ref === "ISSUE-91")?.workStatus, "Blocked");
+  assert.match(queue.find((issue) => issue.ref === "ISSUE-91")?.workStatusDetail ?? "", /worker-91 is blocked/);
+  assert.equal(queue.find((issue) => issue.ref === "ISSUE-92")?.workStatus, "In Review");
+  assert.match(queue.find((issue) => issue.ref === "ISSUE-92")?.workStatusDetail ?? "", /#21 is open/);
+  assert.equal(queue.find((issue) => issue.ref === "ISSUE-93")?.workStatus, "Ready");
+  assert.match(queue.find((issue) => issue.ref === "ISSUE-93")?.workStatusDetail ?? "", /worker-93 succeeded/);
+});
+
 test("Dashboard queue mirrors the current session selection", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-dashboard-session-"));
   const ledger = new MemoryWorkflowLedger();
@@ -2699,8 +2775,11 @@ test("Dashboard queue mirrors the current session selection", async () => {
     selectedRepoKey: "app_api",
   });
 
+  const queueWithoutSession = await workRuntime.inspectDashboardQueue(10);
   const queue = await workRuntime.inspectDashboardQueue(10, session.id);
 
+  assert.equal(queueWithoutSession.find((issue) => issue.ref === "ISSUE-1")?.workStatus, "Queued");
+  assert.equal(queueWithoutSession.find((issue) => issue.ref === "ISSUE-2")?.workStatus, "Ready");
   assert.equal(queue.find((issue) => issue.ref === "ISSUE-1")?.workStatus, "Queued");
   assert.equal(queue.find((issue) => issue.ref === "ISSUE-2")?.workStatus, "Active");
 });

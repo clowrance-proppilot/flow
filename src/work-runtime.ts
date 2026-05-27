@@ -111,6 +111,7 @@ export interface DashboardQueueIssue {
   ref: string;
   title: string;
   workStatus: string;
+  workStatusDetail?: string;
   statusLabel?: string;
   repositories: string[];
   prStatus?: string;
@@ -748,12 +749,22 @@ export class FlowWorkRuntime {
         .filter((finding) => finding.severity === "blocker" || finding.severity === "warning")
         .map((finding) => finding.summary);
       const activeWorkerRun = await this.latestActiveWorkerRun(issue.ref);
-      const workflowState = activeWorkerRun ? "running" : dashboardWorkflowState(issue, selectedIssueRef);
       const latestWorkerResult = workerResults.at(-1);
+      const workStatus = dashboardWorkStatus({
+        issue,
+        selectedIssueRef,
+        activeWorkerRun,
+        latestWorkerResult,
+        review,
+        reviewReady: assessment.reviewReady,
+        evidenceRecorded: hasRecordedEvidence(issue),
+        documentationRecorded: hasRecordedDocumentation(issue),
+      });
       return {
         ref: issue.ref,
         title: issue.title,
-        workStatus: dashboardWorkStatusLabel(workflowState),
+        workStatus: workStatus.label,
+        workStatusDetail: workStatus.detail,
         statusLabel: issueTrackerStatus(issue),
         repositories: issue.repoKeys.map((key) => dashboardRepositoryLabel(key)),
         prStatus: review ? dashboardPullRequestStatus(review.isDraft, review.checksPassing) : undefined,
@@ -3063,10 +3074,118 @@ function selectedWorkflowState(issueState: WorkItem["state"], existingState?: Wo
 }
 
 function dashboardWorkflowState(issue: WorkItem, selectedIssueRef?: string): WorkItem["state"] {
-  if (!selectedIssueRef) return issue.state;
+  if (!selectedIssueRef) return issue.state === "selected" ? "queued" : issue.state;
   if (issue.ref === selectedIssueRef) return "selected";
   if (issue.state === "selected") return "queued";
   return issue.state;
+}
+
+function dashboardWorkStatus(input: {
+  issue: WorkItem;
+  selectedIssueRef?: string;
+  activeWorkerRun?: WorkerRunRecord;
+  latestWorkerResult?: WorkerTaskResult;
+  review?: ReturnType<typeof reviewMetadata>;
+  reviewReady: boolean;
+  evidenceRecorded: boolean;
+  documentationRecorded: boolean;
+}): { label: string; detail?: string } {
+  const { issue, selectedIssueRef, activeWorkerRun, latestWorkerResult, review } = input;
+  if (activeWorkerRun) {
+    return {
+      label: "Running",
+      detail: `Active handoff ${activeWorkerRun.taskId} is ${activeWorkerRun.status}.`,
+    };
+  }
+  if (review && isPullRequestMetadataMerged(review)) {
+    return {
+      label: "Done",
+      detail: `Pull request ${pullRequestDisplayRef(review.prUrl)} is merged.`,
+    };
+  }
+  if (issue.state === "done") {
+    return {
+      label: "Done",
+      detail: "Flow has marked the issue complete.",
+    };
+  }
+  if (latestWorkerResult?.status === "blocked" || latestWorkerResult?.status === "failed") {
+    return {
+      label: "Blocked",
+      detail: `Latest handoff result ${latestWorkerResult.taskId} is ${latestWorkerResult.status}.`,
+    };
+  }
+  if (review?.humanReviewRequired === true || review?.autoReviewNeedsConfirmation === true) {
+    return {
+      label: "Needs Input",
+      detail: "Code review requires human input.",
+    };
+  }
+  if (review) {
+    return {
+      label: "In Review",
+      detail: `Pull request ${pullRequestDisplayRef(review.prUrl)} is open.`,
+    };
+  }
+  if (latestWorkerResult?.status === "succeeded") {
+    return {
+      label: "Ready",
+      detail: `Latest handoff result ${latestWorkerResult.taskId} succeeded.`,
+    };
+  }
+  if (input.reviewReady) {
+    return {
+      label: "Ready",
+      detail: "Readiness checks say the issue is ready for review.",
+    };
+  }
+  if (input.evidenceRecorded && input.documentationRecorded) {
+    return {
+      label: "Ready",
+      detail: "Evidence and documentation are recorded.",
+    };
+  }
+  const workflowState = dashboardWorkflowState(issue, selectedIssueRef);
+  if (workflowState === "selected") {
+    return {
+      label: "Active",
+      detail: "Selected in the requested Flow session.",
+    };
+  }
+  if (workflowState === "running") {
+    return {
+      label: "Running",
+      detail: "Flow issue state is running.",
+    };
+  }
+  if (workflowState === "blocked") {
+    return {
+      label: "Blocked",
+      detail: "Flow issue state is blocked.",
+    };
+  }
+  if (workflowState === "awaiting_human") {
+    return {
+      label: "Needs Input",
+      detail: "Flow issue state is waiting for human input.",
+    };
+  }
+  if (workflowState === "awaiting_review") {
+    return {
+      label: "Ready",
+      detail: "Flow issue state is ready for review; no pull request is recorded yet.",
+    };
+  }
+  if (workflowState === "ready_to_run") {
+    return {
+      label: "Ready",
+      detail: "Flow issue state is ready to run.",
+    };
+  }
+  return {
+    label: dashboardWorkStatusLabel(workflowState),
+    detail: "No active handoff, result, or pull request is recorded.",
+  };
 }
 
 function dashboardWorkStatusLabel(state: WorkItem["state"]): string {
@@ -3079,6 +3198,11 @@ function dashboardWorkStatusLabel(state: WorkItem["state"]): string {
   if (state === "awaiting_human") return "Needs Input";
   if (state === "done") return "Done";
   return "Unknown";
+}
+
+function pullRequestDisplayRef(url: string): string {
+  const match = /\/pull\/(\d+)(?:$|[/?#])/.exec(url);
+  return match ? `#${match[1]}` : "record";
 }
 
 function dashboardRepositoryLabel(repoKey: string): string {

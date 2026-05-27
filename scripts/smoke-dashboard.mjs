@@ -28,6 +28,7 @@ const allowedIssueKeys = new Set([
   "title",
   "updatedLabel",
   "workStatus",
+  "workStatusDetail",
 ]);
 const requiredMirrorControlTokens = [
   'data-mirror-control',
@@ -157,11 +158,14 @@ try {
   const payload = await fetchJson(`${dashboardUrl}/api/dashboard`);
   assertDashboardPayloadShape(payload);
   const runtimeQueue = runFlow({ op: "runtime", method: "inspectDashboardQueue", params: { limit: 10 } });
+  const runtimeQueueForSession = runFlow({ op: "runtime", method: "inspectDashboardQueue", params: { limit: 10, sessionId: "cli" } });
   assertRuntimeDashboardQueueShape(runtimeQueue);
+  assertRuntimeDashboardQueueShape(runtimeQueueForSession);
   const dashboardFingerprintBeforeBlockedRequests = dashboardIssuesFingerprint(payload.issues);
   const runtimeFingerprintBeforeBlockedRequests = dashboardIssuesFingerprint(runtimeQueue);
-  assertSelectedIssueMirrorsAsActive(payload.issues, createdIssue.ref, "dashboard API");
-  assertSelectedIssueMirrorsAsActive(runtimeQueue, createdIssue.ref, "runtime dashboard queue");
+  assertSelectedIssueUsesQueueState(payload.issues, createdIssue.ref, "dashboard API");
+  assertSelectedIssueUsesQueueState(runtimeQueue, createdIssue.ref, "runtime dashboard queue");
+  assertSelectedIssueMirrorsAsActive(runtimeQueueForSession, createdIssue.ref, "runtime dashboard queue with session");
   assertNoRawWorkflowStates(payload, "dashboard API");
   assertNoRawWorkflowStates(runtimeQueue, "runtime dashboard queue");
   const statusKeys = ["degraded", "degradedError", "refreshing", "stale"].filter((key) => Object.hasOwn(payload, key));
@@ -185,7 +189,7 @@ try {
     throw new Error(`dashboard query input should not shape mirrored issue count: ${JSON.stringify(queryPayload)}`);
   }
   assertDashboardPayloadShape(queryPayload);
-  assertSelectedIssueMirrorsAsActive(queryPayload.issues, createdIssue.ref, "dashboard API with query input");
+  assertSelectedIssueUsesQueueState(queryPayload.issues, createdIssue.ref, "dashboard API with query input");
   assertMirrorStateUnchanged(dashboardFingerprintBeforeBlockedRequests, queryPayload.issues, "dashboard API with query input");
   assertNoRawWorkflowStates(queryPayload, "dashboard API with query input");
   for (const issue of payload.issues ?? []) {
@@ -275,11 +279,11 @@ try {
   await assertMutationMethodsNotAvailable(`${dashboardUrl}/api/actions/select`, { issueRef, issue: payload.issues[0] });
   const payloadAfterBlockedRequests = await fetchJson(`${dashboardUrl}/api/dashboard`);
   assertDashboardPayloadShape(payloadAfterBlockedRequests);
-  assertSelectedIssueMirrorsAsActive(payloadAfterBlockedRequests.issues, createdIssue.ref, "dashboard API after blocked requests");
+  assertSelectedIssueUsesQueueState(payloadAfterBlockedRequests.issues, createdIssue.ref, "dashboard API after blocked requests");
   assertMirrorStateUnchanged(dashboardFingerprintBeforeBlockedRequests, payloadAfterBlockedRequests.issues, "dashboard API after blocked requests");
   const runtimeQueueAfterBlockedRequests = runFlow({ op: "runtime", method: "inspectDashboardQueue", params: { limit: 10 } });
   assertRuntimeDashboardQueueShape(runtimeQueueAfterBlockedRequests);
-  assertSelectedIssueMirrorsAsActive(runtimeQueueAfterBlockedRequests, createdIssue.ref, "runtime dashboard queue after blocked requests");
+  assertSelectedIssueUsesQueueState(runtimeQueueAfterBlockedRequests, createdIssue.ref, "runtime dashboard queue after blocked requests");
   assertMirrorStateUnchanged(runtimeFingerprintBeforeBlockedRequests, runtimeQueueAfterBlockedRequests, "runtime dashboard queue after blocked requests");
 
   console.log("dashboard smoke: ok");
@@ -477,7 +481,15 @@ function assertSelectedIssueMirrorsAsActive(issues, ref, source) {
   const issue = issues.find((candidate) => candidate.ref === ref);
   if (!issue) throw new Error(`${source} should include selected smoke issue ${ref}: ${JSON.stringify(issues)}`);
   if (issue.workStatus !== "Active") {
-    throw new Error(`${source} should mirror selected internal state as Active: ${JSON.stringify(issue)}`);
+    throw new Error(`${source} should mirror explicit session selection as Active: ${JSON.stringify(issue)}`);
+  }
+}
+
+function assertSelectedIssueUsesQueueState(issues, ref, source) {
+  const issue = issues.find((candidate) => candidate.ref === ref);
+  if (!issue) throw new Error(`${source} should include selected smoke issue ${ref}: ${JSON.stringify(issues)}`);
+  if (issue.workStatus !== "Queued") {
+    throw new Error(`${source} should not mirror selected internal state without an explicit session: ${JSON.stringify(issue)}`);
   }
 }
 
@@ -511,6 +523,7 @@ function dashboardIssuesFingerprint(issues) {
         statusLabel: issue.statusLabel,
         title: issue.title,
         workStatus: issue.workStatus,
+        workStatusDetail: issue.workStatusDetail,
       }))
       .sort((left, right) => String(left.ref).localeCompare(String(right.ref))),
   );
