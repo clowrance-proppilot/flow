@@ -1,6 +1,6 @@
 {
   "name": "@camden-lowrance/flow",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "type": "module",
   "description": "Workflow state for coding agents.",
   "license": "MIT",
