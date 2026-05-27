@@ -1,0 +1,88 @@
+{
+  "issue": {
+    "ref": "GH-32",
+    "title": "Scaffold Flow Desktop shell",
+    "repoKeys": [
+      "flow"
+    ],
+    "state": "selected",
+    "updatedAt": "2026-05-27T03:35:12.155Z",
+    "metadata": {
+      "issueStatus": "Open",
+      "issueStatusCategory": "To Do",
+      "issueUpdated": "2026-05-27T03:01:12Z",
+      "issueUrl": "https://github.com/camden-lowrance/flow/issues/32",
+      "issueType": "task",
+      "issueLabels": [],
+      "workflow.external.issue.status": "published",
+      "workflow.external.code_review.status": "unpublished",
+      "branchKind": "feature",
+      "evidenceRecorded": true,
+      "evidenceSummary": "Desktop shell scaffolded and verified. Electron launches, express serves dashboard, healthz responds.",
+      "evidenceSource": "local",
+      "evidenceCriteria": [
+        {
+          "label": "npm run build:desktop succeeds",
+          "status": "passed",
+          "evidence": "Desktop shell scaffolded and verified. Electron launches, express serves dashboard, healthz responds.",
+          "source": "local"
+        },
+        {
+          "label": "npx electron dist/desktop/main.js launches window",
+          "status": "passed",
+          "evidence": "Desktop shell scaffolded and verified. Electron launches, express serves dashboard, healthz responds.",
+          "source": "local"
+        },
+        {
+          "label": "dashboard healthz endpoint responds",
+          "status": "passed",
+          "evidence": "Desktop shell scaffolded and verified. Electron launches, express serves dashboard, healthz responds.",
+          "source": "local"
+        },
+        {
+          "label": "dashboard HTML served from dist/dashboard/",
+          "status": "passed",
+          "evidence": "Desktop shell scaffolded and verified. Electron launches, express serves dashboard, healthz responds.",
+          "source": "local"
+        }
+      ],
+      "workflow.acceptance.status": "recorded",
+      "workflow.acceptance.criteria_json": "[{\"label\":\"npm run build:desktop succeeds\",\"status\":\"passed\",\"evidence\":\"Desktop shell scaffolded and verified. Electron launches, express serves dashboard, healthz responds.\",\"source\":\"local\"},{\"label\":\"npx electron dist/desktop/main.js launches window\",\"status\":\"passed\",\"evidence\":\"Desktop shell scaffolded and verified. Electron launches, express serves dashboard, healthz responds.\",\"source\":\"local\"},{\"label\":\"dashboard healthz endpoint responds\",\"status\":\"passed\",\"evidence\":\"Desktop shell scaffolded and verified. Electron launches, express serves dashboard, healthz responds.\",\"source\":\"local\"},{\"label\":\"dashboard HTML served from dist/dashboard/\",\"status\":\"passed\",\"evidence\":\"Desktop shell scaffolded and verified. Electron launches, express serves dashboard, healthz responds.\",\"source\":\"local\"}]",
+      "evidenceRecordedAt": "2026-05-27T03:34:40.964Z",
+      "documentationRecorded": true,
+      "documentationDisposition": "updated",
+      "documentationSummary": "Desktop entry points documented in desktop/main.ts comments. Build scripts documented. electron-builder.yml has packaging config for all platforms.",
+      "documentationRecordedAt": "2026-05-27T03:35:12.154Z"
+    }
+  },
+  "workerRuns": [
+    {
+      "taskId": "worker-local-mpni85fa-ge0pzvik",
+      "issueRef": "GH-32",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Scaffolded Flow Desktop shell. Electron main imports flow internals directly (DashboardState, loadFlowConfig), serves existing dashboard via local express server on random port. esbuild bundles main/preload. App launches, dashboard healthz responds. No separate package — desktop lives inside flow as an entry point.",
+      "blockers": [],
+      "updatedAt": "2026-05-27T03:28:23.926Z",
+      "completedAt": "2026-05-27T03:28:23.926Z"
+    }
+  ],
+  "workerResults": [
+    {
+      "taskId": "worker-local-mpni85fa-ge0pzvik",
+      "issueRef": "GH-32",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Scaffolded Flow Desktop shell. Electron main imports flow internals directly (DashboardState, loadFlowConfig), serves existing dashboard via local express server on random port. esbuild bundles main/preload. App launches, dashboard healthz responds. No separate package — desktop lives inside flow as an entry point.",
+      "changedFiles": [],
+      "testsRun": [],
+      "blockers": [],
+      "completedAt": "2026-05-27T03:28:23.926Z"
+    }
+  ],
+  "workJobs": [],
+  "workJobResults": [],
+  "updatedAt": "2026-05-27T03:35:12.156Z"
+}

@@ -1,0 +1,67 @@
+{
+  "issue": {
+    "ref": "GH-23",
+    "title": "Cut and publish Flow 0.1.5 to npm",
+    "repoKeys": [
+      "flow"
+    ],
+    "state": "ready_to_run",
+    "summary": "Demo ready work item for Flow dashboard.",
+    "updatedAt": "2026-05-26T23:13:12.969Z",
+    "metadata": {
+      "issueStatus": "Open",
+      "issueStatusCategory": "To Do",
+      "issueUpdated": "2026-05-26T01:08:58Z",
+      "issueUrl": "https://github.com/camden-lowrance/flow/issues/23",
+      "issueType": "task",
+      "issueLabels": [],
+      "workflow.external.issue.status": "published",
+      "workflow.external.code_review.status": "unpublished",
+      "branchKind": "feature",
+      "demoSeed": true,
+      "demoSeededAt": "2026-05-26T23:13:12.920Z",
+      "evidenceRecorded": true,
+      "documentationRecorded": true,
+      "documentationDisposition": "updated"
+    }
+  },
+  "workerRuns": [
+    {
+      "taskId": "npm-publish-auth-gate",
+      "issueRef": "GH-23",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "blocked",
+      "summary": "Workflow setup is merged, but publishing cannot proceed until npm package settings pass account 2FA and npm trusted publishing is configured. npm CLI is unauthenticated; npm web is on the security-key 2FA page for @camden-lowrance/flow settings.",
+      "blockers": [
+        "Approve npm security-key 2FA in Chrome, or provide npm CLI auth with package write access."
+      ],
+      "updatedAt": "2026-05-26T01:09:37.835Z",
+      "completedAt": "2026-05-26T01:09:37.835Z"
+    }
+  ],
+  "workerResults": [
+    {
+      "taskId": "npm-publish-auth-gate",
+      "issueRef": "GH-23",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "blocked",
+      "summary": "Workflow setup is merged, but publishing cannot proceed until npm package settings pass account 2FA and npm trusted publishing is configured. npm CLI is unauthenticated; npm web is on the security-key 2FA page for @camden-lowrance/flow settings.",
+      "changedFiles": [],
+      "testsRun": [
+        "npm view @camden-lowrance/flow version versions --json",
+        "npx npm@latest trust list @camden-lowrance/flow --json"
+      ],
+      "blockers": [
+        "Approve npm security-key 2FA in Chrome, or provide npm CLI auth with package write access."
+      ],
+      "nextPickup": "After npm 2FA/auth, run npx npm@latest trust github @camden-lowrance/flow --repo camden-lowrance/flow --file publish.yml --allow-publish --yes, then bump to 0.1.5 and create release v0.1.5.",
+      "handoffPrompt": "Use Flow to work this prompt.\n\nFlow context:\n- Issue: GH-23\n- Repo: flow\n- Main worktree: C:/Users/camde/Documents/GitHub/flow\n\nBlocked at npm 2FA. Complete the npm security-key prompt, configure trusted publishing, bump 0.1.5, release v0.1.5, and verify npm.",
+      "completedAt": "2026-05-26T01:09:37.835Z"
+    }
+  ],
+  "workJobs": [],
+  "workJobResults": [],
+  "updatedAt": "2026-05-26T23:13:12.970Z"
+}

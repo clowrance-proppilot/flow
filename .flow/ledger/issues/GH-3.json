@@ -1,0 +1,2592 @@
+{
+  "issue": {
+    "ref": "GH-3",
+    "title": "Flatten dashboard queue contract around Flow state",
+    "repoKeys": [
+      "flow"
+    ],
+    "state": "done",
+    "summary": "Demo active work item for Flow dashboard.",
+    "updatedAt": "2026-05-26T23:52:09.669Z",
+    "metadata": {
+      "issueStatus": "Open",
+      "issueStatusCategory": "To Do",
+      "issueUpdated": "2026-05-20T03:13:53Z",
+      "issueUrl": "https://github.com/camden-lowrance/flow/issues/3",
+      "issueType": "task",
+      "issueLabels": [],
+      "workflow.external.issue.status": "published",
+      "workflow.external.code_review.status": "unpublished",
+      "branchKind": "feature",
+      "evidenceRecorded": true,
+      "evidenceSummary": "Merge readiness verified for the dashboard demo polish branch.",
+      "evidenceSource": "local",
+      "evidenceCriteria": [
+        {
+          "label": "npm run check passed",
+          "status": "passed",
+          "evidence": "Merge readiness verified for the dashboard demo polish branch.",
+          "source": "local"
+        },
+        {
+          "label": "npm run build passed",
+          "status": "passed",
+          "evidence": "Merge readiness verified for the dashboard demo polish branch.",
+          "source": "local"
+        },
+        {
+          "label": "npm run smoke:dashboard passed",
+          "status": "passed",
+          "evidence": "Merge readiness verified for the dashboard demo polish branch.",
+          "source": "local"
+        },
+        {
+          "label": "npm test passed with 128 tests",
+          "status": "passed",
+          "evidence": "Merge readiness verified for the dashboard demo polish branch.",
+          "source": "local"
+        },
+        {
+          "label": "npm run readiness:public passed",
+          "status": "passed",
+          "evidence": "Merge readiness verified for the dashboard demo polish branch.",
+          "source": "local"
+        },
+        {
+          "label": "git diff --check passed",
+          "status": "passed",
+          "evidence": "Merge readiness verified for the dashboard demo polish branch.",
+          "source": "local"
+        }
+      ],
+      "workflow.acceptance.status": "recorded",
+      "workflow.acceptance.criteria_json": "[{\"label\":\"npm run check passed\",\"status\":\"passed\",\"evidence\":\"Merge readiness verified for the dashboard demo polish branch.\",\"source\":\"local\"},{\"label\":\"npm run build passed\",\"status\":\"passed\",\"evidence\":\"Merge readiness verified for the dashboard demo polish branch.\",\"source\":\"local\"},{\"label\":\"npm run smoke:dashboard passed\",\"status\":\"passed\",\"evidence\":\"Merge readiness verified for the dashboard demo polish branch.\",\"source\":\"local\"},{\"label\":\"npm test passed with 128 tests\",\"status\":\"passed\",\"evidence\":\"Merge readiness verified for the dashboard demo polish branch.\",\"source\":\"local\"},{\"label\":\"npm run readiness:public passed\",\"status\":\"passed\",\"evidence\":\"Merge readiness verified for the dashboard demo polish branch.\",\"source\":\"local\"},{\"label\":\"git diff --check passed\",\"status\":\"passed\",\"evidence\":\"Merge readiness verified for the dashboard demo polish branch.\",\"source\":\"local\"}]",
+      "evidenceRecordedAt": "2026-05-26T23:50:34.304Z",
+      "documentationRecorded": true,
+      "documentationDisposition": "updated",
+      "documentationSummary": "Documented that flow-dashboard is a read-only human mirror and dashboard reloads only re-read /api/dashboard.",
+      "documentationRecordedAt": "2026-05-26T16:38:09.138Z",
+      "demoSeed": true,
+      "demoSeededAt": "2026-05-26T23:13:12.920Z",
+      "prRepo": "flow",
+      "prNumber": 27,
+      "prUrl": "https://github.com/camden-lowrance/flow/pull/27",
+      "prHeadRefName": "codex/dashboard-demo-flow-polish",
+      "prIsDraft": false,
+      "humanReviewRequired": false,
+      "prChecksPassing": true,
+      "prTemplateMissingHeadings": [],
+      "prRecordedAt": "2026-05-26T23:51:20.322Z",
+      "workflow.repos.flow.pr_repo": "flow",
+      "workflow.repos.flow.pr_number": 27,
+      "workflow.repos.flow.pr_url": "https://github.com/camden-lowrance/flow/pull/27",
+      "workflow.repos.flow.pr_head_ref_name": "codex/dashboard-demo-flow-polish",
+      "workflow.repos.flow.pr_is_draft": false,
+      "workflow.repos.flow.pr_checks_passing": true,
+      "workflow.repos.flow.pr_template_missing_headings": [],
+      "workflow.repos.flow.pr_recorded_at": "2026-05-26T23:51:20.322Z",
+      "prState": "MERGED",
+      "prMergedAt": "2026-05-26T23:51:27Z",
+      "prMergeCommitSha": "493f1cf98a56269920e3b3701aecf5b1e3e65357",
+      "prMergeable": "UNKNOWN",
+      "prMergeStateStatus": "UNKNOWN",
+      "prAutoReviewStatus": "missing",
+      "workflow.repos.flow.pr_state": "MERGED",
+      "workflow.repos.flow.pr_merged_at": "2026-05-26T23:51:27Z",
+      "workflow.repos.flow.pr_merge_commit_sha": "493f1cf98a56269920e3b3701aecf5b1e3e65357",
+      "workflow.repos.flow.pr_mergeable": "UNKNOWN",
+      "workflow.repos.flow.pr_merge_state_status": "UNKNOWN",
+      "workflow.repos.flow.pr_auto_review_status": "missing"
+    }
+  },
+  "workerRuns": [
+    {
+      "taskId": "dashboard-readonly-mirror-hardening",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Hardened the dashboard into a read-only mirror: removed dashboard action/event surfaces, removed command event UI, fixed provider-neutral issue status and URL mirroring, and tightened dashboard smoke coverage.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T16:25:07.975Z",
+      "completedAt": "2026-05-26T16:25:07.975Z"
+    },
+    {
+      "taskId": "dashboard-readonly-contract-hardening",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Extended the read-only dashboard hardening: removed unused event stream helper, added a dashboard readonly contract check to check/test, updated docs to state the mirror-only contract, and verified the running dashboard.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T16:30:37.418Z",
+      "completedAt": "2026-05-26T16:30:37.418Z"
+    },
+    {
+      "taskId": "worker-local-mpmuzqca-dif1q69m",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Hardened the dashboard as a minimal read-only Flow mirror with a navy theme, flow-like mark, provider-neutral issue metadata, snapshot reload wording, and static/smoke guards against action routes.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T16:37:59.962Z",
+      "completedAt": "2026-05-26T16:37:59.962Z"
+    },
+    {
+      "taskId": "worker-local-mpmv80aj-wrnfhqgo",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Hardened the dashboard mirror contract by allowing only inspectDashboardQueue runtime calls, then stabilized the demo queue by replacing @me with the explicit camden-lowrance assignee in .flow/config.yaml.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T16:44:26.107Z",
+      "completedAt": "2026-05-26T16:44:26.107Z"
+    },
+    {
+      "taskId": "worker-local-mpmve71t-p9v18pkl",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Removed the dashboard appearance/settings menu and browser-local theme storage so the UI stays focused on Flow state, while keeping theme application config-driven.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T16:49:14.801Z",
+      "completedAt": "2026-05-26T16:49:14.801Z"
+    },
+    {
+      "taskId": "worker-local-mpmvl26t-8l07b8ck",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Changed the dashboard display label for raw workflowState selected to In Flow and renamed Flow State to Flow Stage, keeping the underlying API mirror unchanged.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T16:54:35.093Z",
+      "completedAt": "2026-05-26T16:54:35.093Z"
+    },
+    {
+      "taskId": "worker-local-mpmvpbhm-jxj8l1hl",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Renamed dashboard detail link labels from Open Issue/Open PR to Issue/PR and added static guards against command-shaped detail link labels.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T16:57:53.770Z",
+      "completedAt": "2026-05-26T16:57:53.770Z"
+    },
+    {
+      "taskId": "worker-local-mpmvwg61-kw6bp3xs",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Dashboard wording now keeps selected as an internal Flow ledger state and presents it as In Flow in the read-only mirror.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T17:03:26.425Z",
+      "completedAt": "2026-05-26T17:03:26.425Z"
+    },
+    {
+      "taskId": "worker-local-mpmw0ezy-10r9f38z",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Dashboard view selection wording now uses active/snapshot terms instead of selected, keeping selected as a raw Flow ledger state only.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T17:06:31.534Z",
+      "completedAt": "2026-05-26T17:06:31.534Z"
+    },
+    {
+      "taskId": "worker-local-mpmw0n88-oapbat3h",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Dashboard view selection wording now uses active/snapshot terms instead of selected, keeping selected as a raw Flow ledger state only.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T17:06:42.200Z",
+      "completedAt": "2026-05-26T17:06:42.200Z"
+    },
+    {
+      "taskId": "worker-local-mpmw4gln-8qhh5zj2",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Dashboard Flow CLI bridge is private to the read-only state module and guarded by the dashboard readonly contract check.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T17:09:40.235Z",
+      "completedAt": "2026-05-26T17:09:40.235Z"
+    },
+    {
+      "taskId": "worker-local-mpmw7wob-uczwxlx5",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Dashboard no longer exposes a manual Reload control; the UI only auto-polls the read-only /api/dashboard snapshot endpoint.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T17:12:21.035Z",
+      "completedAt": "2026-05-26T17:12:21.035Z"
+    },
+    {
+      "taskId": "worker-local-mpmwhvbj-n57eo51v",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Dashboard presentation is now built in only: no UI config payload, custom CSS/assets route, theme module, or dashboard theme config validation remains.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T17:20:05.839Z",
+      "completedAt": "2026-05-26T17:20:05.839Z"
+    },
+    {
+      "taskId": "worker-local-mpmwn7b1-kqgjtwc7",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Dashboard snapshot payload no longer exposes host health details; /healthz is minimal and separate from the mirror payload.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T17:24:14.653Z",
+      "completedAt": "2026-05-26T17:24:14.653Z"
+    },
+    {
+      "taskId": "worker-local-mpmws9r3-1ren3jos",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Dashboard mirror contract no longer exposes Autoflow orchestration fields in runtime queue, API payload, or UI types.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T17:28:11.103Z",
+      "completedAt": "2026-05-26T17:28:11.103Z"
+    },
+    {
+      "taskId": "worker-local-mpmx0ild-70qd8ryi",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Dashboard is now a read-only Flow mirror with raw selected state translated to demo-safe stage wording, no dashboard actions, no UI config surface, and a minimal snapshot API.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T17:34:35.809Z",
+      "completedAt": "2026-05-26T17:34:35.809Z"
+    },
+    {
+      "taskId": "worker-local-mpmx3f9w-qvmhuh1z",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Dashboard now translates internal selected workflow state into demo-safe stage wording, keeps the client status model minimal, and exposes only read-only snapshot data.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T17:36:51.476Z",
+      "completedAt": "2026-05-26T17:36:51.476Z"
+    },
+    {
+      "taskId": "worker-local-mpmx8lnq-yboxk9o6",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Trimmed dashboard mirror payloads to omit absent fields and local worktree paths while keeping the UI read-only and demo-safe.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T17:40:53.030Z",
+      "completedAt": "2026-05-26T17:40:53.030Z"
+    },
+    {
+      "taskId": "worker-local-mpmxccoc-qwzm56hd",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Hardened dashboard state labels so unknown workflow states render as Other instead of derived raw internal labels.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T17:43:48.012Z",
+      "completedAt": "2026-05-26T17:43:48.012Z"
+    },
+    {
+      "taskId": "worker-local-mpmxfr68-pj1drbg8",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Hardened dashboard search so it uses visible stage labels and does not index raw workflow states or hidden URLs.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T17:46:26.768Z",
+      "completedAt": "2026-05-26T17:46:26.768Z"
+    },
+    {
+      "taskId": "worker-local-mpmxj479-ag4i7gkn",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Mapped PR review decision values to friendly dashboard labels while preserving the read-only mirror contract.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T17:49:03.621Z",
+      "completedAt": "2026-05-26T17:49:03.621Z"
+    },
+    {
+      "taskId": "worker-local-mpmxoqq0-t8mku973",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Mapped visible blocker text to friendly labels and kept search aligned with visible blocker wording while preserving the read-only mirror payload.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T17:53:26.088Z",
+      "completedAt": "2026-05-26T17:53:26.088Z"
+    },
+    {
+      "taskId": "worker-local-mpmxsijg-5ggmhqid",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Changed issue and PR references from button-like controls to read-only metadata links while preserving the dashboard mirror data.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T17:56:22.108Z",
+      "completedAt": "2026-05-26T17:56:22.108Z"
+    },
+    {
+      "taskId": "worker-local-mpmxwgbc-vphiesz8",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Removed raw commit head SHA exposure from the dashboard mirror API, UI, and search path.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T17:59:25.848Z",
+      "completedAt": "2026-05-26T17:59:25.848Z"
+    },
+    {
+      "taskId": "worker-local-mpmy1bb7-u6rde4iq",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Changed evidence and documentation booleans to read-only status labels in the dashboard detail panel.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T18:03:12.643Z",
+      "completedAt": "2026-05-26T18:03:12.643Z"
+    },
+    {
+      "taskId": "worker-local-mpmy64gn-pnj4ndvs",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Changed dashboard stage filters to count and filter by visible labels instead of raw workflowState values.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T18:06:57.047Z",
+      "completedAt": "2026-05-26T18:06:57.047Z"
+    },
+    {
+      "taskId": "worker-local-mpmy9w9i-442vsyl3",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Reworded dashboard loading and topbar copy to snapshot/read-only mirror language instead of implementation-specific runtime wording.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T18:09:53.046Z",
+      "completedAt": "2026-05-26T18:09:53.046Z"
+    },
+    {
+      "taskId": "worker-local-mpmydiz1-11oj7ltr",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Reworded issue card fallback status to neutral mirror copy and kept dashboard UI free of adapter-specific wording.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T18:12:42.445Z",
+      "completedAt": "2026-05-26T18:12:42.445Z"
+    },
+    {
+      "taskId": "worker-local-mpmyhfka-bfeskb6u",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Moved PR check state wording into a dashboard display helper and removed old checks passing/failing fragments.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T18:15:44.650Z",
+      "completedAt": "2026-05-26T18:15:44.650Z"
+    },
+    {
+      "taskId": "worker-local-mpmyqbai-grg8y5em",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Clarified dashboard work status wording: selected now displays as Active, Flow Stage/State wording is removed, and static checks guard the labels.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T18:22:39.018Z",
+      "completedAt": "2026-05-26T18:22:39.018Z"
+    },
+    {
+      "taskId": "worker-local-mpmyx1rf-2rz2v52s",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Made the dashboard queue projection session-aware so the visible Active item mirrors the current Flow session. Added coverage for stale selected ledger state being demoted in the dashboard view.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T18:27:53.259Z",
+      "completedAt": "2026-05-26T18:27:53.259Z"
+    },
+    {
+      "taskId": "worker-local-mpmz1ubf-ffhl2drt",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Removed local workspace path and raw commit head fields from the dashboard queue contract and added guard/test coverage so the read-only dashboard mirror cannot regress to exposing them.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T18:31:36.891Z",
+      "completedAt": "2026-05-26T18:31:36.891Z"
+    },
+    {
+      "taskId": "worker-local-mpmz5qub-88gdcdzu",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Trimmed dashboard health to liveness only and removed unused refresh daemon/status helpers, with readonly guard coverage for the simplified health surface.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T18:34:39.011Z",
+      "completedAt": "2026-05-26T18:34:39.011Z"
+    },
+    {
+      "taskId": "worker-local-mpmzak23-c5ddcs7y",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Made the dashboard default focus follow the mirrored active Flow issue instead of the first queue item, while preserving user-clicked focus during polling.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T18:38:23.499Z",
+      "completedAt": "2026-05-26T18:38:23.499Z"
+    },
+    {
+      "taskId": "worker-local-mpmzfjv7-r87n9o0j",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Removed duplicate visible Work Status text from the detail panel and guarded against reintroducing the duplicate status label pattern.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T18:42:16.531Z",
+      "completedAt": "2026-05-26T18:42:16.531Z"
+    },
+    {
+      "taskId": "worker-local-mpmzk8j7-ilkn3d92",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Labeled blockers in the public dashboard payload and added smoke/static coverage so raw readiness blocker wording does not leak through /api/dashboard.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T18:45:55.123Z",
+      "completedAt": "2026-05-26T18:45:55.123Z"
+    },
+    {
+      "taskId": "worker-local-mpmzptsw-i7fsur5j",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Changed the browser-facing dashboard contract from raw workflowState keys to display workStatus labels and updated UI/static/smoke guards around that contract.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T18:50:15.968Z",
+      "completedAt": "2026-05-26T18:50:15.968Z"
+    },
+    {
+      "taskId": "worker-local-mpmzyhn9-m4zm38r1",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Changed the browser-facing dashboard evidence/docs contract from raw booleans to display record status labels and updated UI/static/smoke coverage.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T18:57:00.117Z",
+      "completedAt": "2026-05-26T18:57:00.117Z"
+    },
+    {
+      "taskId": "worker-local-mpn0473y-jnulwbmw",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Changed the browser-facing dashboard PR/review contract from raw provider fields to display labels and updated UI/static/smoke coverage.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T19:01:26.398Z",
+      "completedAt": "2026-05-26T19:01:26.398Z"
+    },
+    {
+      "taskId": "worker-local-mpn095ot-ym2h7h2v",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Removed external issue/PR URLs from the browser-facing dashboard and replaced them with plain link-presence labels, with static, smoke, API, and browser verification.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T19:05:17.837Z",
+      "completedAt": "2026-05-26T19:05:17.837Z"
+    },
+    {
+      "taskId": "worker-local-mpn0drir-f9tai0g0",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Replaced browser-facing repoKeys with repository labels and removed branch details from the dashboard API/UI, with static, smoke, API, and browser verification.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T19:08:52.755Z",
+      "completedAt": "2026-05-26T19:08:52.755Z"
+    },
+    {
+      "taskId": "worker-local-mpn0iroj-wbz2ztar",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Replaced browser-facing per-issue updatedAt timestamps with display updatedLabel values, with static, smoke, API, and browser verification.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T19:12:46.243Z",
+      "completedAt": "2026-05-26T19:12:46.243Z"
+    },
+    {
+      "taskId": "worker-local-mpn0nhki-5hl57ir0",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Removed non-actionable issue/PR link presence from the browser-facing dashboard API and UI, with static, smoke, API, and browser verification.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T19:16:26.418Z",
+      "completedAt": "2026-05-26T19:16:26.418Z"
+    },
+    {
+      "taskId": "worker-local-mpn0sau9-acofxywp",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Replaced browser-facing snapshot.refreshedAt/ageSeconds with snapshot.freshnessLabel, with static, smoke, API, and browser verification.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T19:20:10.977Z",
+      "completedAt": "2026-05-26T19:20:10.977Z"
+    },
+    {
+      "taskId": "worker-local-mpn0x7bd-2u6tc2t4",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Replaced browser-facing issueStatus with statusLabel, with static, smoke, API, and browser verification.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T19:23:59.689Z",
+      "completedAt": "2026-05-26T19:23:59.689Z"
+    },
+    {
+      "taskId": "worker-local-mpn121iz-9rlg78rg",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Hardened dashboard route-level read-only behavior by blocking request-input use in static checks and expanding smoke/live verification for query input plus POST, PUT, PATCH, and DELETE on /api/dashboard.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T19:27:45.467Z",
+      "completedAt": "2026-05-26T19:27:45.467Z"
+    },
+    {
+      "taskId": "worker-local-mpn16qhv-a5kys18m",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Replaced browser-facing blockers with blockerLabels and made the UI consume labels directly, with static, smoke, API, and browser verification.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T19:31:24.451Z",
+      "completedAt": "2026-05-26T19:31:24.451Z"
+    },
+    {
+      "taskId": "worker-local-mpn1ae8b-01k6ul6i",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Added strict dashboard payload allowlist coverage to smoke tests and verified the live API/browser still expose only the mirror state contract.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T19:34:15.179Z",
+      "completedAt": "2026-05-26T19:34:15.179Z"
+    },
+    {
+      "taskId": "worker-local-mpn1kt82-5z0fdos4",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Replaced dashboard runtime workflowState output with display workStatus labels and extended smoke/static checks so selected cannot leak through the dashboard queue contract.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T19:42:21.170Z",
+      "completedAt": "2026-05-26T19:42:21.170Z"
+    },
+    {
+      "taskId": "worker-local-mpn1tb0u-q21vn5ty",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Hardened the dashboard runtime queue into a display-only mirror contract and extended smoke/static checks to reject raw URLs, branch details, repo keys, blockers, PR provider fields, record booleans, and workflowState.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T19:48:57.486Z",
+      "completedAt": "2026-05-26T19:48:57.486Z"
+    },
+    {
+      "taskId": "worker-local-mpn1yfvw-mg8l2d2i",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Added an explicit dashboard API issue allowlist and static guard so /api/dashboard cannot return non-public issue fields even if the runtime queue changes.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T19:52:57.068Z",
+      "completedAt": "2026-05-26T19:52:57.068Z"
+    },
+    {
+      "taskId": "worker-local-mpn23pc3-bn6fj47x",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Added a client-side dashboard issue normalizer and static guard so fetched issue payloads are reduced to display-only mirror fields before React state, search, or rendering.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T19:57:02.595Z",
+      "completedAt": "2026-05-26T19:57:02.595Z"
+    },
+    {
+      "taskId": "worker-local-mpn28now-zmavurms",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Extended dashboard smoke coverage to inspect served JS/CSS assets for forbidden command routes, raw dashboard fields, raw workflow states, and command labels.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T20:00:53.744Z",
+      "completedAt": "2026-05-26T20:00:53.744Z"
+    },
+    {
+      "taskId": "worker-local-mpn2ek3s-x1k6dwdk",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Added no-store cache headers for dashboard mirror responses and smoke/static coverage to keep the UI shell and mirror JSON from being cached as stale state.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T20:05:29.032Z",
+      "completedAt": "2026-05-26T20:05:29.032Z"
+    },
+    {
+      "taskId": "worker-local-mpn2p3qv-xjki5ill",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Added readonly guardrails that reject browser persistence, navigation, forms, clipboard, workers, and secondary transports from the dashboard UI source and served dashboard assets.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T20:13:41.047Z",
+      "completedAt": "2026-05-26T20:13:41.047Z"
+    },
+    {
+      "taskId": "worker-local-mpn2ubku-bik06ojp",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Added client-side allowlists for dashboard work and record status labels so raw workflow and ledger tokens cannot render through display fields.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T20:17:44.478Z",
+      "completedAt": "2026-05-26T20:17:44.478Z"
+    },
+    {
+      "taskId": "worker-local-mpn2ype4-11we4mxh",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Removed dashboard API and client error-detail propagation so failure paths stay generic while the dashboard remains a display-only mirror.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T20:21:09.004Z",
+      "completedAt": "2026-05-26T20:21:09.004Z"
+    },
+    {
+      "taskId": "worker-local-mpn3373m-lzns427w",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Made the dashboard health endpoint non-cacheable and added smoke coverage that it exposes only ok:true.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T20:24:38.578Z",
+      "completedAt": "2026-05-26T20:24:38.578Z"
+    },
+    {
+      "taskId": "worker-local-mpn39p0a-55575lr3",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Made dashboard JS/CSS asset responses non-cacheable and added smoke/static checks for stale bundle prevention.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T20:29:41.722Z",
+      "completedAt": "2026-05-26T20:29:41.722Z"
+    },
+    {
+      "taskId": "worker-local-mpn3f1ty-yff7l86n",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Strengthened dashboard smoke coverage so selected internal state must render as Active and raw workflow state values stay out of mirror payloads.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T20:33:51.622Z",
+      "completedAt": "2026-05-26T20:33:51.622Z"
+    },
+    {
+      "taskId": "worker-local-mpn3lqgk-9vmfwqzh",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Added mirror-only response headers, tightened smoke/static verification for those headers, and fixed flow-dashboard stale-dist rebuild detection.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T20:39:03.476Z",
+      "completedAt": "2026-05-26T20:39:03.476Z"
+    },
+    {
+      "taskId": "worker-local-mpn3lxzj-hjzv5h6w",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Added mirror-only response headers, tightened smoke/static verification for those headers, and fixed flow-dashboard stale-dist rebuild detection.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T20:39:13.231Z",
+      "completedAt": "2026-05-26T20:39:13.231Z"
+    },
+    {
+      "taskId": "worker-local-mpn3sbwq-zfj76n8z",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Extended dashboard mirror policy with Permissions-Policy and explicit 404 responses, and made smoke verify unavailable routes keep mirror headers.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T20:44:11.210Z",
+      "completedAt": "2026-05-26T20:44:11.210Z"
+    },
+    {
+      "taskId": "worker-local-mpn3w4w4-l5gssydr",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Added dashboard smoke fingerprints proving blocked command and mutation requests leave API and runtime mirror state unchanged.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T20:47:08.740Z",
+      "completedAt": "2026-05-26T20:47:08.740Z"
+    },
+    {
+      "taskId": "worker-local-mpn3zq99-yr2j0ton",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Added served HTML shell checks so command controls and raw workflow state cannot bypass the JS/CSS dashboard asset scan.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T20:49:56.397Z",
+      "completedAt": "2026-05-26T20:49:56.397Z"
+    },
+    {
+      "taskId": "worker-local-mpn4c8d5-g1xnqzvj",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Moved dashboard display-label normalization into a shared module and applied it at both the API and browser boundaries so raw workflow labels cannot leak as dashboard state.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T20:59:39.737Z",
+      "completedAt": "2026-05-26T20:59:39.737Z"
+    },
+    {
+      "taskId": "worker-local-mpn4hnt9-eim9ums2",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Marked every dashboard button/input as an explicit local mirror control and added checks that reject unmarked or non-allowlisted UI controls in source and served assets.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T21:03:53.037Z",
+      "completedAt": "2026-05-26T21:03:53.037Z"
+    },
+    {
+      "taskId": "worker-local-mpn4ls1p-l3f56xa3",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Extended the dashboard smoke and readonly contract so query parameters cannot shape mirrored issue state and unavailable routes must return only ok:false.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T21:07:05.149Z",
+      "completedAt": "2026-05-26T21:07:05.149Z"
+    },
+    {
+      "taskId": "worker-local-mpn4ql9m-2u9sfrqi",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Added an explicit dashboard server method guard so only GET/HEAD reach mirror routes; OPTIONS and mutation methods return ok:false with mirror headers, and the smoke now verifies OPTIONS too.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T21:10:49.642Z",
+      "completedAt": "2026-05-26T21:10:49.642Z"
+    },
+    {
+      "taskId": "worker-local-mpn4w473-n3pfpqmr",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Hardened dashboard shell serving: root now serves the same mirror shell as /dashboard, shell query input is ignored, and missing assets/favicons return ok:false.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T21:15:07.455Z",
+      "completedAt": "2026-05-26T21:15:07.455Z"
+    },
+    {
+      "taskId": "worker-local-mpn51hb4-sgnyg2v5",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Hardened dashboard mirror response isolation headers and smoke coverage for CSP, cross-origin isolation, DNS prefetch, and frame denial across success and fallback routes.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T21:19:17.728Z",
+      "completedAt": "2026-05-26T21:19:17.728Z"
+    },
+    {
+      "taskId": "worker-local-mpn56r7c-4uuuyx8v",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Removed remaining mutable theme hooks from the dashboard presentation and enforced the fixed navy mirror in readonly and smoke checks.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T21:23:23.832Z",
+      "completedAt": "2026-05-26T21:23:23.832Z"
+    }
+  ],
+  "workerResults": [
+    {
+      "taskId": "dashboard-readonly-mirror-hardening",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Hardened the dashboard into a read-only mirror: removed dashboard action/event surfaces, removed command event UI, fixed provider-neutral issue status and URL mirroring, and tightened dashboard smoke coverage.",
+      "changedFiles": [
+        "scripts/smoke-dashboard.mjs",
+        "src/dashboard-server.ts",
+        "src/dashboard-state.ts",
+        "src/dashboard/main.tsx",
+        "src/dashboard/styles.css",
+        "src/dashboard/themes.ts",
+        "src/work-runtime.ts",
+        "test/flow.test.ts"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T16:25:07.975Z"
+    },
+    {
+      "taskId": "dashboard-readonly-contract-hardening",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Extended the read-only dashboard hardening: removed unused event stream helper, added a dashboard readonly contract check to check/test, updated docs to state the mirror-only contract, and verified the running dashboard.",
+      "changedFiles": [
+        "README.md",
+        "docs/host-integration.md",
+        "docs/runtime-and-dashboard.md",
+        "package.json",
+        "scripts/check-dashboard-readonly.mjs",
+        "scripts/smoke-dashboard.mjs",
+        "src/dashboard-server.ts",
+        "src/dashboard-state.ts",
+        "src/dashboard/main.tsx",
+        "src/dashboard/styles.css",
+        "src/dashboard/themes.ts",
+        "src/work-runtime.ts",
+        "test/flow.test.ts"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T16:30:37.418Z"
+    },
+    {
+      "taskId": "worker-local-mpmuzqca-dif1q69m",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Hardened the dashboard as a minimal read-only Flow mirror with a navy theme, flow-like mark, provider-neutral issue metadata, snapshot reload wording, and static/smoke guards against action routes.",
+      "changedFiles": [],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "browser reload at http://127.0.0.1:8767/dashboard"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T16:37:59.962Z"
+    },
+    {
+      "taskId": "worker-local-mpmv80aj-wrnfhqgo",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Hardened the dashboard mirror contract by allowing only inspectDashboardQueue runtime calls, then stabilized the demo queue by replacing @me with the explicit camden-lowrance assignee in .flow/config.yaml.",
+      "changedFiles": [],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow config validate",
+        "browser reload at http://127.0.0.1:8767/dashboard"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T16:44:26.107Z"
+    },
+    {
+      "taskId": "worker-local-mpmve71t-p9v18pkl",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Removed the dashboard appearance/settings menu and browser-local theme storage so the UI stays focused on Flow state, while keeping theme application config-driven.",
+      "changedFiles": [],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow config validate",
+        "browser reload at http://127.0.0.1:8767/dashboard"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T16:49:14.801Z"
+    },
+    {
+      "taskId": "worker-local-mpmvl26t-8l07b8ck",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Changed the dashboard display label for raw workflowState selected to In Flow and renamed Flow State to Flow Stage, keeping the underlying API mirror unchanged.",
+      "changedFiles": [],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow config validate",
+        "browser reload at http://127.0.0.1:8767/dashboard"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T16:54:35.093Z"
+    },
+    {
+      "taskId": "worker-local-mpmvpbhm-jxj8l1hl",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Renamed dashboard detail link labels from Open Issue/Open PR to Issue/PR and added static guards against command-shaped detail link labels.",
+      "changedFiles": [],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow config validate",
+        "browser detail panel at http://127.0.0.1:8767/dashboard"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T16:57:53.770Z"
+    },
+    {
+      "taskId": "worker-local-mpmvwg61-kw6bp3xs",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Dashboard wording now keeps selected as an internal Flow ledger state and presents it as In Flow in the read-only mirror.",
+      "changedFiles": [
+        "src/dashboard/main.tsx",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}",
+        "browser reload http://127.0.0.1:8767/dashboard"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T17:03:26.425Z"
+    },
+    {
+      "taskId": "worker-local-mpmw0ezy-10r9f38z",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Dashboard view selection wording now uses active/snapshot terms instead of selected, keeping selected as a raw Flow ledger state only.",
+      "changedFiles": [
+        "src/dashboard/main.tsx",
+        "src/dashboard/styles.css",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}",
+        "browser reload http://127.0.0.1:8767/dashboard"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T17:06:31.534Z"
+    },
+    {
+      "taskId": "worker-local-mpmw0n88-oapbat3h",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Dashboard view selection wording now uses active/snapshot terms instead of selected, keeping selected as a raw Flow ledger state only.",
+      "changedFiles": [
+        "src/dashboard/main.tsx",
+        "src/dashboard/styles.css",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}",
+        "browser reload http://127.0.0.1:8767/dashboard"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T17:06:42.200Z"
+    },
+    {
+      "taskId": "worker-local-mpmw4gln-8qhh5zj2",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Dashboard Flow CLI bridge is private to the read-only state module and guarded by the dashboard readonly contract check.",
+      "changedFiles": [
+        "src/dashboard-state.ts",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}",
+        "browser reload http://127.0.0.1:8767/dashboard"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T17:09:40.235Z"
+    },
+    {
+      "taskId": "worker-local-mpmw7wob-uczwxlx5",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Dashboard no longer exposes a manual Reload control; the UI only auto-polls the read-only /api/dashboard snapshot endpoint.",
+      "changedFiles": [
+        "src/dashboard/main.tsx",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}",
+        "browser reload http://127.0.0.1:8767/dashboard"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T17:12:21.035Z"
+    },
+    {
+      "taskId": "worker-local-mpmwhvbj-n57eo51v",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Dashboard presentation is now built in only: no UI config payload, custom CSS/assets route, theme module, or dashboard theme config validation remains.",
+      "changedFiles": [
+        "bin/flow-dashboard",
+        "docs/runtime-and-dashboard.md",
+        "scripts/check-dashboard-readonly.mjs",
+        "scripts/smoke-dashboard.mjs",
+        "src/config/config-schema.ts",
+        "src/dashboard-server.ts",
+        "src/dashboard/main.tsx",
+        "src/dashboard/themes.ts",
+        "src/flow.ts",
+        "test/flow.test.ts"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}",
+        "dashboard route 404 checks",
+        "browser reload http://127.0.0.1:8767/dashboard"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T17:20:05.839Z"
+    },
+    {
+      "taskId": "worker-local-mpmwn7b1-kqgjtwc7",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Dashboard snapshot payload no longer exposes host health details; /healthz is minimal and separate from the mirror payload.",
+      "changedFiles": [
+        "scripts/check-dashboard-readonly.mjs",
+        "scripts/smoke-dashboard.mjs",
+        "src/dashboard-server.ts",
+        "src/dashboard-state.ts",
+        "src/dashboard/main.tsx"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}",
+        "browser reload http://127.0.0.1:8767/dashboard"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T17:24:14.653Z"
+    },
+    {
+      "taskId": "worker-local-mpmws9r3-1ren3jos",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Dashboard mirror contract no longer exposes Autoflow orchestration fields in runtime queue, API payload, or UI types.",
+      "changedFiles": [
+        "scripts/check-dashboard-readonly.mjs",
+        "scripts/smoke-dashboard.mjs",
+        "src/dashboard-state.ts",
+        "src/dashboard/main.tsx",
+        "src/work-runtime.ts"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}",
+        "browser reload http://127.0.0.1:8767/dashboard"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T17:28:11.103Z"
+    },
+    {
+      "taskId": "worker-local-mpmx0ild-70qd8ryi",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Dashboard is now a read-only Flow mirror with raw selected state translated to demo-safe stage wording, no dashboard actions, no UI config surface, and a minimal snapshot API.",
+      "changedFiles": [
+        "src/dashboard/main.tsx",
+        "src/dashboard-state.ts",
+        "src/dashboard-server.ts",
+        "scripts/smoke-dashboard.mjs",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T17:34:35.809Z"
+    },
+    {
+      "taskId": "worker-local-mpmx3f9w-qvmhuh1z",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Dashboard now translates internal selected workflow state into demo-safe stage wording, keeps the client status model minimal, and exposes only read-only snapshot data.",
+      "changedFiles": [
+        "src/dashboard/main.tsx",
+        "src/dashboard-state.ts",
+        "src/dashboard-server.ts",
+        "scripts/smoke-dashboard.mjs",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T17:36:51.476Z"
+    },
+    {
+      "taskId": "worker-local-mpmx8lnq-yboxk9o6",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Trimmed dashboard mirror payloads to omit absent fields and local worktree paths while keeping the UI read-only and demo-safe.",
+      "changedFiles": [
+        "src/dashboard-state.ts",
+        "src/dashboard/main.tsx",
+        "scripts/check-dashboard-readonly.mjs",
+        "scripts/smoke-dashboard.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T17:40:53.030Z"
+    },
+    {
+      "taskId": "worker-local-mpmxccoc-qwzm56hd",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Hardened dashboard state labels so unknown workflow states render as Other instead of derived raw internal labels.",
+      "changedFiles": [
+        "src/dashboard/main.tsx",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T17:43:48.012Z"
+    },
+    {
+      "taskId": "worker-local-mpmxfr68-pj1drbg8",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Hardened dashboard search so it uses visible stage labels and does not index raw workflow states or hidden URLs.",
+      "changedFiles": [
+        "src/dashboard/main.tsx",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T17:46:26.768Z"
+    },
+    {
+      "taskId": "worker-local-mpmxj479-ag4i7gkn",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Mapped PR review decision values to friendly dashboard labels while preserving the read-only mirror contract.",
+      "changedFiles": [
+        "src/dashboard/main.tsx",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T17:49:03.621Z"
+    },
+    {
+      "taskId": "worker-local-mpmxoqq0-t8mku973",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Mapped visible blocker text to friendly labels and kept search aligned with visible blocker wording while preserving the read-only mirror payload.",
+      "changedFiles": [
+        "src/dashboard/main.tsx",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T17:53:26.088Z"
+    },
+    {
+      "taskId": "worker-local-mpmxsijg-5ggmhqid",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Changed issue and PR references from button-like controls to read-only metadata links while preserving the dashboard mirror data.",
+      "changedFiles": [
+        "src/dashboard/main.tsx",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T17:56:22.108Z"
+    },
+    {
+      "taskId": "worker-local-mpmxwgbc-vphiesz8",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Removed raw commit head SHA exposure from the dashboard mirror API, UI, and search path.",
+      "changedFiles": [
+        "src/dashboard-state.ts",
+        "src/dashboard/main.tsx",
+        "scripts/check-dashboard-readonly.mjs",
+        "scripts/smoke-dashboard.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T17:59:25.848Z"
+    },
+    {
+      "taskId": "worker-local-mpmy1bb7-u6rde4iq",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Changed evidence and documentation booleans to read-only status labels in the dashboard detail panel.",
+      "changedFiles": [
+        "src/dashboard/main.tsx",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T18:03:12.643Z"
+    },
+    {
+      "taskId": "worker-local-mpmy64gn-pnj4ndvs",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Changed dashboard stage filters to count and filter by visible labels instead of raw workflowState values.",
+      "changedFiles": [
+        "src/dashboard/main.tsx",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T18:06:57.047Z"
+    },
+    {
+      "taskId": "worker-local-mpmy9w9i-442vsyl3",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Reworded dashboard loading and topbar copy to snapshot/read-only mirror language instead of implementation-specific runtime wording.",
+      "changedFiles": [
+        "src/dashboard/main.tsx",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T18:09:53.046Z"
+    },
+    {
+      "taskId": "worker-local-mpmydiz1-11oj7ltr",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Reworded issue card fallback status to neutral mirror copy and kept dashboard UI free of adapter-specific wording.",
+      "changedFiles": [
+        "src/dashboard/main.tsx",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T18:12:42.445Z"
+    },
+    {
+      "taskId": "worker-local-mpmyhfka-bfeskb6u",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Moved PR check state wording into a dashboard display helper and removed old checks passing/failing fragments.",
+      "changedFiles": [
+        "src/dashboard/main.tsx",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T18:15:44.650Z"
+    },
+    {
+      "taskId": "worker-local-mpmyqbai-grg8y5em",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Clarified dashboard work status wording: selected now displays as Active, Flow Stage/State wording is removed, and static checks guard the labels.",
+      "changedFiles": [
+        "src/dashboard/main.tsx",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T18:22:39.018Z"
+    },
+    {
+      "taskId": "worker-local-mpmyx1rf-2rz2v52s",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Made the dashboard queue projection session-aware so the visible Active item mirrors the current Flow session. Added coverage for stale selected ledger state being demoted in the dashboard view.",
+      "changedFiles": [
+        "src/work-runtime.ts",
+        "src/flow.ts",
+        "test/flow.test.ts"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}",
+        "node bin/flow {\"op\":\"runtime\",\"method\":\"inspectDashboardQueue\",\"params\":{\"limit\":25}}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T18:27:53.259Z"
+    },
+    {
+      "taskId": "worker-local-mpmz1ubf-ffhl2drt",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Removed local workspace path and raw commit head fields from the dashboard queue contract and added guard/test coverage so the read-only dashboard mirror cannot regress to exposing them.",
+      "changedFiles": [
+        "src/work-runtime.ts",
+        "scripts/check-dashboard-readonly.mjs",
+        "test/flow.test.ts"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}",
+        "node bin/flow {\"op\":\"runtime\",\"method\":\"inspectDashboardQueue\",\"params\":{\"limit\":25}}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T18:31:36.891Z"
+    },
+    {
+      "taskId": "worker-local-mpmz5qub-88gdcdzu",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Trimmed dashboard health to liveness only and removed unused refresh daemon/status helpers, with readonly guard coverage for the simplified health surface.",
+      "changedFiles": [
+        "src/dashboard-server.ts",
+        "src/dashboard-state.ts",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}",
+        "node bin/flow {\"op\":\"runtime\",\"method\":\"inspectDashboardQueue\",\"params\":{\"limit\":25}}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T18:34:39.011Z"
+    },
+    {
+      "taskId": "worker-local-mpmzak23-c5ddcs7y",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Made the dashboard default focus follow the mirrored active Flow issue instead of the first queue item, while preserving user-clicked focus during polling.",
+      "changedFiles": [
+        "src/dashboard/main.tsx",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T18:38:23.499Z"
+    },
+    {
+      "taskId": "worker-local-mpmzfjv7-r87n9o0j",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Removed duplicate visible Work Status text from the detail panel and guarded against reintroducing the duplicate status label pattern.",
+      "changedFiles": [
+        "src/dashboard/main.tsx",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}",
+        "node bin/flow {\"op\":\"runtime\",\"method\":\"inspectDashboardQueue\",\"params\":{\"limit\":25}}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T18:42:16.531Z"
+    },
+    {
+      "taskId": "worker-local-mpmzk8j7-ilkn3d92",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Labeled blockers in the public dashboard payload and added smoke/static coverage so raw readiness blocker wording does not leak through /api/dashboard.",
+      "changedFiles": [
+        "src/dashboard-state.ts",
+        "scripts/check-dashboard-readonly.mjs",
+        "scripts/smoke-dashboard.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T18:45:55.123Z"
+    },
+    {
+      "taskId": "worker-local-mpmzptsw-i7fsur5j",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Changed the browser-facing dashboard contract from raw workflowState keys to display workStatus labels and updated UI/static/smoke guards around that contract.",
+      "changedFiles": [
+        "src/dashboard-state.ts",
+        "src/dashboard/main.tsx",
+        "scripts/check-dashboard-readonly.mjs",
+        "scripts/smoke-dashboard.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T18:50:15.968Z"
+    },
+    {
+      "taskId": "worker-local-mpmzyhn9-m4zm38r1",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Changed the browser-facing dashboard evidence/docs contract from raw booleans to display record status labels and updated UI/static/smoke coverage.",
+      "changedFiles": [
+        "src/dashboard-state.ts",
+        "src/dashboard/main.tsx",
+        "scripts/check-dashboard-readonly.mjs",
+        "scripts/smoke-dashboard.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T18:57:00.117Z"
+    },
+    {
+      "taskId": "worker-local-mpn0473y-jnulwbmw",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Changed the browser-facing dashboard PR/review contract from raw provider fields to display labels and updated UI/static/smoke coverage.",
+      "changedFiles": [
+        "src/dashboard-state.ts",
+        "src/dashboard/main.tsx",
+        "scripts/check-dashboard-readonly.mjs",
+        "scripts/smoke-dashboard.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T19:01:26.398Z"
+    },
+    {
+      "taskId": "worker-local-mpn095ot-ym2h7h2v",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Removed external issue/PR URLs from the browser-facing dashboard and replaced them with plain link-presence labels, with static, smoke, API, and browser verification.",
+      "changedFiles": [
+        "src/dashboard-state.ts",
+        "src/dashboard/main.tsx",
+        "scripts/check-dashboard-readonly.mjs",
+        "scripts/smoke-dashboard.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T19:05:17.837Z"
+    },
+    {
+      "taskId": "worker-local-mpn0drir-f9tai0g0",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Replaced browser-facing repoKeys with repository labels and removed branch details from the dashboard API/UI, with static, smoke, API, and browser verification.",
+      "changedFiles": [
+        "src/dashboard-state.ts",
+        "src/dashboard/main.tsx",
+        "scripts/check-dashboard-readonly.mjs",
+        "scripts/smoke-dashboard.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T19:08:52.755Z"
+    },
+    {
+      "taskId": "worker-local-mpn0iroj-wbz2ztar",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Replaced browser-facing per-issue updatedAt timestamps with display updatedLabel values, with static, smoke, API, and browser verification.",
+      "changedFiles": [
+        "src/dashboard-state.ts",
+        "src/dashboard/main.tsx",
+        "scripts/check-dashboard-readonly.mjs",
+        "scripts/smoke-dashboard.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T19:12:46.243Z"
+    },
+    {
+      "taskId": "worker-local-mpn0nhki-5hl57ir0",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Removed non-actionable issue/PR link presence from the browser-facing dashboard API and UI, with static, smoke, API, and browser verification.",
+      "changedFiles": [
+        "src/dashboard-state.ts",
+        "src/dashboard/main.tsx",
+        "scripts/check-dashboard-readonly.mjs",
+        "scripts/smoke-dashboard.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T19:16:26.418Z"
+    },
+    {
+      "taskId": "worker-local-mpn0sau9-acofxywp",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Replaced browser-facing snapshot.refreshedAt/ageSeconds with snapshot.freshnessLabel, with static, smoke, API, and browser verification.",
+      "changedFiles": [
+        "src/dashboard-state.ts",
+        "src/dashboard/main.tsx",
+        "scripts/check-dashboard-readonly.mjs",
+        "scripts/smoke-dashboard.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T19:20:10.977Z"
+    },
+    {
+      "taskId": "worker-local-mpn0x7bd-2u6tc2t4",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Replaced browser-facing issueStatus with statusLabel, with static, smoke, API, and browser verification.",
+      "changedFiles": [
+        "src/dashboard-state.ts",
+        "src/dashboard/main.tsx",
+        "scripts/check-dashboard-readonly.mjs",
+        "scripts/smoke-dashboard.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T19:23:59.689Z"
+    },
+    {
+      "taskId": "worker-local-mpn121iz-9rlg78rg",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Hardened dashboard route-level read-only behavior by blocking request-input use in static checks and expanding smoke/live verification for query input plus POST, PUT, PATCH, and DELETE on /api/dashboard.",
+      "changedFiles": [
+        "src/dashboard-server.ts",
+        "scripts/check-dashboard-readonly.mjs",
+        "scripts/smoke-dashboard.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T19:27:45.467Z"
+    },
+    {
+      "taskId": "worker-local-mpn16qhv-a5kys18m",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Replaced browser-facing blockers with blockerLabels and made the UI consume labels directly, with static, smoke, API, and browser verification.",
+      "changedFiles": [
+        "src/dashboard-state.ts",
+        "src/dashboard/main.tsx",
+        "scripts/check-dashboard-readonly.mjs",
+        "scripts/smoke-dashboard.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T19:31:24.451Z"
+    },
+    {
+      "taskId": "worker-local-mpn1ae8b-01k6ul6i",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Added strict dashboard payload allowlist coverage to smoke tests and verified the live API/browser still expose only the mirror state contract.",
+      "changedFiles": [
+        "scripts/smoke-dashboard.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T19:34:15.179Z"
+    },
+    {
+      "taskId": "worker-local-mpn1kt82-5z0fdos4",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Replaced dashboard runtime workflowState output with display workStatus labels and extended smoke/static checks so selected cannot leak through the dashboard queue contract.",
+      "changedFiles": [
+        "src/work-runtime.ts",
+        "src/dashboard-state.ts",
+        "test/flow.test.ts",
+        "scripts/smoke-dashboard.mjs",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T19:42:21.170Z"
+    },
+    {
+      "taskId": "worker-local-mpn1tb0u-q21vn5ty",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Hardened the dashboard runtime queue into a display-only mirror contract and extended smoke/static checks to reject raw URLs, branch details, repo keys, blockers, PR provider fields, record booleans, and workflowState.",
+      "changedFiles": [
+        "src/work-runtime.ts",
+        "src/dashboard-state.ts",
+        "test/flow.test.ts",
+        "scripts/smoke-dashboard.mjs",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T19:48:57.486Z"
+    },
+    {
+      "taskId": "worker-local-mpn1yfvw-mg8l2d2i",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Added an explicit dashboard API issue allowlist and static guard so /api/dashboard cannot return non-public issue fields even if the runtime queue changes.",
+      "changedFiles": [
+        "src/dashboard-state.ts",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T19:52:57.068Z"
+    },
+    {
+      "taskId": "worker-local-mpn23pc3-bn6fj47x",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Added a client-side dashboard issue normalizer and static guard so fetched issue payloads are reduced to display-only mirror fields before React state, search, or rendering.",
+      "changedFiles": [
+        "src/dashboard/main.tsx",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T19:57:02.595Z"
+    },
+    {
+      "taskId": "worker-local-mpn28now-zmavurms",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Extended dashboard smoke coverage to inspect served JS/CSS assets for forbidden command routes, raw dashboard fields, raw workflow states, and command labels.",
+      "changedFiles": [
+        "scripts/smoke-dashboard.mjs",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T20:00:53.744Z"
+    },
+    {
+      "taskId": "worker-local-mpn2ek3s-x1k6dwdk",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Added no-store cache headers for dashboard mirror responses and smoke/static coverage to keep the UI shell and mirror JSON from being cached as stale state.",
+      "changedFiles": [
+        "src/dashboard-server.ts",
+        "scripts/smoke-dashboard.mjs",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T20:05:29.032Z"
+    },
+    {
+      "taskId": "worker-local-mpn2p3qv-xjki5ill",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Added readonly guardrails that reject browser persistence, navigation, forms, clipboard, workers, and secondary transports from the dashboard UI source and served dashboard assets.",
+      "changedFiles": [
+        "scripts/check-dashboard-readonly.mjs",
+        "scripts/smoke-dashboard.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T20:13:41.047Z"
+    },
+    {
+      "taskId": "worker-local-mpn2ubku-bik06ojp",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Added client-side allowlists for dashboard work and record status labels so raw workflow and ledger tokens cannot render through display fields.",
+      "changedFiles": [
+        "src/dashboard/main.tsx",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T20:17:44.478Z"
+    },
+    {
+      "taskId": "worker-local-mpn2ype4-11we4mxh",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Removed dashboard API and client error-detail propagation so failure paths stay generic while the dashboard remains a display-only mirror.",
+      "changedFiles": [
+        "src/dashboard-server.ts",
+        "src/dashboard/main.tsx",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T20:21:09.004Z"
+    },
+    {
+      "taskId": "worker-local-mpn3373m-lzns427w",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Made the dashboard health endpoint non-cacheable and added smoke coverage that it exposes only ok:true.",
+      "changedFiles": [
+        "src/dashboard-server.ts",
+        "scripts/smoke-dashboard.mjs",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T20:24:38.578Z"
+    },
+    {
+      "taskId": "worker-local-mpn39p0a-55575lr3",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Made dashboard JS/CSS asset responses non-cacheable and added smoke/static checks for stale bundle prevention.",
+      "changedFiles": [
+        "src/dashboard-server.ts",
+        "scripts/smoke-dashboard.mjs",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T20:29:41.722Z"
+    },
+    {
+      "taskId": "worker-local-mpn3f1ty-yff7l86n",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Strengthened dashboard smoke coverage so selected internal state must render as Active and raw workflow state values stay out of mirror payloads.",
+      "changedFiles": [
+        "scripts/smoke-dashboard.mjs",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm run smoke:dashboard",
+        "npm test",
+        "npm run build",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T20:33:51.622Z"
+    },
+    {
+      "taskId": "worker-local-mpn3lqgk-9vmfwqzh",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Added mirror-only response headers, tightened smoke/static verification for those headers, and fixed flow-dashboard stale-dist rebuild detection.",
+      "changedFiles": [
+        "src/dashboard-server.ts",
+        "bin/flow-dashboard",
+        "scripts/smoke-dashboard.mjs",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm run smoke:dashboard",
+        "npm test",
+        "npm run build",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T20:39:03.476Z"
+    },
+    {
+      "taskId": "worker-local-mpn3lxzj-hjzv5h6w",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Added mirror-only response headers, tightened smoke/static verification for those headers, and fixed flow-dashboard stale-dist rebuild detection.",
+      "changedFiles": [
+        "src/dashboard-server.ts",
+        "bin/flow-dashboard",
+        "scripts/smoke-dashboard.mjs",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm run smoke:dashboard",
+        "npm test",
+        "npm run build",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T20:39:13.231Z"
+    },
+    {
+      "taskId": "worker-local-mpn3sbwq-zfj76n8z",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Extended dashboard mirror policy with Permissions-Policy and explicit 404 responses, and made smoke verify unavailable routes keep mirror headers.",
+      "changedFiles": [
+        "src/dashboard-server.ts",
+        "scripts/smoke-dashboard.mjs",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm run smoke:dashboard",
+        "npm test",
+        "npm run build",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T20:44:11.210Z"
+    },
+    {
+      "taskId": "worker-local-mpn3w4w4-l5gssydr",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Added dashboard smoke fingerprints proving blocked command and mutation requests leave API and runtime mirror state unchanged.",
+      "changedFiles": [
+        "scripts/smoke-dashboard.mjs",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm run smoke:dashboard",
+        "npm test",
+        "npm run build",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T20:47:08.740Z"
+    },
+    {
+      "taskId": "worker-local-mpn3zq99-yr2j0ton",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Added served HTML shell checks so command controls and raw workflow state cannot bypass the JS/CSS dashboard asset scan.",
+      "changedFiles": [
+        "scripts/smoke-dashboard.mjs",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm run smoke:dashboard",
+        "npm test",
+        "npm run build",
+        "npm run readiness:public",
+        "node bin/flow {\"op\":\"config\",\"mode\":\"validate\"}"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T20:49:56.397Z"
+    },
+    {
+      "taskId": "worker-local-mpn4c8d5-g1xnqzvj",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Moved dashboard display-label normalization into a shared module and applied it at both the API and browser boundaries so raw workflow labels cannot leak as dashboard state.",
+      "changedFiles": [
+        "src/dashboard-labels.ts",
+        "src/dashboard-state.ts",
+        "src/dashboard/main.tsx",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm run smoke:dashboard",
+        "npm test",
+        "npm run build",
+        "npm run readiness:public",
+        "node bin/flow {config validate}",
+        "live browser reload and /api/dashboard inspection",
+        "direct dashboard-labels normalization smoke"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T20:59:39.737Z"
+    },
+    {
+      "taskId": "worker-local-mpn4hnt9-eim9ums2",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Marked every dashboard button/input as an explicit local mirror control and added checks that reject unmarked or non-allowlisted UI controls in source and served assets.",
+      "changedFiles": [
+        "src/dashboard/main.tsx",
+        "scripts/check-dashboard-readonly.mjs",
+        "scripts/smoke-dashboard.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm run smoke:dashboard",
+        "npm test",
+        "npm run build",
+        "npm run readiness:public",
+        "node bin/flow {config validate}",
+        "built asset mirror-control token inspection",
+        "live browser DOM mirror-control inspection"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T21:03:53.037Z"
+    },
+    {
+      "taskId": "worker-local-mpn4ls1p-l3f56xa3",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Extended the dashboard smoke and readonly contract so query parameters cannot shape mirrored issue state and unavailable routes must return only ok:false.",
+      "changedFiles": [
+        "scripts/smoke-dashboard.mjs",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm run smoke:dashboard",
+        "npm test",
+        "npm run build",
+        "npm run readiness:public",
+        "node bin/flow {config validate}",
+        "live /api/dashboard query fingerprint check",
+        "live blocked /api/actions/select response shape check",
+        "live browser DOM mirror check"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T21:07:05.149Z"
+    },
+    {
+      "taskId": "worker-local-mpn4ql9m-2u9sfrqi",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Added an explicit dashboard server method guard so only GET/HEAD reach mirror routes; OPTIONS and mutation methods return ok:false with mirror headers, and the smoke now verifies OPTIONS too.",
+      "changedFiles": [
+        "src/dashboard-server.ts",
+        "scripts/smoke-dashboard.mjs",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm run smoke:dashboard",
+        "npm test",
+        "npm run build",
+        "npm run readiness:public",
+        "node bin/flow {config validate}",
+        "live non-read method checks across /api/dashboard, /dashboard, /healthz, and /api/actions/select",
+        "live browser DOM mirror check"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T21:10:49.642Z"
+    },
+    {
+      "taskId": "worker-local-mpn4w473-n3pfpqmr",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Hardened dashboard shell serving: root now serves the same mirror shell as /dashboard, shell query input is ignored, and missing assets/favicons return ok:false.",
+      "changedFiles": [
+        "src/dashboard-server.ts",
+        "scripts/smoke-dashboard.mjs",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm run smoke:dashboard",
+        "npm test",
+        "npm run build",
+        "npm run readiness:public",
+        "node bin/flow {config validate}",
+        "live root/dashboard/query shell parity check",
+        "live missing asset and favicon fallback check",
+        "live browser DOM mirror check"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T21:15:07.455Z"
+    },
+    {
+      "taskId": "worker-local-mpn51hb4-sgnyg2v5",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Hardened dashboard mirror response isolation headers and smoke coverage for CSP, cross-origin isolation, DNS prefetch, and frame denial across success and fallback routes.",
+      "changedFiles": [
+        "src/dashboard-server.ts",
+        "scripts/smoke-dashboard.mjs",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm run smoke:dashboard",
+        "npm test",
+        "npm run build",
+        "npm run readiness:public",
+        "node bin/flow {config validate}",
+        "live header checks on /, /dashboard, /api/dashboard, /healthz, and missing asset fallback",
+        "live browser DOM mirror check"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T21:19:17.728Z"
+    },
+    {
+      "taskId": "worker-local-mpn56r7c-4uuuyx8v",
+      "issueRef": "GH-3",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Removed remaining mutable theme hooks from the dashboard presentation and enforced the fixed navy mirror in readonly and smoke checks.",
+      "changedFiles": [
+        "src/dashboard/styles.css",
+        "src/dashboard/main.tsx",
+        "scripts/smoke-dashboard.mjs",
+        "scripts/check-dashboard-readonly.mjs"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm run smoke:dashboard",
+        "npm test",
+        "npm run build",
+        "npm run readiness:public",
+        "node bin/flow {config validate}",
+        "built asset theme-hook inspection",
+        "served asset theme-hook inspection",
+        "live browser DOM fixed-presentation check"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-26T21:23:23.832Z"
+    }
+  ],
+  "workJobs": [],
+  "workJobResults": [],
+  "updatedAt": "2026-05-26T23:52:09.671Z"
+}

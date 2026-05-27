@@ -1,0 +1,60 @@
+{
+  "issue": {
+    "ref": "GH-10",
+    "title": "Deepen Flow config validation",
+    "repoKeys": [
+      "flow"
+    ],
+    "state": "running",
+    "updatedAt": "2026-05-26T23:36:25.177Z",
+    "metadata": {
+      "issueStatus": "Open",
+      "issueStatusCategory": "To Do",
+      "issueUpdated": "2026-05-22T00:25:29Z",
+      "issueUrl": "https://github.com/camden-lowrance/flow/issues/10",
+      "issueType": "task",
+      "issueLabels": [],
+      "workflow.external.issue.status": "published",
+      "workflow.external.code_review.status": "unpublished",
+      "branchKind": "feature"
+    }
+  },
+  "workerRuns": [
+    {
+      "taskId": "demo-handoff-gh10",
+      "issueRef": "GH-10",
+      "repoKey": "flow",
+      "workJobId": "job-mpn9x0co-2lhmqj7y",
+      "executor": "live_agent_thread",
+      "status": "running",
+      "workspacePath": "C:\\Users\\camde\\Documents\\GitHub\\flow",
+      "summary": "Live agent thread adopted execution handoff (demo).",
+      "blockers": [],
+      "startedAt": "2026-05-26T23:36:25.107Z",
+      "updatedAt": "2026-05-26T23:36:25.107Z"
+    }
+  ],
+  "workerResults": [],
+  "workJobs": [
+    {
+      "id": "job-mpn9x0co-2lhmqj7y",
+      "issueRef": "GH-10",
+      "repoKey": "flow",
+      "workType": "flow.implement",
+      "status": "running",
+      "input": {
+        "executionMode": "local_thread",
+        "body": "Use Flow to continue GH-10. Focus on config validation edge cases, run the local checks, then record the result through Flow.\n\nPrepared workspace: C:\\Users\\camde\\Documents\\GitHub\\flow",
+        "metadata": {},
+        "idempotencyKey": "GH-10:flow:demo-handoff-gh10"
+      },
+      "requiredCapabilities": [],
+      "createdAt": "2026-05-26T23:35:47.208Z",
+      "updatedAt": "2026-05-26T23:36:25.107Z",
+      "claimedBy": "live_agent_thread",
+      "claimedAt": "2026-05-26T23:36:25.115Z"
+    }
+  ],
+  "workJobResults": [],
+  "updatedAt": "2026-05-26T23:36:25.178Z"
+}

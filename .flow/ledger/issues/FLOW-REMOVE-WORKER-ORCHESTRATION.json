@@ -1,0 +1,160 @@
+{
+  "issue": {
+    "ref": "FLOW-REMOVE-WORKER-ORCHESTRATION",
+    "title": "Remove worker orchestration from Flow",
+    "repoKeys": [
+      "flow"
+    ],
+    "state": "awaiting_review",
+    "summary": "Flow core should keep workflow state, git workspace tracking, handoff, and result recording only.",
+    "updatedAt": "2026-05-26T00:28:23.742Z",
+    "metadata": {
+      "worktree_path": "C:/Users/camde/Documents/GitHub/flow",
+      "branch": "main",
+      "directive": "Use Flow to work this prompt.",
+      "workflow.repos.flow.branch": "main",
+      "workflow.repos.flow.head_sha": "0f4cd40ab7c4d120b1b3c0014d1195e99c715a65",
+      "workflow.repos.flow.dirty": false,
+      "evidenceRecorded": true,
+      "evidenceSummary": "Verification passed: npm run check, npm test, npm run build, npm run readiness:public, npm run smoke:flow.",
+      "evidenceSource": "local",
+      "evidenceCriteria": [
+        {
+          "label": "static contract check passed",
+          "status": "passed",
+          "evidence": "Verification passed: npm run check, npm test, npm run build, npm run readiness:public, npm run smoke:flow.",
+          "source": "local"
+        },
+        {
+          "label": "unit tests passed",
+          "status": "passed",
+          "evidence": "Verification passed: npm run check, npm test, npm run build, npm run readiness:public, npm run smoke:flow.",
+          "source": "local"
+        },
+        {
+          "label": "build passed",
+          "status": "passed",
+          "evidence": "Verification passed: npm run check, npm test, npm run build, npm run readiness:public, npm run smoke:flow.",
+          "source": "local"
+        },
+        {
+          "label": "public readiness passed",
+          "status": "passed",
+          "evidence": "Verification passed: npm run check, npm test, npm run build, npm run readiness:public, npm run smoke:flow.",
+          "source": "local"
+        },
+        {
+          "label": "git/local smoke test passed",
+          "status": "passed",
+          "evidence": "Verification passed: npm run check, npm test, npm run build, npm run readiness:public, npm run smoke:flow.",
+          "source": "local"
+        }
+      ],
+      "workflow.acceptance.status": "recorded",
+      "workflow.acceptance.criteria_json": "[{\"label\":\"static contract check passed\",\"status\":\"passed\",\"evidence\":\"Verification passed: npm run check, npm test, npm run build, npm run readiness:public, npm run smoke:flow.\",\"source\":\"local\"},{\"label\":\"unit tests passed\",\"status\":\"passed\",\"evidence\":\"Verification passed: npm run check, npm test, npm run build, npm run readiness:public, npm run smoke:flow.\",\"source\":\"local\"},{\"label\":\"build passed\",\"status\":\"passed\",\"evidence\":\"Verification passed: npm run check, npm test, npm run build, npm run readiness:public, npm run smoke:flow.\",\"source\":\"local\"},{\"label\":\"public readiness passed\",\"status\":\"passed\",\"evidence\":\"Verification passed: npm run check, npm test, npm run build, npm run readiness:public, npm run smoke:flow.\",\"source\":\"local\"},{\"label\":\"git/local smoke test passed\",\"status\":\"passed\",\"evidence\":\"Verification passed: npm run check, npm test, npm run build, npm run readiness:public, npm run smoke:flow.\",\"source\":\"local\"}]",
+      "evidenceRecordedAt": "2026-05-25T23:57:03.195Z",
+      "documentationRecorded": true,
+      "documentationDisposition": "updated",
+      "documentationSummary": "Updated README, host integration docs, why-flow docs, prompt, and skill text to state Flow records handoffs/results and does not launch or manage agents.",
+      "documentationRecordedAt": "2026-05-25T23:57:49.424Z",
+      "prRepo": "flow",
+      "prNumber": 20,
+      "prUrl": "https://github.com/camden-lowrance/flow/pull/20",
+      "prHeadRefName": "codex/remove-worker-orchestration",
+      "prIsDraft": false,
+      "humanReviewRequired": false,
+      "prRecordedAt": "2026-05-26T00:28:15.063Z",
+      "workflow.repos.flow.pr_repo": "flow",
+      "workflow.repos.flow.pr_number": 20,
+      "workflow.repos.flow.pr_url": "https://github.com/camden-lowrance/flow/pull/20",
+      "workflow.repos.flow.pr_head_ref_name": "codex/remove-worker-orchestration",
+      "workflow.repos.flow.pr_state": "MERGED",
+      "workflow.repos.flow.pr_is_draft": false,
+      "workflow.repos.flow.pr_mergeable": "UNKNOWN",
+      "workflow.repos.flow.pr_merge_state_status": "UNKNOWN",
+      "workflow.repos.flow.pr_auto_review_status": "missing",
+      "workflow.repos.flow.pr_recorded_at": "2026-05-26T00:15:09.308Z",
+      "workflow.repos.camden_lowrance_flow.branch": "main",
+      "workflow.repos.camden_lowrance_flow.head_sha": "0f4cd40ab7c4d120b1b3c0014d1195e99c715a65",
+      "workflow.repos.camden_lowrance_flow.dirty": false,
+      "prTemplateMissingHeadings": [],
+      "workflow.repos.camden_lowrance_flow.pr_repo": "camden-lowrance/flow",
+      "workflow.repos.camden_lowrance_flow.pr_number": 20,
+      "workflow.repos.camden_lowrance_flow.pr_url": "https://github.com/camden-lowrance/flow/pull/20",
+      "workflow.repos.camden_lowrance_flow.pr_head_ref_name": "",
+      "workflow.repos.camden_lowrance_flow.pr_is_draft": false,
+      "workflow.repos.camden_lowrance_flow.pr_checks_passing": true,
+      "workflow.repos.camden_lowrance_flow.pr_template_missing_headings": [],
+      "workflow.repos.camden_lowrance_flow.pr_recorded_at": "2026-05-26T00:28:15.063Z",
+      "workflow.repos.flow.pr_merged_at": "2026-05-26T00:27:38Z",
+      "workflow.repos.flow.pr_merge_commit_sha": "0f4cd40ab7c4d120b1b3c0014d1195e99c715a65",
+      "prState": "MERGED",
+      "prMergedAt": "2026-05-26T00:27:38Z",
+      "prMergeCommitSha": "0f4cd40ab7c4d120b1b3c0014d1195e99c715a65",
+      "prMergeable": "UNKNOWN",
+      "prMergeStateStatus": "UNKNOWN",
+      "prAutoReviewStatus": "missing"
+    }
+  },
+  "workerRuns": [
+    {
+      "taskId": "codex-local-thread-remove-worker-orchestration",
+      "issueRef": "FLOW-REMOVE-WORKER-ORCHESTRATION",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Removed built-in Pi/Codex worker orchestration from Flow core, changed execution to handoff-only, kept result recording, made bootstrap local/git by default, and updated tests/docs/prompts.",
+      "blockers": [],
+      "updatedAt": "2026-05-25T23:56:57.102Z",
+      "completedAt": "2026-05-25T23:56:57.102Z"
+    }
+  ],
+  "workerResults": [
+    {
+      "taskId": "codex-local-thread-remove-worker-orchestration",
+      "issueRef": "FLOW-REMOVE-WORKER-ORCHESTRATION",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Removed built-in Pi/Codex worker orchestration from Flow core, changed execution to handoff-only, kept result recording, made bootstrap local/git by default, and updated tests/docs/prompts.",
+      "changedFiles": [
+        "README.md",
+        "docs/host-integration.md",
+        "docs/why-flow.md",
+        "extensions/flow.ts",
+        "prompts/flow.md",
+        "scripts/autoflow-issue.mjs",
+        "scripts/check-flow-cli-contract.mjs",
+        "scripts/smoke-flow.mjs",
+        "skills/flow/SKILL.md",
+        "src/adapters/github.ts",
+        "src/config/config-loader.ts",
+        "src/config/config-schema.ts",
+        "src/contracts/executor.ts",
+        "src/contracts/runtime.ts",
+        "src/contracts/work.ts",
+        "src/executors/worker-contracts.ts",
+        "src/flow-runtime.ts",
+        "src/flow.ts",
+        "src/pi-defaults.ts",
+        "src/work-registry.ts",
+        "src/work-runtime.ts",
+        "src/worker.ts",
+        "test/flow.test.ts"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run readiness:public",
+        "npm run smoke:flow"
+      ],
+      "blockers": [],
+      "handoffPrompt": "Use Flow to work this prompt.\n\nFlow context:\n- Issue: FLOW-REMOVE-WORKER-ORCHESTRATION\n- Repo: flow\n- Worktree: C:/Users/camde/Documents/GitHub/flow\n\nResult: implementation and verification completed in this local thread.",
+      "completedAt": "2026-05-25T23:56:57.102Z"
+    }
+  ],
+  "workJobs": [],
+  "workJobResults": [],
+  "updatedAt": "2026-05-26T00:28:23.743Z"
+}

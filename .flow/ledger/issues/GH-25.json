@@ -1,0 +1,22 @@
+{
+  "issue": {
+    "ref": "GH-25",
+    "title": "Preserve pull request branch metadata",
+    "repoKeys": [
+      "flow"
+    ],
+    "state": "running",
+    "summary": "Demo running work item for Flow dashboard.",
+    "updatedAt": "2026-05-26T23:13:12.958Z",
+    "metadata": {
+      "branchKind": "feature",
+      "demoSeed": true,
+      "demoSeededAt": "2026-05-26T23:13:12.920Z"
+    }
+  },
+  "workerRuns": [],
+  "workerResults": [],
+  "workJobs": [],
+  "workJobResults": [],
+  "updatedAt": "2026-05-26T23:13:12.965Z"
+}

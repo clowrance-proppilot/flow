@@ -1,0 +1,25 @@
+{
+  "issue": {
+    "ref": "GH-19",
+    "title": "Inspect dashboard release",
+    "repoKeys": [],
+    "state": "selected",
+    "updatedAt": "2026-05-25T15:57:32.585Z",
+    "metadata": {
+      "issueStatus": "Open",
+      "issueStatusCategory": "To Do",
+      "issueUpdated": "2026-05-25T15:57:33Z",
+      "issueUrl": "https://github.com/camden-lowrance/flow/issues/19",
+      "issueType": "task",
+      "issueLabels": [],
+      "workflow.external.issue.status": "published",
+      "workflow.external.code_review.status": "unpublished",
+      "branchKind": "feature"
+    }
+  },
+  "workerRuns": [],
+  "workerResults": [],
+  "workJobs": [],
+  "workJobResults": [],
+  "updatedAt": "2026-05-25T15:57:32.587Z"
+}

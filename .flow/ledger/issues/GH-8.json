@@ -1,0 +1,62 @@
+{
+  "issue": {
+    "ref": "GH-8",
+    "title": "Clarify runtime store versus workflow ledger ownership",
+    "repoKeys": [
+      "flow"
+    ],
+    "state": "blocked",
+    "updatedAt": "2026-05-26T23:36:25.658Z",
+    "metadata": {
+      "issueStatus": "Open",
+      "issueStatusCategory": "To Do",
+      "issueUpdated": "2026-05-22T00:25:26Z",
+      "issueUrl": "https://github.com/camden-lowrance/flow/issues/8",
+      "issueType": "task",
+      "issueLabels": [],
+      "workflow.external.issue.status": "published",
+      "workflow.external.code_review.status": "unpublished",
+      "branchKind": "feature"
+    }
+  },
+  "workerRuns": [
+    {
+      "taskId": "demo-blocked-gh8",
+      "issueRef": "GH-8",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "blocked",
+      "summary": "Demo handoff paused: runtime ownership wording needs one final product decision.",
+      "blockers": [
+        "Need product decision on whether this remains runtime wording or becomes dashboard wording."
+      ],
+      "updatedAt": "2026-05-26T23:36:25.617Z",
+      "completedAt": "2026-05-26T23:36:25.617Z"
+    }
+  ],
+  "workerResults": [
+    {
+      "taskId": "demo-blocked-gh8",
+      "issueRef": "GH-8",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "blocked",
+      "summary": "Demo handoff paused: runtime ownership wording needs one final product decision.",
+      "changedFiles": [
+        "docs/runtime-and-dashboard.md"
+      ],
+      "testsRun": [
+        "npm run check"
+      ],
+      "blockers": [
+        "Need product decision on whether this remains runtime wording or becomes dashboard wording."
+      ],
+      "nextPickup": "Pick up GH-8 from the handoff prompt and resolve the dashboard/runtime ownership wording.",
+      "completedAt": "2026-05-26T23:36:25.617Z",
+      "handoffPrompt": "Use Flow to work this prompt.\n\nIssue: GH-8\nTitle: Clarify runtime store versus workflow ledger ownership\nRepo key: flow\nContext: Resolve the wording split between runtime state and workflow ledger state. Keep the dashboard read-only. Run npm run check and record the result through Flow."
+    }
+  ],
+  "workJobs": [],
+  "workJobResults": [],
+  "updatedAt": "2026-05-26T23:36:25.660Z"
+}

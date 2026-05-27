@@ -1,0 +1,57 @@
+{
+  "issue": {
+    "ref": "GH-33",
+    "title": "Fix dashboard API performance — inspectDashboardQueue timeout",
+    "repoKeys": [
+      "flow"
+    ],
+    "state": "selected",
+    "updatedAt": "2026-05-27T03:48:49.792Z",
+    "metadata": {
+      "issueStatus": "Open",
+      "issueStatusCategory": "To Do",
+      "issueUpdated": "2026-05-27T03:32:41Z",
+      "issueUrl": "https://github.com/camden-lowrance/flow/issues/33",
+      "issueType": "task",
+      "issueLabels": [],
+      "workflow.external.issue.status": "published",
+      "workflow.external.code_review.status": "unpublished",
+      "branchKind": "feature",
+      "evidenceRecorded": true,
+      "evidenceSummary": "Dashboard API responds in <100ms. FlowWorkRuntime created at startup, inspectDashboardQueue called directly — no CLI spawn. 3s cache prevents runtime hammering.",
+      "evidenceSource": "local",
+      "evidenceCriteria": [
+        {
+          "label": "/api/dashboard returns JSON with real issue data",
+          "status": "passed",
+          "evidence": "Dashboard API responds in <100ms. FlowWorkRuntime created at startup, inspectDashboardQueue called directly — no CLI spawn. 3s cache prevents runtime hammering.",
+          "source": "local"
+        },
+        {
+          "label": "Response time under 1 second",
+          "status": "passed",
+          "evidence": "Dashboard API responds in <100ms. FlowWorkRuntime created at startup, inspectDashboardQueue called directly — no CLI spawn. 3s cache prevents runtime hammering.",
+          "source": "local"
+        },
+        {
+          "label": "No CLI process spawned per request",
+          "status": "passed",
+          "evidence": "Dashboard API responds in <100ms. FlowWorkRuntime created at startup, inspectDashboardQueue called directly — no CLI spawn. 3s cache prevents runtime hammering.",
+          "source": "local"
+        }
+      ],
+      "workflow.acceptance.status": "recorded",
+      "workflow.acceptance.criteria_json": "[{\"label\":\"/api/dashboard returns JSON with real issue data\",\"status\":\"passed\",\"evidence\":\"Dashboard API responds in <100ms. FlowWorkRuntime created at startup, inspectDashboardQueue called directly — no CLI spawn. 3s cache prevents runtime hammering.\",\"source\":\"local\"},{\"label\":\"Response time under 1 second\",\"status\":\"passed\",\"evidence\":\"Dashboard API responds in <100ms. FlowWorkRuntime created at startup, inspectDashboardQueue called directly — no CLI spawn. 3s cache prevents runtime hammering.\",\"source\":\"local\"},{\"label\":\"No CLI process spawned per request\",\"status\":\"passed\",\"evidence\":\"Dashboard API responds in <100ms. FlowWorkRuntime created at startup, inspectDashboardQueue called directly — no CLI spawn. 3s cache prevents runtime hammering.\",\"source\":\"local\"}]",
+      "evidenceRecordedAt": "2026-05-27T03:48:34.846Z",
+      "documentationRecorded": true,
+      "documentationDisposition": "updated",
+      "documentationSummary": "Desktop main.ts documents runtime initialization and direct FlowWorkRuntime usage pattern. No separate doc needed — the code IS the doc for this internal refactor.",
+      "documentationRecordedAt": "2026-05-27T03:48:49.792Z"
+    }
+  },
+  "workerRuns": [],
+  "workerResults": [],
+  "workJobs": [],
+  "workJobResults": [],
+  "updatedAt": "2026-05-27T03:48:49.797Z"
+}

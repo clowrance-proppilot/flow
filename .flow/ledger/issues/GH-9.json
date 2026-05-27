@@ -1,0 +1,58 @@
+{
+  "issue": {
+    "ref": "GH-9",
+    "title": "Add strict JSON mode to flow doctor",
+    "repoKeys": [
+      "flow"
+    ],
+    "state": "ready_to_run",
+    "updatedAt": "2026-05-26T23:35:48.534Z",
+    "metadata": {
+      "issueStatus": "Open",
+      "issueStatusCategory": "To Do",
+      "issueUpdated": "2026-05-22T00:25:27Z",
+      "issueUrl": "https://github.com/camden-lowrance/flow/issues/9",
+      "issueType": "task",
+      "issueLabels": [],
+      "workflow.external.issue.status": "published",
+      "workflow.external.code_review.status": "unpublished",
+      "branchKind": "feature"
+    }
+  },
+  "workerRuns": [
+    {
+      "taskId": "demo-result-gh9",
+      "issueRef": "GH-9",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Demo work completed: strict JSON mode behavior is ready for follow-up review.",
+      "blockers": [],
+      "updatedAt": "2026-05-26T23:35:48.525Z",
+      "completedAt": "2026-05-26T23:35:48.525Z"
+    }
+  ],
+  "workerResults": [
+    {
+      "taskId": "demo-result-gh9",
+      "issueRef": "GH-9",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Demo work completed: strict JSON mode behavior is ready for follow-up review.",
+      "changedFiles": [
+        "src/json-cli.ts",
+        "test/flow.test.ts"
+      ],
+      "testsRun": [
+        "npm run check"
+      ],
+      "blockers": [],
+      "nextPickup": "Review the strict JSON examples and confirm the public contract wording.",
+      "completedAt": "2026-05-26T23:35:48.525Z"
+    }
+  ],
+  "workJobs": [],
+  "workJobResults": [],
+  "updatedAt": "2026-05-26T23:35:48.536Z"
+}

@@ -1,0 +1,128 @@
+{
+  "issue": {
+    "ref": "GH-18",
+    "title": "Inspect dashboard release",
+    "repoKeys": [
+      "flow"
+    ],
+    "state": "awaiting_review",
+    "summary": "Demo review work item for Flow dashboard.",
+    "updatedAt": "2026-05-27T00:34:13.936Z",
+    "metadata": {
+      "issueStatus": "Open",
+      "issueStatusCategory": "To Do",
+      "issueUpdated": "2026-05-25T15:56:57Z",
+      "issueUrl": "https://github.com/camden-lowrance/flow/issues/18",
+      "issueType": "task",
+      "issueLabels": [],
+      "workflow.external.issue.status": "published",
+      "workflow.external.code_review.status": "unpublished",
+      "branchKind": "feature",
+      "demoSeed": true,
+      "demoSeededAt": "2026-05-26T23:13:12.920Z",
+      "evidenceRecorded": true,
+      "documentationRecorded": true,
+      "documentationDisposition": "updated",
+      "localStatus": "In Progress",
+      "localStatusCategory": "In Progress",
+      "localUrl": "flow://local/issues/GH-18",
+      "work_dir": "C:/Users/camde/Documents/GitHub/flow",
+      "branch": "codex/dashboard-phase-status",
+      "workflow.issue.origin": "branch",
+      "workflow.repos.flow.base_branch": "main",
+      "workflow.repos.flow.branch": "codex/dashboard-phase-status",
+      "workflow.repos.flow.head_sha": "043278fd47bf7e59b514fa5eb9917858f96475c7",
+      "workflow.repos.flow.dirty": false,
+      "workflow.repos.flow.worktree_path": "C:/Users/camde/Documents/GitHub/flow",
+      "prRepo": "flow",
+      "prNumber": 29,
+      "prUrl": "https://github.com/camden-lowrance/flow/pull/29",
+      "prHeadRefName": "codex/dashboard-phase-status",
+      "prIsDraft": false,
+      "humanReviewRequired": false,
+      "prRecordedAt": "2026-05-27T00:34:13.936Z",
+      "workflow.repos.flow.pr_repo": "flow",
+      "workflow.repos.flow.pr_number": 29,
+      "workflow.repos.flow.pr_url": "https://github.com/camden-lowrance/flow/pull/29",
+      "workflow.repos.flow.pr_head_ref_name": "codex/dashboard-phase-status",
+      "workflow.repos.flow.pr_is_draft": false,
+      "workflow.repos.flow.pr_recorded_at": "2026-05-27T00:34:13.936Z",
+      "prTemplateMissingHeadings": [],
+      "workflow.repos.flow.pr_template_missing_headings": []
+    }
+  },
+  "workerRuns": [
+    {
+      "taskId": "dashboard-phase-priority",
+      "issueRef": "GH-18",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Dashboard labels now project Flow phase first; artifacts only explain the Source detail.",
+      "blockers": [],
+      "updatedAt": "2026-05-27T00:24:25.548Z",
+      "completedAt": "2026-05-27T00:24:25.548Z"
+    },
+    {
+      "taskId": "dashboard-no-inferred-state",
+      "issueRef": "GH-18",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Dashboard status is now a hard Flow-phase-only projection; the dashboard path no longer uses reconciled queue state, and readonly checks reject artifact-driven labels.",
+      "blockers": [],
+      "updatedAt": "2026-05-27T00:33:38.879Z",
+      "completedAt": "2026-05-27T00:33:38.879Z"
+    }
+  ],
+  "workerResults": [
+    {
+      "taskId": "dashboard-phase-priority",
+      "issueRef": "GH-18",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Dashboard labels now project Flow phase first; artifacts only explain the Source detail.",
+      "changedFiles": [
+        "src/work-runtime.ts",
+        "test/flow.test.ts"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm run build",
+        "npm test",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "git diff --check"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-27T00:24:25.548Z"
+    },
+    {
+      "taskId": "dashboard-no-inferred-state",
+      "issueRef": "GH-18",
+      "repoKey": "flow",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Dashboard status is now a hard Flow-phase-only projection; the dashboard path no longer uses reconciled queue state, and readonly checks reject artifact-driven labels.",
+      "changedFiles": [
+        "src/work-runtime.ts",
+        "scripts/check-dashboard-readonly.mjs",
+        "test/flow.test.ts"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm run build",
+        "npm test",
+        "npm run smoke:dashboard",
+        "npm run readiness:public",
+        "git diff --check"
+      ],
+      "blockers": [],
+      "completedAt": "2026-05-27T00:33:38.879Z"
+    }
+  ],
+  "workJobs": [],
+  "workJobResults": [],
+  "updatedAt": "2026-05-27T00:34:13.937Z"
+}

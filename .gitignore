@@ -10,4 +10,4 @@ dist/
 .env.local
 *.log
 .flow/runtime/
-.flow/ledger/
+.flow/ledger/**/*.tmp

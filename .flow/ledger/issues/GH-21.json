@@ -1,0 +1,221 @@
+{
+  "issue": {
+    "ref": "GH-21",
+    "title": "GH-21",
+    "repoKeys": [
+      "flow"
+    ],
+    "state": "done",
+    "updatedAt": "2026-05-26T01:03:56.558Z",
+    "metadata": {
+      "issueStatus": "Open",
+      "issueStatusCategory": "To Do",
+      "issueUpdated": "2026-05-26T00:43:42Z",
+      "issueUrl": "https://github.com/camden-lowrance/flow/issues/21",
+      "issueType": "task",
+      "issueLabels": [],
+      "workflow.external.issue.status": "published",
+      "workflow.external.code_review.status": "unpublished",
+      "branchKind": "feature",
+      "work_dir": "C:/Users/camde/Documents/GitHub/flow/.worktrees/feature-gh-21",
+      "branch": "feature/gh-21",
+      "workflow.repos.flow.base_branch": "main",
+      "workflow.repos.flow.branch": "feature/gh-21",
+      "workflow.repos.flow.head_sha": "57c0c937473e02ef12d12cdd7cb5c5c6e7a771f0",
+      "workflow.repos.flow.dirty": false,
+      "workflow.repos.flow.worktree_path": "C:/Users/camde/Documents/GitHub/flow/.worktrees/feature-gh-21",
+      "evidenceRecorded": true,
+      "evidenceSummary": "Retry succeeded: feature/gh-21 pushed and PR #22 opened. Local verification passed earlier: npm run check, npm test, npm run build, npm run readiness:public, npm run smoke:flow.",
+      "evidenceSource": "local",
+      "evidenceCriteria": [
+        {
+          "label": "workflow file added",
+          "status": "passed",
+          "evidence": "Retry succeeded: feature/gh-21 pushed and PR #22 opened. Local verification passed earlier: npm run check, npm test, npm run build, npm run readiness:public, npm run smoke:flow.",
+          "source": "local"
+        },
+        {
+          "label": "release docs added",
+          "status": "passed",
+          "evidence": "Retry succeeded: feature/gh-21 pushed and PR #22 opened. Local verification passed earlier: npm run check, npm test, npm run build, npm run readiness:public, npm run smoke:flow.",
+          "source": "local"
+        },
+        {
+          "label": "local checks passed",
+          "status": "passed",
+          "evidence": "Retry succeeded: feature/gh-21 pushed and PR #22 opened. Local verification passed earlier: npm run check, npm test, npm run build, npm run readiness:public, npm run smoke:flow.",
+          "source": "local"
+        },
+        {
+          "label": "branch pushed",
+          "status": "passed",
+          "evidence": "Retry succeeded: feature/gh-21 pushed and PR #22 opened. Local verification passed earlier: npm run check, npm test, npm run build, npm run readiness:public, npm run smoke:flow.",
+          "source": "local"
+        },
+        {
+          "label": "pull request opened",
+          "status": "passed",
+          "evidence": "Retry succeeded: feature/gh-21 pushed and PR #22 opened. Local verification passed earlier: npm run check, npm test, npm run build, npm run readiness:public, npm run smoke:flow.",
+          "source": "local"
+        }
+      ],
+      "workflow.acceptance.status": "recorded",
+      "workflow.acceptance.criteria_json": "[{\"label\":\"workflow file added\",\"status\":\"passed\",\"evidence\":\"Retry succeeded: feature/gh-21 pushed and PR #22 opened. Local verification passed earlier: npm run check, npm test, npm run build, npm run readiness:public, npm run smoke:flow.\",\"source\":\"local\"},{\"label\":\"release docs added\",\"status\":\"passed\",\"evidence\":\"Retry succeeded: feature/gh-21 pushed and PR #22 opened. Local verification passed earlier: npm run check, npm test, npm run build, npm run readiness:public, npm run smoke:flow.\",\"source\":\"local\"},{\"label\":\"local checks passed\",\"status\":\"passed\",\"evidence\":\"Retry succeeded: feature/gh-21 pushed and PR #22 opened. Local verification passed earlier: npm run check, npm test, npm run build, npm run readiness:public, npm run smoke:flow.\",\"source\":\"local\"},{\"label\":\"branch pushed\",\"status\":\"passed\",\"evidence\":\"Retry succeeded: feature/gh-21 pushed and PR #22 opened. Local verification passed earlier: npm run check, npm test, npm run build, npm run readiness:public, npm run smoke:flow.\",\"source\":\"local\"},{\"label\":\"pull request opened\",\"status\":\"passed\",\"evidence\":\"Retry succeeded: feature/gh-21 pushed and PR #22 opened. Local verification passed earlier: npm run check, npm test, npm run build, npm run readiness:public, npm run smoke:flow.\",\"source\":\"local\"}]",
+      "evidenceRecordedAt": "2026-05-26T00:59:17.583Z",
+      "prRepo": "camden-lowrance/flow",
+      "prNumber": 22,
+      "prUrl": "https://github.com/camden-lowrance/flow/pull/22",
+      "prHeadRefName": "",
+      "prIsDraft": false,
+      "humanReviewRequired": false,
+      "prRecordedAt": "2026-05-26T01:03:56.557Z",
+      "workflow.repos.flow.pr_repo": "flow",
+      "workflow.repos.flow.pr_number": 22,
+      "workflow.repos.flow.pr_url": "https://github.com/camden-lowrance/flow/pull/22",
+      "workflow.repos.flow.pr_head_ref_name": "feature/gh-21",
+      "workflow.repos.flow.pr_state": "MERGED",
+      "workflow.repos.flow.pr_is_draft": false,
+      "workflow.repos.flow.pr_mergeable": "UNKNOWN",
+      "workflow.repos.flow.pr_merge_state_status": "UNKNOWN",
+      "workflow.repos.flow.pr_auto_review_status": "missing",
+      "workflow.repos.flow.pr_recorded_at": "2026-05-26T00:58:47.093Z",
+      "workflow.repos.camden_lowrance_flow.branch": "feature/gh-21",
+      "workflow.repos.camden_lowrance_flow.head_sha": "57c0c937473e02ef12d12cdd7cb5c5c6e7a771f0",
+      "workflow.repos.camden_lowrance_flow.dirty": false,
+      "prTemplateMissingHeadings": [],
+      "workflow.repos.camden_lowrance_flow.pr_repo": "camden-lowrance/flow",
+      "workflow.repos.camden_lowrance_flow.pr_number": 22,
+      "workflow.repos.camden_lowrance_flow.pr_url": "https://github.com/camden-lowrance/flow/pull/22",
+      "workflow.repos.camden_lowrance_flow.pr_head_ref_name": "",
+      "workflow.repos.camden_lowrance_flow.pr_is_draft": false,
+      "workflow.repos.camden_lowrance_flow.pr_checks_passing": true,
+      "workflow.repos.camden_lowrance_flow.pr_template_missing_headings": [],
+      "workflow.repos.camden_lowrance_flow.pr_recorded_at": "2026-05-26T01:03:56.557Z",
+      "documentationRecorded": true,
+      "documentationDisposition": "updated",
+      "documentationSummary": "Added docs/releasing.md and linked release steps from README and CONTRIBUTING.",
+      "documentationRecordedAt": "2026-05-26T00:59:34.530Z",
+      "workflow.repos.flow.pr_merged_at": "2026-05-26T01:03:14Z",
+      "workflow.repos.flow.pr_merge_commit_sha": "983e14dc352735fd3ef8c89ed1f1e7ec3d70be59",
+      "prChecksPassing": true
+    }
+  },
+  "workerRuns": [
+    {
+      "taskId": "worker-mplwxrdg-po19vj1l",
+      "issueRef": "GH-21",
+      "repoKey": "flow",
+      "workJobId": "job-mplwxrdh-6g49lyuc",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "workspacePath": "C:/Users/camde/Documents/GitHub/flow/.worktrees/feature-gh-21",
+      "summary": "Retried after camden-lowrance token gained workflow scope. Pushed feature/gh-21 and opened PR #22 for the npm release publishing workflow.",
+      "blockers": [],
+      "startedAt": "2026-05-26T00:44:41.067Z",
+      "updatedAt": "2026-05-26T00:59:09.060Z",
+      "completedAt": "2026-05-26T00:59:09.060Z"
+    }
+  ],
+  "workerResults": [
+    {
+      "taskId": "worker-mplwxrdg-po19vj1l",
+      "issueRef": "GH-21",
+      "repoKey": "flow",
+      "workJobId": "job-mplwxrdh-6g49lyuc",
+      "executor": "live_agent_thread",
+      "status": "succeeded",
+      "summary": "Retried after camden-lowrance token gained workflow scope. Pushed feature/gh-21 and opened PR #22 for the npm release publishing workflow.",
+      "changedFiles": [
+        ".github/workflows/publish.yml",
+        "docs/releasing.md",
+        "README.md",
+        "CONTRIBUTING.md"
+      ],
+      "testsRun": [
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run readiness:public",
+        "npm run smoke:flow"
+      ],
+      "blockers": [],
+      "nextPickup": "Review and merge PR #22, then configure npm trusted publishing for camden-lowrance/flow using workflow publish.yml.",
+      "handoffPrompt": "Use Flow to work this prompt.\n\nFlow context:\n- Issue: GH-21\n- Repo: flow\n- Worktree: C:/Users/camde/Documents/GitHub/flow/.worktrees/feature-gh-21\n- Branch: feature/gh-21\n- Local commit: 57c0c93 Add npm release publishing workflow\n\nBlocked on GitHub auth: camden-lowrance token lacks workflow scope. Refresh scope, push, open PR, and record PR in Flow.",
+      "completedAt": "2026-05-26T00:59:09.060Z"
+    }
+  ],
+  "workJobs": [
+    {
+      "id": "job-mplwxrdh-6g49lyuc",
+      "issueRef": "GH-21",
+      "repoKey": "flow",
+      "workType": "flow.implement",
+      "status": "succeeded",
+      "input": {
+        "executionMode": "local_thread",
+        "body": "Use Flow to work this prompt.\nIssue: GH-21\nTitle: GH-21\nRepo key: flow\nPrepared workspace: C:/Users/camde/Documents/GitHub/flow/.worktrees/feature-gh-21\nBranch: feature/gh-21",
+        "workspacePath": "C:/Users/camde/Documents/GitHub/flow/.worktrees/feature-gh-21",
+        "handoffTaskId": "worker-mplwxrdg-po19vj1l",
+        "metadata": {
+          "workspacePath": "C:/Users/camde/Documents/GitHub/flow/.worktrees/feature-gh-21",
+          "handoffTaskId": "worker-mplwxrdg-po19vj1l"
+        },
+        "idempotencyKey": "GH-21:flow:worker-mplwxrdg-po19vj1l"
+      },
+      "requiredCapabilities": [],
+      "createdAt": "2026-05-26T00:44:41.045Z",
+      "updatedAt": "2026-05-26T00:59:09.060Z",
+      "claimedBy": "live_agent_thread",
+      "claimedAt": "2026-05-26T00:44:41.069Z",
+      "completedAt": "2026-05-26T00:59:09.060Z"
+    }
+  ],
+  "workJobResults": [
+    {
+      "jobId": "job-mplwxrdh-6g49lyuc",
+      "issueRef": "GH-21",
+      "repoKey": "flow",
+      "workType": "flow.implement",
+      "status": "succeeded",
+      "summary": "Retried after camden-lowrance token gained workflow scope. Pushed feature/gh-21 and opened PR #22 for the npm release publishing workflow.",
+      "evidence": [
+        ".github/workflows/publish.yml",
+        "docs/releasing.md",
+        "README.md",
+        "CONTRIBUTING.md",
+        "npm run check",
+        "npm test",
+        "npm run build",
+        "npm run readiness:public",
+        "npm run smoke:flow"
+      ],
+      "workerResult": {
+        "taskId": "worker-mplwxrdg-po19vj1l",
+        "issueRef": "GH-21",
+        "repoKey": "flow",
+        "workJobId": "job-mplwxrdh-6g49lyuc",
+        "executor": "live_agent_thread",
+        "status": "succeeded",
+        "summary": "Retried after camden-lowrance token gained workflow scope. Pushed feature/gh-21 and opened PR #22 for the npm release publishing workflow.",
+        "changedFiles": [
+          ".github/workflows/publish.yml",
+          "docs/releasing.md",
+          "README.md",
+          "CONTRIBUTING.md"
+        ],
+        "testsRun": [
+          "npm run check",
+          "npm test",
+          "npm run build",
+          "npm run readiness:public",
+          "npm run smoke:flow"
+        ],
+        "blockers": [],
+        "nextPickup": "Review and merge PR #22, then configure npm trusted publishing for camden-lowrance/flow using workflow publish.yml.",
+        "completedAt": "2026-05-26T00:59:09.060Z"
+      },
+      "completedAt": "2026-05-26T00:59:09.060Z"
+    }
+  ],
+  "updatedAt": "2026-05-26T01:03:56.559Z"
+}
