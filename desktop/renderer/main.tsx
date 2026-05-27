@@ -1,301 +1,425 @@
+import { Activity, CircleCheck, ClipboardList, FileCode, FileText, Folder, RefreshCw, Search, Send, Waypoints } from "lucide-react";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
+
+type ProjectRecord = {
+  id: string;
+  name: string;
+  root: string;
+  valid: boolean;
+  error?: string;
+};
 
 type DashboardIssue = {
   ref: string;
   title?: string;
   workStatus?: string;
   statusLabel?: string;
+  blockerLabels?: string[];
+  repositories?: string[];
+  evidenceStatus?: string;
+  documentationStatus?: string;
+  reviewStatus?: string;
+  handoffPrompt?: string;
 };
 
-type PiTimelineItem = {
-  id: string;
-  role: "system" | "user" | "assistant" | "tool";
-  content: string;
-  createdAt: string;
-  toolName?: string;
-  diff?: {
-    path: string;
-    before?: string;
-    after?: string;
+type ContextProjection = {
+  active?: {
+    projectId?: string;
+    issueRef?: string;
+    threadId?: string;
+    sessionId?: string;
+    artifactId?: string;
   };
+  prompts?: Array<{ id: string; prompt: string; issueRef?: string; threadId?: string; sessionId?: string; artifactRefs?: string[]; summary?: string; updatedAt: string }>;
+  artifacts?: Array<{ id: string; artifactType: string; title: string; uri?: string; path?: string; summary?: string; updatedAt?: string }>;
 };
 
-type PiSession = {
+type ConversationItem = {
   id: string;
-  issueRef: string;
-  startedAt: string;
-  updatedAt: string;
-  timeline: PiTimelineItem[];
+  role: "user" | "assistant" | "system";
+  text: string;
+  createdAt: string;
 };
 
 function App() {
+  const [projects, setProjects] = useState<ProjectRecord[]>([]);
+  const [activeProjectId, setActiveProjectId] = useState("");
   const [issues, setIssues] = useState<DashboardIssue[]>([]);
-  const [activeIssueRef, setActiveIssueRef] = useState("");
-  const [activeSession, setActiveSession] = useState<PiSession | undefined>(undefined);
-  const [loadingIssues, setLoadingIssues] = useState(true);
-  const [loadingSession, setLoadingSession] = useState(false);
-  const [sendingPrompt, setSendingPrompt] = useState(false);
+  const [context, setContext] = useState<ContextProjection>({});
+  const [selectedIssueRef, setSelectedIssueRef] = useState("");
+  const [query, setQuery] = useState("");
   const [prompt, setPrompt] = useState("");
+  const [conversation, setConversation] = useState<ConversationItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [actionBusy, setActionBusy] = useState("");
   const [error, setError] = useState("");
-  const timelineEndRef = useRef<HTMLDivElement | null>(null);
+  const conversationEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    void loadIssues();
+    void refresh();
   }, []);
 
   useEffect(() => {
-    timelineEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [activeSession?.timeline.length]);
+    conversationEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [conversation.length]);
 
-  const activeIssue = useMemo(
-    () => issues.find((issue) => issue.ref === activeIssueRef),
-    [issues, activeIssueRef],
-  );
+  const activeProject = projects.find((project) => project.id === activeProjectId);
+  const selectedIssue = issues.find((issue) => issue.ref === selectedIssueRef);
+  const activeArtifact = context.artifacts?.find((artifact) => artifact.id === context.active?.artifactId) ?? context.artifacts?.at(-1);
 
-  async function loadIssues(): Promise<void> {
-    setLoadingIssues(true);
+  const filteredIssues = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return issues.filter((issue) => {
+      if (!needle) return true;
+      return [
+        issue.ref,
+        issue.title,
+        issue.workStatus,
+        issue.statusLabel,
+        ...(issue.blockerLabels ?? []),
+        ...(issue.repositories ?? []),
+      ].join(" ").toLowerCase().includes(needle);
+    });
+  }, [issues, query]);
+
+  async function refresh(): Promise<void> {
+    setLoading(true);
     setError("");
     try {
-      const response = await fetch("/api/pi/issues", { cache: "no-store" });
-      const payload = await response.json() as { ok?: boolean; issues?: unknown[]; error?: string };
-      if (!response.ok || !payload.ok) throw new Error(payload.error || `HTTP ${response.status}`);
-      const next = (payload.issues ?? [])
-        .map((item) => normalizeIssue(item))
-        .filter(Boolean) as DashboardIssue[];
-      setIssues(next);
-      if (!activeIssueRef && next.length) {
-        await selectIssue(next[0].ref);
-      }
+      const [projectsPayload, contextPayload] = await Promise.all([
+        fetchJson<{ ok?: boolean; activeProjectId?: string; projects?: ProjectRecord[] }>("/api/projects"),
+        fetchJson<{ ok?: boolean; project?: ProjectRecord; dashboard?: { issues?: DashboardIssue[] }; context?: ContextProjection }>("/api/context"),
+      ]);
+      const nextProjects = projectsPayload.projects ?? [];
+      const nextProjectId = projectsPayload.activeProjectId || contextPayload.project?.id || nextProjects[0]?.id || "";
+      setProjects(nextProjects);
+      setActiveProjectId(nextProjectId);
+      setIssues(contextPayload.dashboard?.issues ?? []);
+      setContext(contextPayload.context ?? {});
+      setSelectedIssueRef((current) => current || contextPayload.context?.active?.issueRef || "");
+      setConversation(seedConversation(contextPayload.context));
     } catch (cause) {
-      setError("Unable to load issues.");
+      setError("Unable to load Flow desktop context.");
     } finally {
-      setLoadingIssues(false);
+      setLoading(false);
     }
   }
 
-  async function selectIssue(issueRef: string): Promise<void> {
-    setActiveIssueRef(issueRef);
-    setLoadingSession(true);
+  async function activateProject(projectId: string): Promise<void> {
     setError("");
     try {
-      const response = await fetch(`/api/pi/issues/${encodeURIComponent(issueRef)}/session`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      });
-      const payload = await response.json() as { ok?: boolean; session?: unknown; error?: string };
-      if (!response.ok || !payload.ok) throw new Error(payload.error || `HTTP ${response.status}`);
-      const session = normalizeSession(payload.session);
-      if (!session) throw new Error("Malformed session payload.");
-      setActiveSession(session);
-    } catch (cause) {
-      setError("Unable to start pi session.");
-    } finally {
-      setLoadingSession(false);
+      await fetchJson(`/api/projects/${encodeURIComponent(projectId)}/active`, { method: "POST" });
+      setSelectedIssueRef("");
+      await refresh();
+    } catch {
+      setError("Unable to switch project.");
     }
   }
 
-  async function sendPrompt(): Promise<void> {
+  async function submitPrompt(): Promise<void> {
     const text = prompt.trim();
-    if (!text || !activeSession) return;
-    setSendingPrompt(true);
+    if (!text) return;
+    setSending(true);
     setError("");
+    const userItem: ConversationItem = {
+      id: `local-user-${Date.now()}`,
+      role: "user",
+      text,
+      createdAt: new Date().toISOString(),
+    };
+    setConversation((items) => [...items, userItem]);
     try {
-      const response = await fetch(`/api/pi/sessions/${encodeURIComponent(activeSession.id)}/prompts`, {
+      const result = await fetchJson<{
+        ok?: boolean;
+        threadId?: string;
+        sessionId?: string;
+        artifactRefs?: string[];
+        summary?: string;
+        error?: string;
+        projection?: ContextProjection;
+      }>("/api/prompt", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: text }),
+        body: JSON.stringify({
+          prompt: text,
+          projectId: activeProjectId || undefined,
+          issueRef: selectedIssueRef || undefined,
+          threadId: context.active?.threadId,
+          sessionId: context.active?.sessionId,
+          artifactRefs: activeArtifact ? [activeArtifact.id] : [],
+        }),
       });
-      const payload = await response.json() as { ok?: boolean; session?: unknown; error?: string };
-      if (!response.ok || !payload.ok) throw new Error(payload.error || `HTTP ${response.status}`);
-      const session = normalizeSession(payload.session);
-      if (!session) throw new Error("Malformed session payload.");
-      setActiveSession(session);
       setPrompt("");
-    } catch (cause) {
-      setError("Unable to send prompt.");
+      setContext(result.projection ?? context);
+      setConversation((items) => [
+        ...items,
+        {
+          id: `local-assistant-${Date.now()}`,
+          role: "assistant",
+          text: result.error || result.summary || (result.sessionId
+            ? `Prompt routed to session ${result.sessionId}.`
+            : `Prompt recorded for ${activeProject?.name ?? "active project"}.`),
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+      await refresh();
+    } catch {
+      setError("Unable to route prompt.");
     } finally {
-      setSendingPrompt(false);
+      setSending(false);
+    }
+  }
+
+  async function invokeAction(action: DesktopAction): Promise<void> {
+    if (!selectedIssueRef) {
+      setError("Select an issue before recording workflow state.");
+      return;
+    }
+    setActionBusy(action);
+    setError("");
+    try {
+      const result = await fetchJson<{
+        ok?: boolean;
+        summary: string;
+        projection?: ContextProjection;
+      }>(`/api/actions/${action}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: activeProjectId || undefined,
+          issueRef: selectedIssueRef,
+          payload: actionPayload(action, prompt, selectedIssue),
+        }),
+      });
+      setContext(result.projection ?? context);
+      await refresh();
+      setConversation((items) => [
+        ...items,
+        {
+          id: `local-action-${Date.now()}`,
+          role: "system",
+          text: result.summary,
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+    } catch {
+      setError("Unable to record workflow action.");
+    } finally {
+      setActionBusy("");
     }
   }
 
   return (
-    <div className="shell">
-      <aside className="sidebar">
-        <header className="sidebar-head">
-          <h1>Flow Desktop</h1>
-          <button type="button" onClick={() => void loadIssues()} disabled={loadingIssues}>
-            Refresh
-          </button>
-        </header>
-        {loadingIssues ? <div className="muted">Loading issues...</div> : null}
-        <div className="issue-list">
-          {issues.map((issue) => (
+    <div className="desktop-shell">
+      <aside className="project-rail">
+        <div className="brand">
+          <Waypoints size={18} />
+        </div>
+        <div className="project-list">
+          {projects.map((project) => (
             <button
-              key={issue.ref}
+              key={project.id}
               type="button"
-              className={issue.ref === activeIssueRef ? "issue active" : "issue"}
-              onClick={() => void selectIssue(issue.ref)}
+              title={project.name}
+              className={project.id === activeProjectId ? "project-button active" : "project-button"}
+              onClick={() => void activateProject(project.id)}
             >
-              <div className="issue-ref">{issue.ref}</div>
-              <div className="issue-title">{issue.title || "Untitled issue"}</div>
-              <div className="issue-status">{issue.workStatus || issue.statusLabel || "Queued"}</div>
+              <Folder size={17} />
             </button>
           ))}
         </div>
       </aside>
 
-      <main className="main">
-        <header className="main-head">
-          <h2>{activeIssue?.title || "Pi Session"}</h2>
-          <div className="muted">{activeIssueRef || "No issue selected"}</div>
+      <aside className="context-panel">
+        <header className="context-header">
+          <div>
+            <div className="eyebrow">Project</div>
+            <h1>{activeProject?.name || "Flow"}</h1>
+          </div>
+          <button type="button" className="icon-button" title="Refresh" onClick={() => void refresh()} disabled={loading}>
+            <RefreshCw size={15} />
+          </button>
         </header>
 
-        <section className="timeline">
-          {loadingSession ? <div className="muted">Starting pi session...</div> : null}
-          {!loadingSession && activeSession?.timeline.length
-            ? activeSession.timeline.map((item) => (
-              <article key={item.id} className={`item role-${item.role}`}>
-                <div className="item-head">
-                  <span className="role">{item.role}</span>
-                  <span className="time">{formatRelativeTime(item.createdAt)}</span>
-                  {item.toolName ? <span className="tool">{item.toolName}</span> : null}
-                </div>
-                <div className="item-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(item.content) }} />
-                {item.diff ? <DiffView diff={item.diff} /> : null}
-              </article>
-            ))
-            : null}
-          {!loadingSession && !activeSession?.timeline.length ? <div className="muted">No session events yet.</div> : null}
-          <div ref={timelineEndRef} />
-        </section>
+        <label className="search-box">
+          <Search size={14} />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search issues" />
+        </label>
 
-        <section className="composer">
-          <textarea
-            value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                void sendPrompt();
-              }
-            }}
-            placeholder="Send prompt to pi session..."
-          />
-          <div className="composer-row">
-            <span className="muted">Enter to send, Shift+Enter for newline</span>
-            <button type="button" onClick={() => void sendPrompt()} disabled={sendingPrompt || !prompt.trim() || !activeSession}>
-              {sendingPrompt ? "Sending..." : "Send"}
+        <section className="issue-stack">
+          {filteredIssues.map((issue) => (
+            <button
+              key={issue.ref}
+              type="button"
+              className={issue.ref === selectedIssueRef ? "issue-context active" : "issue-context"}
+              onClick={() => setSelectedIssueRef(issue.ref)}
+            >
+              <div className="issue-row">
+                <span className="issue-ref">{issue.ref}</span>
+                <span className="issue-state">{issue.workStatus || issue.statusLabel || "Queued"}</span>
+              </div>
+              <div className="issue-title">{issue.title || "Untitled issue"}</div>
+              <div className="issue-meta">
+                {(issue.repositories ?? []).slice(0, 2).map((repo) => <span key={repo}>{repo}</span>)}
+                {issue.reviewStatus ? <span>{issue.reviewStatus}</span> : null}
+              </div>
+              <div className="issue-records">
+                <span>{issue.evidenceStatus || "Evidence missing"}</span>
+                <span>{issue.documentationStatus || "Docs missing"}</span>
+              </div>
+              {issue.blockerLabels?.length ? <div className="issue-note">{issue.blockerLabels[0]}</div> : null}
+            </button>
+          ))}
+          {!filteredIssues.length ? <div className="empty-state">No issues</div> : null}
+        </section>
+      </aside>
+
+      <main className="workbench">
+        <section className="conversation">
+          <header className="conversation-header">
+            <div>
+              <div className="eyebrow">Prompt Context</div>
+              <h2>{selectedIssue?.title || activeProject?.name || "Project conversation"}</h2>
+              <p>{contextLine(activeProject, selectedIssue, context)}</p>
+            </div>
+          </header>
+
+          <div className="action-strip" aria-label="Workflow actions">
+            <button type="button" title="Record evidence" onClick={() => void invokeAction("record_evidence")} disabled={!selectedIssueRef || Boolean(actionBusy)}>
+              <ClipboardList size={15} />
+            </button>
+            <button type="button" title="Record result" onClick={() => void invokeAction("record_result")} disabled={!selectedIssueRef || Boolean(actionBusy)}>
+              <CircleCheck size={15} />
+            </button>
+            <button type="button" title="Record documentation" onClick={() => void invokeAction("record_documentation")} disabled={!selectedIssueRef || Boolean(actionBusy)}>
+              <FileText size={15} />
+            </button>
+            <button type="button" title="Run doctor" onClick={() => void invokeAction("run_doctor")} disabled={!selectedIssueRef || Boolean(actionBusy)}>
+              <Activity size={15} />
             </button>
           </div>
+
+          <div className="timeline">
+            {conversation.map((item) => (
+              <article key={item.id} className={`message ${item.role}`}>
+                <div className="message-role">{item.role}</div>
+                <div className="message-text">{item.text}</div>
+              </article>
+            ))}
+            <div ref={conversationEndRef} />
+          </div>
+
+          <section className="composer">
+            <textarea
+              value={prompt}
+              onChange={(event) => setPrompt(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  void submitPrompt();
+                }
+              }}
+              placeholder="Prompt Flow..."
+            />
+            <button type="button" title="Send prompt" onClick={() => void submitPrompt()} disabled={sending || !prompt.trim()}>
+              <Send size={17} />
+            </button>
+          </section>
+          {error ? <div className="error-line">{error}</div> : null}
         </section>
 
-        {error ? <div className="error">{error}</div> : null}
+        <aside className="canvas">
+          <header>
+            <div className="eyebrow">Canvas</div>
+            <h2>{activeArtifact?.title || "Artifacts"}</h2>
+          </header>
+          {activeArtifact ? (
+            <div className="artifact-card">
+              <FileCode size={18} />
+              <div>
+                <div className="artifact-type">{activeArtifact.artifactType}</div>
+                <div className="artifact-title">{activeArtifact.title}</div>
+                {activeArtifact.summary ? <div className="artifact-summary">{activeArtifact.summary}</div> : null}
+                {activeArtifact.uri || activeArtifact.path ? (
+                  <div className="artifact-uri">{activeArtifact.uri || activeArtifact.path}</div>
+                ) : null}
+              </div>
+            </div>
+          ) : (
+            <div className="canvas-empty">
+              <FileCode size={22} />
+              <span>Artifacts from the conversation will appear here.</span>
+            </div>
+          )}
+        </aside>
       </main>
     </div>
   );
 }
 
-function DiffView({ diff }: { diff: { path: string; before?: string; after?: string } }) {
-  return (
-    <div className="diff">
-      <div className="path">{diff.path}</div>
-      {diff.before ? <pre className="before">{diff.before}</pre> : null}
-      {diff.after ? <pre className="after">{diff.after}</pre> : null}
-    </div>
-  );
+type DesktopAction = "record_evidence" | "record_result" | "record_documentation" | "run_doctor";
+
+async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, { cache: "no-store", ...init });
+  const payload = await response.json() as T & { ok?: boolean; error?: string };
+  if (!response.ok || payload.ok === false) throw new Error(payload.error || `HTTP ${response.status}`);
+  return payload;
 }
 
-function normalizeIssue(value: unknown): DashboardIssue | undefined {
-  if (!isRecord(value)) return undefined;
-  const ref = asString(value.ref);
-  if (!ref) return undefined;
-  return {
-    ref,
-    title: asString(value.title),
-    workStatus: asString(value.workStatus),
-    statusLabel: asString(value.statusLabel),
-  };
-}
-
-function normalizeSession(value: unknown): PiSession | undefined {
-  if (!isRecord(value)) return undefined;
-  const id = asString(value.id);
-  const issueRef = asString(value.issueRef);
-  if (!id || !issueRef) return undefined;
-  const timeline = (Array.isArray(value.timeline) ? value.timeline : [])
-    .map((item) => normalizeTimelineItem(item))
-    .filter(Boolean) as PiTimelineItem[];
-  return {
-    id,
-    issueRef,
-    startedAt: asString(value.startedAt) || new Date().toISOString(),
-    updatedAt: asString(value.updatedAt) || new Date().toISOString(),
-    timeline,
-  };
-}
-
-function normalizeTimelineItem(value: unknown): PiTimelineItem | undefined {
-  if (!isRecord(value)) return undefined;
-  const id = asString(value.id);
-  const role = asString(value.role) as PiTimelineItem["role"];
-  const content = typeof value.content === "string" ? value.content : "";
-  if (!id || !content || !["system", "user", "assistant", "tool"].includes(role)) return undefined;
-  let diff: PiTimelineItem["diff"];
-  if (isRecord(value.diff)) {
-    const path = asString(value.diff.path);
-    if (path) {
-      diff = {
-        path,
-        before: asString(value.diff.before),
-        after: asString(value.diff.after),
-      };
-    }
+function seedConversation(context?: ContextProjection): ConversationItem[] {
+  const prompts = context?.prompts ?? [];
+  const artifacts = context?.artifacts ?? [];
+  if (!prompts.length && !artifacts.length) {
+    return [{
+      id: "system-empty",
+      role: "system",
+      text: "Ask Flow what to work on, or select an issue for narrower context.",
+      createdAt: new Date().toISOString(),
+    }];
   }
-  return {
-    id,
-    role,
-    content,
-    createdAt: asString(value.createdAt) || new Date().toISOString(),
-    toolName: asString(value.toolName),
-    diff,
-  };
+  return [
+    ...prompts.slice(-6).flatMap((prompt) => [
+      {
+        id: prompt.id,
+        role: "user" as const,
+        text: prompt.prompt,
+        createdAt: prompt.updatedAt,
+      },
+      ...(prompt.summary ? [{
+        id: `${prompt.id}-summary`,
+        role: "assistant" as const,
+        text: prompt.summary,
+        createdAt: prompt.updatedAt,
+      }] : []),
+    ]),
+    ...artifacts.slice(-3).map((artifact) => ({
+      id: `artifact-message-${artifact.id}`,
+      role: "system" as const,
+      text: artifact.summary || artifact.title,
+      createdAt: artifact.updatedAt || new Date().toISOString(),
+    })),
+  ];
 }
 
-function asString(value: unknown): string {
-  return typeof value === "string" ? value : "";
+function contextLine(project: ProjectRecord | undefined, issue: DashboardIssue | undefined, context: ContextProjection): string {
+  const parts = [
+    project?.name,
+    issue?.ref,
+    context.active?.threadId ? `thread ${context.active.threadId}` : undefined,
+    context.active?.sessionId ? `session ${context.active.sessionId}` : undefined,
+  ].filter(Boolean);
+  return parts.join(" / ") || "No active context";
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function renderMarkdown(value: string): string {
-  const escaped = value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-  return escaped
-    .replace(/`([^`\n]+)`/g, "<code>$1</code>")
-    .replace(/\*\*([^\n*]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*([^\n*]+)\*/g, "<em>$1</em>")
-    .replace(/\n/g, "<br />");
-}
-
-function formatRelativeTime(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "unknown";
-  const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
-  if (seconds < 60) return `${seconds}s ago`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
+function actionPayload(action: DesktopAction, prompt: string, issue: DashboardIssue | undefined): Record<string, unknown> {
+  const summary = prompt.trim() || issue?.title || issue?.ref || "Flow Desktop action";
+  if (action === "record_evidence") return { summary, source: "Flow Desktop conversation" };
+  if (action === "record_documentation") return { summary, disposition: "not_needed" };
+  if (action === "record_result") return { summary, status: "succeeded" };
+  return {};
 }
 
 createRoot(document.getElementById("root") as HTMLElement).render(<App />);
-

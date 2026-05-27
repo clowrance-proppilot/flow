@@ -8,10 +8,14 @@ directories:
 
 files:
   - dist/desktop/**/*
+  - dist/desktop-renderer/**/*
   - dist/dashboard/**/*
   - package.json
 
 asar: true
+
+extraMetadata:
+  main: dist/desktop/main.js
 
 artifactName: ${productName}-${version}-${arch}.${ext}
 

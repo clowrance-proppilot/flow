@@ -57,6 +57,7 @@
     "prepack": "npm run build",
     "smoke:flow": "node scripts/smoke-flow.mjs",
     "smoke:dashboard": "node scripts/smoke-dashboard.mjs",
+    "smoke:desktop": "node scripts/smoke-desktop.mjs",
     "readiness:public": "node scripts/public-readiness.mjs",
     "start": "node bin/flow",
     "start:all": "node scripts/start-all.mjs",

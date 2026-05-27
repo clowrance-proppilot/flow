@@ -12,6 +12,7 @@ export const flowLayout = {
     sessions: ".flow/runtime/sessions",
     ledger: ".flow/ledger/workflow.jsonl",
     issueProjections: ".flow/ledger/issues/<issueRef>.json",
+    contextProjection: ".flow/ledger/context.json",
   },
 } as const;
 
@@ -51,6 +52,14 @@ export function flowIssueProjectionPath(projectRoot: string, issueRef: string): 
 
 export function flowUserIssueProjectionPath(projectRoot: string, issueRef: string): string {
   return join(flowUserStateRoot(projectRoot), "ledger", "issues", `${flowIssueProjectionFileName(issueRef)}.json`);
+}
+
+export function flowContextProjectionPath(projectRoot: string): string {
+  return join(resolve(projectRoot), ".flow", "ledger", "context.json");
+}
+
+export function flowUserContextProjectionPath(projectRoot: string): string {
+  return join(flowUserStateRoot(projectRoot), "ledger", "context.json");
 }
 
 export function flowIssueProjectionFileName(issueRef: string): string {

@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { IssueStateValue, type WorkItem } from "../src/contracts.js";
 import type { FlowWorkRuntime } from "../src/work-runtime.js";
+import { PiSdkSessionRunner } from "./pi-sdk-runner.js";
 
 type RuntimeIssueSurface = Pick<FlowWorkRuntime, "createSession" | "inspectIssue" | "inspectQueue" | "inspectBacklog" | "selectIssue" | "summarizeHandoff">;
 
@@ -10,7 +11,10 @@ export interface FlowSessionLink {
   issueRef: string;
   flowSessionId: string;
   piSessionId: string;
+  piSessionFile?: string;
   workspacePath?: string;
+  provider?: string;
+  status?: "active" | "paused" | "done" | "failed";
   createdAt: string;
   updatedAt: string;
 }
@@ -32,7 +36,10 @@ export interface PiSessionSnapshot {
   id: string;
   issueRef: string;
   flowSessionId: string;
+  sessionFile?: string;
   workspacePath?: string;
+  status: "active" | "paused" | "done" | "failed";
+  error?: string;
   startedAt: string;
   updatedAt: string;
   timeline: PiTimelineItem[];
@@ -42,11 +49,36 @@ export interface PiSessionDriverOptions {
   runtime: RuntimeIssueSurface;
   repoRoot: string;
   flowSessionId?: string;
+  agent?: PiAgentRunner | false;
+}
+
+export interface PiAgentPromptInput {
+  sessionId: string;
+  sessionFile?: string;
+  issueRef: string;
+  prompt: string;
+  repoRoot: string;
+  workspacePath?: string;
+}
+
+export interface PiAgentPromptResult {
+  sessionId: string;
+  sessionFile?: string;
+  workspacePath?: string;
+  status?: "active" | "paused" | "done" | "failed";
+  summary?: string;
+  timeline?: PiTimelineItem[];
+}
+
+export interface PiAgentRunner {
+  prompt(input: PiAgentPromptInput): Promise<PiAgentPromptResult>;
 }
 
 export class PiSessionDriver {
   private readonly runtime: RuntimeIssueSurface;
   private readonly flowSessionId: string;
+  private readonly repoRoot: string;
+  private readonly agent?: PiAgentRunner;
   private readonly linksPath: string;
   private readonly sessionsById = new Map<string, PiSessionSnapshot>();
   private readonly sessionIdByIssueRef = new Map<string, string>();
@@ -56,6 +88,8 @@ export class PiSessionDriver {
   constructor(options: PiSessionDriverOptions) {
     this.runtime = options.runtime;
     this.flowSessionId = options.flowSessionId ?? "desktop";
+    this.repoRoot = options.repoRoot;
+    this.agent = options.agent === false ? undefined : options.agent ?? new PiSdkSessionRunner();
     this.linksPath = join(options.repoRoot, ".flow", "runtime", "pi-session-links.json");
   }
 
@@ -81,7 +115,9 @@ export class PiSessionDriver {
       id: sessionId,
       issueRef: normalizedRef,
       flowSessionId: this.flowSessionId,
+      sessionFile: link?.piSessionFile,
       workspacePath,
+      status: link?.status ?? "active",
       startedAt: link?.createdAt ?? now,
       updatedAt: now,
       timeline: [this.systemMessage({
@@ -98,7 +134,10 @@ export class PiSessionDriver {
       issueRef: normalizedRef,
       flowSessionId: this.flowSessionId,
       piSessionId: sessionId,
+      piSessionFile: snapshot.sessionFile,
       workspacePath,
+      provider: "pi",
+      status: snapshot.status,
       createdAt: link?.createdAt ?? now,
       updatedAt: now,
     });
@@ -125,19 +164,65 @@ export class PiSessionDriver {
       createdAt,
     });
 
-    const handoff = await this.runtime.summarizeHandoff(session.flowSessionId).catch(() => "");
-    session.timeline.push({
-      id: timelineId("assistant"),
-      role: "assistant",
-      content: handoff
-        ? `Queued prompt for ${session.issueRef}.\n\n${handoff}`
-        : `Queued prompt for ${session.issueRef}.`,
-      createdAt: nowIso(),
-    });
+    if (!this.agent) {
+      const handoff = await this.runtime.summarizeHandoff(session.flowSessionId).catch(() => "");
+      session.timeline.push({
+        id: timelineId("assistant"),
+        role: "assistant",
+        content: handoff
+          ? `Queued prompt for ${session.issueRef}.\n\n${handoff}`
+          : `Queued prompt for ${session.issueRef}.`,
+        createdAt: nowIso(),
+      });
+    } else {
+      try {
+        const result = await this.agent.prompt({
+          sessionId: session.id,
+          sessionFile: session.sessionFile,
+          issueRef: session.issueRef,
+          prompt: text,
+          repoRoot: this.repoRoot,
+          workspacePath: session.workspacePath,
+        });
+        if (result.sessionId && result.sessionId !== session.id) {
+          this.sessionsById.delete(session.id);
+          session.id = result.sessionId;
+          this.sessionsById.set(session.id, session);
+          this.sessionIdByIssueRef.set(session.issueRef, session.id);
+        }
+        session.sessionFile = result.sessionFile ?? session.sessionFile;
+        session.workspacePath = result.workspacePath ?? session.workspacePath;
+        session.status = result.status ?? "active";
+        session.error = undefined;
+        session.timeline.push(...result.timeline ?? []);
+        if (result.summary && !session.timeline.some((item) => item.role === "assistant" && item.content === result.summary)) {
+          session.timeline.push({
+            id: timelineId("assistant"),
+            role: "assistant",
+            content: result.summary,
+            createdAt: nowIso(),
+          });
+        }
+      } catch (error) {
+        session.status = "failed";
+        session.error = errorMessage(error);
+        session.timeline.push({
+          id: timelineId("assistant"),
+          role: "assistant",
+          content: `Pi session failed: ${session.error}`,
+          createdAt: nowIso(),
+        });
+      }
+    }
 
     session.updatedAt = nowIso();
     const link = this.linksByIssueRef.get(session.issueRef);
     if (link) {
+      link.piSessionId = session.id;
+      link.piSessionFile = session.sessionFile;
+      link.workspacePath = session.workspacePath;
+      link.provider = "pi";
+      link.status = session.status;
       link.updatedAt = session.updatedAt;
       await this.persistLinks();
     }
@@ -230,4 +315,8 @@ function timelineId(role: string): string {
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

@@ -26,7 +26,9 @@ import {
   configToProjectTopology,
   configToWorkTypeRegistry,
   flowConfigPath,
+  flowContextProjectionPath,
   flowIssueProjectionPath,
+  flowContextRecordSchema,
   flowUserConfigPath,
   flowUserRuntimePath,
   flowConfigSchema,
@@ -42,7 +44,11 @@ import {
 import type { ProjectTopology } from "../src/project-topology.js";
 import { parseGitHubIssues, parsePullRequests } from "../src/adapters/github.js";
 import { currentUserBacklogJql, currentUserOpenSprintJql, parseJiraCommentUrl, parseJiraIssue, parseJiraSearch } from "../src/adapters/jira.js";
+import { DesktopActionRouter } from "../desktop/action-router.js";
 import { PiSessionDriver } from "../desktop/pi-session-driver.js";
+import { PiSdkSessionRunner } from "../desktop/pi-sdk-runner.js";
+import { DesktopProjectRegistry } from "../desktop/project-registry.js";
+import { DesktopPromptRouter } from "../desktop/prompt-router.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -530,6 +536,160 @@ test("Flow config bootstrap can keep repo-local config in local git exclude", as
   assert.match(exclude, /^\.flow\/$/m);
 });
 
+test("Desktop project registry tracks active Flow projects from config roots", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-desktop-project-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  await bootstrapFlowConfig({ projectRoot: root, storage: "repo-tracked" });
+  const stateRoot = await mkdtemp(join(tmpdir(), "flow-desktop-state-"));
+  const registry = new DesktopProjectRegistry({ statePath: join(stateRoot, "projects.json") });
+
+  const project = await registry.addProject(root);
+  const projects = await registry.listProjects();
+  const active = await registry.activeProject();
+
+  assert.equal(project.valid, true);
+  assert.equal(project.root, root);
+  assert.equal(project.configPath, flowConfigPath(root));
+  assert.equal(projects.length, 1);
+  assert.equal(active?.id, project.id);
+});
+
+test("Desktop prompt router records ledger context and agent artifacts", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-desktop-prompt-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  await bootstrapFlowConfig({ projectRoot: root, storage: "repo-tracked" });
+  const stateRoot = await mkdtemp(join(tmpdir(), "flow-desktop-state-"));
+  const registry = new DesktopProjectRegistry({ statePath: join(stateRoot, "projects.json") });
+  const project = await registry.addProject(root);
+  const router = new DesktopPromptRouter({
+    projects: registry,
+    agent: {
+      async sendPrompt(input) {
+        assert.equal(input.project.id, project.id);
+        assert.equal(input.issueRef, "ISSUE-50");
+        assert.match(input.threadId, /^thread-/);
+        return {
+          session: {
+            id: "session-50",
+            provider: "pi",
+            workspacePath: root,
+            status: "active",
+          },
+          artifacts: [{
+            id: "artifact-50",
+            artifactType: "diff",
+            title: "Prompt router diff",
+            uri: "artifact://artifact-50",
+          }],
+          summary: "Prompt routed",
+        };
+      },
+    },
+  });
+
+  const result = await router.submit({
+    prompt: "Route this to the active project.",
+    issueRef: "ISSUE-50",
+  });
+  const ledger = createWorkflowLedger({ cwd: root });
+  assert.ok(ledger.readContext);
+  const projection = await ledger.readContext({ projectId: project.id });
+
+  assert.equal(result.project.id, project.id);
+  assert.equal(result.sessionId, "session-50");
+  assert.deepEqual(result.artifactRefs, ["artifact-50"]);
+  assert.equal(projection.active.projectId, project.id);
+  assert.equal(projection.active.issueRef, "ISSUE-50");
+  assert.equal(projection.active.sessionId, "session-50");
+  assert.equal(projection.active.artifactId, "artifact-50");
+  assert.equal(projection.prompts[0].target, "artifact");
+  assert.equal(projection.sessions[0].provider, "pi");
+  assert.equal(projection.artifacts[0].title, "Prompt router diff");
+});
+
+test("Desktop prompt router preserves prompt context when agent routing fails", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-desktop-prompt-error-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  await bootstrapFlowConfig({ projectRoot: root, storage: "repo-tracked" });
+  const stateRoot = await mkdtemp(join(tmpdir(), "flow-desktop-state-error-"));
+  const registry = new DesktopProjectRegistry({ statePath: join(stateRoot, "projects.json") });
+  const project = await registry.addProject(root);
+  const router = new DesktopPromptRouter({
+    projects: registry,
+    agent: {
+      async sendPrompt() {
+        throw new Error("Pi SDK is not installed.");
+      },
+    },
+  });
+
+  const result = await router.submit({
+    prompt: "Route this even if pi is missing.",
+    issueRef: "ISSUE-51",
+  });
+  const ledger = createWorkflowLedger({ cwd: root });
+  assert.ok(ledger.readContext);
+  const projection = await ledger.readContext({ projectId: project.id });
+
+  assert.match(result.error ?? "", /Pi SDK is not installed/);
+  assert.equal(projection.prompts.length, 1);
+  assert.equal(projection.prompts[0].prompt, "Route this even if pi is missing.");
+  assert.match(projection.prompts[0].summary ?? "", /Pi SDK is not installed/);
+  assert.equal(projection.active.issueRef, "ISSUE-51");
+});
+
+test("Desktop action router records evidence, result, docs, and doctor output", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-desktop-actions-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  await bootstrapFlowConfig({ projectRoot: root, storage: "repo-tracked" });
+  const stateRoot = await mkdtemp(join(tmpdir(), "flow-desktop-action-state-"));
+  const registry = new DesktopProjectRegistry({ statePath: join(stateRoot, "projects.json") });
+  const project = await registry.addProject(root);
+  const ledger = new MemoryWorkflowLedger();
+  const runtime = testWorkRuntime({ store: new FlowStore({ root: join(root, ".flow", "runtime") }), ledger });
+  await ledger.writeIssue({
+    ref: "ISSUE-54",
+    title: "Record workflow outcomes from desktop",
+    repoKeys: ["app_api"],
+    state: "queued",
+    metadata: {},
+  });
+
+  const router = new DesktopActionRouter({
+    projects: registry,
+    runtimeForProject: () => runtime,
+    ledgerForProject: () => ledger,
+  });
+  const evidence = await router.invoke({
+    action: "record_evidence",
+    issueRef: "ISSUE-54",
+    payload: { summary: "Tests passed.", source: "npm test" },
+  });
+  await router.invoke({
+    action: "record_result",
+    issueRef: "ISSUE-54",
+    payload: { summary: "Implementation done.", status: "succeeded", testsRun: ["npm test"] },
+  });
+  await router.invoke({
+    action: "record_documentation",
+    issueRef: "ISSUE-54",
+    payload: { summary: "No docs needed.", disposition: "not_needed" },
+  });
+  const doctor = await router.invoke({ action: "run_doctor", issueRef: "ISSUE-54" });
+
+  const issue = await ledger.readIssue("ISSUE-54");
+  const results = await ledger.listWorkerResults("ISSUE-54");
+  const projection = await ledger.readContext({ projectId: project.id });
+
+  assert.equal(evidence.summary, "Evidence recorded for ISSUE-54.");
+  assert.equal(issue?.metadata.evidenceRecorded, true);
+  assert.equal(issue?.metadata.documentationRecorded, true);
+  assert.equal(results.length, 1);
+  assert.equal(results[0].summary, "Implementation done.");
+  assert.match(doctor.summary, /Doctor/);
+  assert.equal(projection.artifacts.length, 4);
+});
+
 test("Pi session driver starts issue-linked sessions and records FlowSessionLink", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-session-start-"));
   const ledger = new MemoryWorkflowLedger();
@@ -548,6 +708,7 @@ test("Pi session driver starts issue-linked sessions and records FlowSessionLink
     runtime,
     repoRoot: root,
     flowSessionId: "desktop",
+    agent: false,
   });
 
   const session = await driver.startSession("gh-34");
@@ -579,6 +740,7 @@ test("Pi session driver appends user prompt and assistant response", async () =>
     runtime,
     repoRoot: root,
     flowSessionId: "desktop",
+    agent: false,
   });
 
   const started = await driver.startSession("GH-35");
@@ -589,6 +751,86 @@ test("Pi session driver appends user prompt and assistant response", async () =>
   assert.equal(userMessage?.content, "Please draft implementation steps.");
   assert.match(assistantMessage?.content ?? "", /Queued prompt for GH-35/);
   assert.equal(updated.timeline.length >= 3, true);
+});
+
+test("Pi session driver records clear failure when pi runtime fails", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-session-error-"));
+  const ledger = new MemoryWorkflowLedger();
+  const runtime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  await ledger.writeIssue({
+    ref: "GH-36",
+    title: "Report missing pi runtime",
+    repoKeys: [],
+    state: "queued",
+    metadata: {},
+  });
+  const driver = new PiSessionDriver({
+    runtime,
+    repoRoot: root,
+    flowSessionId: "desktop",
+    agent: {
+      async prompt() {
+        throw new Error("No pi auth configured.");
+      },
+    },
+  });
+
+  const started = await driver.startSession("GH-36");
+  const updated = await driver.postPrompt(started.id, "Run the real agent.");
+  const assistantMessage = updated.timeline.find((item) => item.role === "assistant");
+  const linksRaw = await readFile(join(root, ".flow", "runtime", "pi-session-links.json"), "utf8");
+  const linksPayload = JSON.parse(linksRaw) as { links: Array<{ issueRef: string; status?: string }> };
+
+  assert.equal(updated.status, "failed");
+  assert.match(updated.error ?? "", /No pi auth configured/);
+  assert.match(assistantMessage?.content ?? "", /Pi session failed: No pi auth configured/);
+  assert.equal(linksPayload.links[0].status, "failed");
+});
+
+test("Pi SDK session runner maps real SDK events into desktop timeline", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-sdk-runner-"));
+  let listener: ((event: Record<string, unknown>) => void) | undefined;
+  const runner = new PiSdkSessionRunner({
+    loadModule: async () => ({
+      SessionManager: {
+        create: () => ({ mode: "create" }),
+        open: () => ({ mode: "open" }),
+      },
+      createAgentSession: async () => ({
+        session: {
+          sessionId: "real-pi-session",
+          sessionFile: join(root, "session.jsonl"),
+          subscribe(next) {
+            listener = next;
+            return () => {
+              listener = undefined;
+            };
+          },
+          async prompt() {
+            listener?.({ type: "tool_execution_start", toolCallId: "tool-1", toolName: "read", args: {} });
+            listener?.({ type: "tool_execution_end", toolCallId: "tool-1", toolName: "read", result: "ok", isError: false });
+            listener?.({
+              type: "message_update",
+              assistantMessageEvent: { type: "text_delta", delta: "Done from pi." },
+            });
+          },
+          dispose() {},
+        },
+      }),
+    }),
+  });
+
+  const result = await runner.prompt({
+    sessionId: "seed",
+    issueRef: "GH-37",
+    prompt: "Use pi.",
+    repoRoot: root,
+  });
+
+  assert.equal(result.sessionId, "real-pi-session");
+  assert.equal(result.sessionFile, join(root, "session.jsonl"));
+  assert.match(result.summary ?? "", /Done from pi/);
+  assert.equal(result.timeline?.some((item) => item.role === "tool" && item.toolName === "read"), true);
 });
 
 test("Local issue tracker creates issues through the Flow ledger surface", async () => {
@@ -2661,6 +2903,105 @@ test("Flow workflow ledger persists records to local JSONL by default", async ()
   assert.equal(projection.workerResults[0].taskId, "worker-90");
 });
 
+test("Flow context records validate prompt routing metadata", () => {
+  const now = nowIso();
+  const record = flowContextRecordSchema.parse({
+    kind: "prompt",
+    id: "prompt-1",
+    projectId: "flow",
+    issueRef: "ISSUE-58",
+    threadId: "thread-1",
+    sessionId: "session-1",
+    artifactRefs: ["artifact-1"],
+    prompt: "Render the artifact canvas.",
+    target: "artifact",
+    summary: "Canvas prompt",
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  assert.equal(record.kind, "prompt");
+  assert.equal(record.projectId, "flow");
+  assert.equal(record.issueRef, "ISSUE-58");
+  assert.equal(record.threadId, "thread-1");
+  assert.equal(record.sessionId, "session-1");
+  assert.deepEqual(record.artifactRefs, ["artifact-1"]);
+});
+
+test("Workflow ledger persists prompt, thread, session, and artifact context", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-context-ledger-"));
+  const ledger = createWorkflowLedger({ cwd: root });
+  assert.ok(ledger.recordContext);
+  assert.ok(ledger.readContext);
+  const now = nowIso();
+
+  await ledger.recordContext({
+    kind: "thread",
+    id: "thread-1",
+    projectId: "flow",
+    issueRef: "ISSUE-58",
+    title: "Desktop canvas direction",
+    createdAt: now,
+    updatedAt: now,
+    metadata: {},
+  });
+  await ledger.recordContext({
+    kind: "session",
+    id: "session-1",
+    projectId: "flow",
+    issueRef: "ISSUE-58",
+    threadId: "thread-1",
+    provider: "pi",
+    workspacePath: root,
+    createdAt: now,
+    updatedAt: now,
+    metadata: {},
+  });
+  await ledger.recordContext({
+    kind: "artifact",
+    id: "artifact-1",
+    projectId: "flow",
+    issueRef: "ISSUE-58",
+    threadId: "thread-1",
+    sessionId: "session-1",
+    artifactType: "html",
+    title: "Dashboard preview",
+    uri: "artifact://artifact-1",
+    createdAt: now,
+    updatedAt: now,
+    metadata: {},
+  });
+  await ledger.recordContext({
+    kind: "prompt",
+    id: "prompt-1",
+    projectId: "flow",
+    issueRef: "ISSUE-58",
+    threadId: "thread-1",
+    sessionId: "session-1",
+    artifactRefs: ["artifact-1"],
+    prompt: "Improve the dashboard preview.",
+    target: "artifact",
+    createdAt: now,
+    updatedAt: now,
+    metadata: {},
+  });
+
+  const reloaded = createWorkflowLedger({ cwd: root });
+  assert.ok(reloaded.readContext);
+  const projection = await reloaded.readContext({ projectId: "flow" });
+  const storedProjection = JSON.parse(await readFile(flowContextProjectionPath(root), "utf8"));
+
+  assert.equal(projection.active.projectId, "flow");
+  assert.equal(projection.active.threadId, "thread-1");
+  assert.equal(projection.active.sessionId, "session-1");
+  assert.equal(projection.active.artifactId, "artifact-1");
+  assert.equal(projection.threads[0].title, "Desktop canvas direction");
+  assert.equal(projection.sessions[0].provider, "pi");
+  assert.equal(projection.artifacts[0].artifactType, "html");
+  assert.equal(projection.prompts[0].prompt, "Improve the dashboard preview.");
+  assert.equal(storedProjection.prompts[0].id, "prompt-1");
+});
+
 test("Flow workflow ledger verification rebuilds issue projections", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-ledger-"));
   const ledger = createWorkflowLedger({ cwd: root });
@@ -2682,6 +3023,32 @@ test("Flow workflow ledger verification rebuilds issue projections", async () =>
   assert.equal(result.validRecords, 1);
   assert.equal(result.rebuiltProjections, 1);
   assert.equal(projection.issue.title, "Projection rebuild");
+});
+
+test("Flow workflow ledger verification rebuilds context projection", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-context-rebuild-"));
+  const ledger = createWorkflowLedger({ cwd: root });
+  assert.ok(ledger.recordContext);
+  await ledger.recordContext({
+    kind: "thread",
+    id: "thread-rebuild",
+    projectId: "flow",
+    title: "Rebuild context projection",
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+    metadata: {},
+  });
+  await writeFile(flowContextProjectionPath(root), "{\"threads\":[]}\n", "utf8");
+
+  const result = await verifyJsonlWorkflowLedger(join(root, ".flow", "ledger", "workflow.jsonl"), {
+    rebuildProjections: true,
+  });
+  const projection = JSON.parse(await readFile(flowContextProjectionPath(root), "utf8"));
+
+  assert.equal(result.ok, true);
+  assert.equal(result.validRecords, 1);
+  assert.equal(result.rebuiltProjections, 1);
+  assert.equal(projection.threads[0].id, "thread-rebuild");
 });
 
 test("Flow workflow ledger verification reports malformed records", async () => {

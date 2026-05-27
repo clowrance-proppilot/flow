@@ -1,4 +1,14 @@
-import type { WorkItem, WorkJob, WorkJobResult, WorkerRunRecord, WorkerTaskResult } from "../contracts.js";
+import type {
+  FlowContextProjection,
+  FlowContextRecord,
+  FlowContextRecordInput,
+  FlowContextScope,
+  WorkItem,
+  WorkJob,
+  WorkJobResult,
+  WorkerRunRecord,
+  WorkerTaskResult,
+} from "../contracts.js";
 
 export interface WorkflowLedger {
   listIssues(limit?: number): Promise<WorkItem[]>;
@@ -14,6 +24,8 @@ export interface WorkflowLedger {
   recordWorkJob(job: WorkJob): Promise<void>;
   listWorkJobResults(issueRef: string): Promise<WorkJobResult[]>;
   recordWorkJobResult(result: WorkJobResult): Promise<void>;
+  recordContext?(record: FlowContextRecordInput): Promise<FlowContextRecord>;
+  readContext?(scope?: FlowContextScope): Promise<FlowContextProjection>;
 }
 
 export interface WorkflowLedgerMirror {

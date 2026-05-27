@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 
@@ -8,8 +8,20 @@ import {
   type WorkItem,
   type WorkJob,
   type WorkJobResult,
+  type FlowActiveContext,
+  type FlowArtifactContextRecord,
+  type FlowContextProjection,
+  type FlowContextRecord,
+  type FlowContextRecordInput,
+  type FlowContextScope,
+  type FlowPromptContextRecord,
+  type FlowSessionContextRecord,
+  type FlowThreadContextRecord,
   type WorkerRunRecord,
   type WorkerTaskResult,
+  flowContextProjectionSchema,
+  flowContextRecordSchema,
+  flowContextScopeSchema,
   nowIso,
   workJobResultSchema,
   workJobSchema,
@@ -29,6 +41,7 @@ export class MemoryWorkflowLedger implements WorkflowLedger {
   private readonly workerResults = new Map<string, WorkerTaskResult[]>();
   private readonly workJobs = new Map<string, WorkJob[]>();
   private readonly workJobResults = new Map<string, WorkJobResult[]>();
+  private readonly contexts = new Map<string, FlowContextRecord>();
 
   async listIssues(limit = 20): Promise<WorkItem[]> {
     return [...this.issues.values()].slice(0, limit);
@@ -93,6 +106,16 @@ export class MemoryWorkflowLedger implements WorkflowLedger {
     const existing = this.workJobResults.get(parsed.issueRef) ?? [];
     this.workJobResults.set(parsed.issueRef, upsertByJobId(existing, parsed));
   }
+
+  async recordContext(record: FlowContextRecordInput): Promise<FlowContextRecord> {
+    const parsed = flowContextRecordSchema.parse(record);
+    this.contexts.set(parsed.id, parsed);
+    return parsed;
+  }
+
+  async readContext(scope: FlowContextScope = {}): Promise<FlowContextProjection> {
+    return contextProjection([...this.contexts.values()], scope);
+  }
 }
 
 type JsonlWorkflowLedgerRecord =
@@ -100,7 +123,8 @@ type JsonlWorkflowLedgerRecord =
   | { kind: "workerRun"; value: WorkerRunRecord }
   | { kind: "workerResult"; value: WorkerTaskResult }
   | { kind: "workJob"; value: WorkJob }
-  | { kind: "workJobResult"; value: WorkJobResult };
+  | { kind: "workJobResult"; value: WorkJobResult }
+  | { kind: "context"; value: FlowContextRecord };
 
 export interface WorkflowLedgerDiagnostic {
   line: number;
@@ -137,12 +161,14 @@ export interface JsonlWorkflowLedgerOptions {
 export class JsonlWorkflowLedger implements WorkflowLedger {
   private readonly path: string;
   private readonly projections: IssueProjectionStore;
+  private readonly contextProjectionPath: string;
   private readonly memory = new MemoryWorkflowLedger();
   private loaded = false;
 
   constructor(options: JsonlWorkflowLedgerOptions) {
     this.path = options.path;
     this.projections = new IssueProjectionStore(join(dirname(options.path), "issues"));
+    this.contextProjectionPath = join(dirname(options.path), "context.json");
   }
 
   async listIssues(limit?: number): Promise<WorkItem[]> {
@@ -257,6 +283,23 @@ export class JsonlWorkflowLedger implements WorkflowLedger {
     await this.writeProjection(parsed.issueRef);
   }
 
+  async recordContext(record: FlowContextRecordInput): Promise<FlowContextRecord> {
+    await this.load();
+    const parsed = await this.memory.recordContext(record);
+    await this.append({ kind: "context", value: parsed });
+    await this.writeContextProjection();
+    return parsed;
+  }
+
+  async readContext(scope: FlowContextScope = {}): Promise<FlowContextProjection> {
+    const projected = await readContextProjection(this.contextProjectionPath);
+    if (projected) return filterContextProjection(projected, scope);
+    await this.load();
+    const projection = await this.memory.readContext(scope);
+    await this.writeContextProjection();
+    return projection;
+  }
+
   private async load(): Promise<void> {
     if (this.loaded) return;
     this.loaded = true;
@@ -270,6 +313,7 @@ export class JsonlWorkflowLedger implements WorkflowLedger {
       if (record.kind === "workerResult") await this.memory.recordWorkerResult(record.value);
       if (record.kind === "workJob") await this.memory.recordWorkJob(record.value);
       if (record.kind === "workJobResult") await this.memory.recordWorkJobResult(record.value);
+      if (record.kind === "context") await this.memory.recordContext(record.value);
     }
   }
 
@@ -288,6 +332,11 @@ export class JsonlWorkflowLedger implements WorkflowLedger {
       updatedAt: nowIso(),
     });
   }
+
+  private async writeContextProjection(): Promise<void> {
+    const projection = await this.memory.readContext();
+    await writeContextProjection(this.contextProjectionPath, projection);
+  }
 }
 
 export async function verifyJsonlWorkflowLedger(
@@ -297,6 +346,7 @@ export async function verifyJsonlWorkflowLedger(
   const memory = new MemoryWorkflowLedger();
   const diagnostics: WorkflowLedgerDiagnostic[] = [];
   const issueRefs = new Set<string>();
+  let hasContextRecords = false;
   let totalLines = 0;
   let validRecords = 0;
 
@@ -311,6 +361,7 @@ export async function verifyJsonlWorkflowLedger(
         await applyWorkflowLedgerRecord(memory, record);
         const issueRef = workflowLedgerRecordIssueRef(record);
         if (issueRef) issueRefs.add(issueRef);
+        if (record.kind === "context") hasContextRecords = true;
         validRecords += 1;
       } catch (error) {
         diagnostics.push({ line: lineNumber, message: errorMessage(error) });
@@ -330,6 +381,10 @@ export async function verifyJsonlWorkflowLedger(
         workJobResults: await memory.listWorkJobResults(issueRef),
         updatedAt: nowIso(),
       });
+      rebuiltProjections += 1;
+    }
+    if (hasContextRecords) {
+      await writeContextProjection(join(dirname(path), "context.json"), await memory.readContext());
       rebuiltProjections += 1;
     }
   }
@@ -354,6 +409,7 @@ function parseWorkflowLedgerRecord(value: unknown): JsonlWorkflowLedgerRecord {
   if (kind === "workerResult") return { kind, value: workerTaskResultSchema.parse(recordValue) };
   if (kind === "workJob") return { kind, value: workJobSchema.parse(recordValue) };
   if (kind === "workJobResult") return { kind, value: workJobResultSchema.parse(recordValue) };
+  if (kind === "context") return { kind, value: flowContextRecordSchema.parse(recordValue) };
   throw new Error(`Unsupported ledger record kind: ${String(kind)}.`);
 }
 
@@ -366,10 +422,12 @@ async function applyWorkflowLedgerRecord(
   if (record.kind === "workerResult") await memory.recordWorkerResult(record.value);
   if (record.kind === "workJob") await memory.recordWorkJob(record.value);
   if (record.kind === "workJobResult") await memory.recordWorkJobResult(record.value);
+  if (record.kind === "context") await memory.recordContext(record.value);
 }
 
 function workflowLedgerRecordIssueRef(record: JsonlWorkflowLedgerRecord): string | undefined {
   if (record.kind === "issue") return record.value.ref;
+  if (record.kind === "context") return record.value.issueRef;
   return record.value.issueRef;
 }
 
@@ -403,6 +461,73 @@ class IssueProjectionStore {
   private pathForIssue(issueRef: string): string {
     return join(this.root, `${flowIssueProjectionFileName(issueRef)}.json`);
   }
+}
+
+async function readContextProjection(path: string): Promise<FlowContextProjection | undefined> {
+  if (!existsSync(path)) return undefined;
+  const raw = await readFile(path, "utf8");
+  return flowContextProjectionSchema.parse(JSON.parse(raw));
+}
+
+async function writeContextProjection(path: string, projection: FlowContextProjection): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  const tempPath = `${path}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
+  await writeFile(tempPath, `${JSON.stringify(flowContextProjectionSchema.parse(projection), null, 2)}\n`, "utf8");
+  await rm(path, { force: true });
+  await rename(tempPath, path);
+}
+
+function contextProjection(records: FlowContextRecord[], scope: FlowContextScope = {}): FlowContextProjection {
+  const parsedScope = flowContextScopeSchema.parse(scope);
+  const filtered = records
+    .map((record) => flowContextRecordSchema.parse(record))
+    .filter((record) => contextMatchesScope(record, parsedScope))
+    .sort(compareContextRecords);
+  return flowContextProjectionSchema.parse({
+    active: activeContext(filtered),
+    prompts: filtered.filter((record): record is FlowPromptContextRecord => record.kind === "prompt"),
+    threads: filtered.filter((record): record is FlowThreadContextRecord => record.kind === "thread"),
+    sessions: filtered.filter((record): record is FlowSessionContextRecord => record.kind === "session"),
+    artifacts: filtered.filter((record): record is FlowArtifactContextRecord => record.kind === "artifact"),
+    updatedAt: filtered.at(-1)?.updatedAt ?? nowIso(),
+  });
+}
+
+function filterContextProjection(projection: FlowContextProjection, scope: FlowContextScope = {}): FlowContextProjection {
+  return contextProjection([
+    ...projection.threads,
+    ...projection.prompts,
+    ...projection.sessions,
+    ...projection.artifacts,
+  ], scope);
+}
+
+function contextMatchesScope(record: FlowContextRecord, scope: FlowContextScope): boolean {
+  if (scope.projectId && record.projectId !== scope.projectId) return false;
+  if (scope.issueRef && record.issueRef !== scope.issueRef) return false;
+  if (scope.threadId && record.threadId !== scope.threadId && record.id !== scope.threadId) return false;
+  if (scope.sessionId && record.sessionId !== scope.sessionId && record.id !== scope.sessionId) return false;
+  if (scope.artifactId && record.id !== scope.artifactId && !record.artifactRefs.includes(scope.artifactId)) return false;
+  return true;
+}
+
+function activeContext(records: FlowContextRecord[]): FlowActiveContext {
+  const latest = [...records].reverse().find((record) => record.kind === "prompt") ?? records.at(-1);
+  if (!latest) return {};
+  return {
+    projectId: latest.projectId,
+    issueRef: latest.issueRef,
+    threadId: latest.kind === "thread" ? latest.id : latest.threadId,
+    sessionId: latest.kind === "session" ? latest.id : latest.sessionId,
+    artifactId: latest.kind === "artifact" ? latest.id : latest.artifactRefs.at(-1),
+    updatedAt: latest.updatedAt,
+  };
+}
+
+function compareContextRecords(a: FlowContextRecord, b: FlowContextRecord): number {
+  const updated = a.updatedAt.localeCompare(b.updatedAt);
+  if (updated !== 0) return updated;
+  return a.id.localeCompare(b.id);
 }
 
 export interface BeadsWorkflowLedgerOptions {
@@ -489,6 +614,20 @@ export class MirroredWorkflowLedger implements WorkflowLedger {
   async recordWorkJobResult(result: WorkJobResult): Promise<void> {
     await this.primary.recordWorkJobResult(result);
     await this.mirrorBestEffort("work_job_result.record", () => this.mirror.mirrorWorkJobResult(result));
+  }
+
+  async recordContext(record: FlowContextRecordInput): Promise<FlowContextRecord> {
+    if (!this.primary.recordContext) {
+      throw new Error("Primary workflow ledger does not support Flow context records.");
+    }
+    return this.primary.recordContext(record);
+  }
+
+  async readContext(scope: FlowContextScope = {}): Promise<FlowContextProjection> {
+    if (!this.primary.readContext) {
+      return contextProjection([], scope);
+    }
+    return this.primary.readContext(scope);
   }
 
   private async mirrorBestEffort(label: string, operation: () => Promise<void>): Promise<void> {
