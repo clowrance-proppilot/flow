@@ -160,6 +160,7 @@ export interface JiraInspector {
   createIssue?(input: {
     projectKey?: string;
     issueType: string;
+    title?: string;
     summary: string;
     description?: string;
   }): Promise<JiraIssue>;
@@ -249,6 +250,7 @@ export interface CreateJiraIssueOptions {
   projectKey?: string;
   issueType?: "Bug" | "Task" | "Story";
   branchKind?: BranchKind;
+  title?: string;
   summary: string;
   description?: string;
   repoKeys?: string[];
@@ -594,12 +596,20 @@ export class FlowWorkRuntime {
     }
     if (!options.summary?.trim()) throw new Error("Issue summary is required.");
     const issueType = options.issueType ?? "Bug";
-    const createdIssue = await this.issueTracker.createIssue({
+    const createInput: {
+      projectKey?: string;
+      issueType: string;
+      title?: string;
+      summary: string;
+      description?: string;
+    } = {
       projectKey: options.projectKey ?? this.defaultJiraProjectKey,
       issueType,
       summary: options.summary.trim(),
       description: options.description?.trim(),
-    });
+    };
+    if (options.title?.trim()) createInput.title = options.title.trim();
+    const createdIssue = await this.issueTracker.createIssue(createInput);
     const queueIssue = this.mergeJiraQueueIssue(createdIssue);
     const repoKeys = options.repoKeys?.length
       ? this.resolveRoutedRepoKeys(options.repoKeys)

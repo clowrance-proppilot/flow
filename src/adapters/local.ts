@@ -53,7 +53,7 @@ export class LocalIssueTrackerAdapter implements IssueTrackerProvider {
     const ref = await this.nextIssueRef();
     return {
       ref,
-      title: input.summary,
+      title: input.title?.trim() || input.summary,
       description: input.description,
       status: "To Do",
       statusCategory: "To Do",

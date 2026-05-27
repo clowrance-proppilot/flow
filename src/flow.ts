@@ -194,6 +194,7 @@ async function handleIssueRequest(request: Record<string, unknown>): Promise<unk
         projectKey: optionalString(request, "projectKey"),
         issueType: parseJiraIssueType(optionalString(request, "issueType") ?? "Bug"),
         branchKind: parseBranchKind(optionalString(request, "branchKind")),
+        title: optionalString(request, "title"),
         summary: requireString(request, "summary"),
         description: optionalString(request, "description"),
         repoKeys: asStringArray(request.repoKeys),

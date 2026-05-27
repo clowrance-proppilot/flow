@@ -41,6 +41,7 @@ export interface JiraAdapterOptions {
 export interface JiraIssueCreateInput {
   projectKey?: string;
   issueType: string;
+  title?: string;
   summary: string;
   description?: string;
 }
@@ -215,6 +216,10 @@ export class AcliJiraAdapter implements IssueTrackerProvider {
     if (!input.projectKey?.trim()) {
       throw new Error("Jira project key is required. Configure issueTracker.projectKey in .flow/config.yaml or pass projectKey.");
     }
+    const jiraSummary = input.title?.trim() || input.summary;
+    const jiraDescription = input.title?.trim()
+      ? input.summary
+      : input.description;
     const args = [
       "jira",
       "workitem",
@@ -224,10 +229,10 @@ export class AcliJiraAdapter implements IssueTrackerProvider {
       "--type",
       input.issueType,
       "--summary",
-      input.summary,
+      jiraSummary,
       "--json",
     ];
-    if (input.description) args.push("--description", input.description);
+    if (jiraDescription) args.push("--description", jiraDescription);
     const { stdout } = await withPerfLog("acli jira workitem create", () =>
       execFileAsync("acli", args, {
         cwd: this.cwd,

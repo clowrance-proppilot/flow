@@ -330,16 +330,20 @@ export class GhGitHubIssueTrackerAdapter implements IssueTrackerProvider {
     });
   }
 
-  async createIssue(input: { issueType: string; summary: string; description?: string }): Promise<UnifiedIssue> {
+  async createIssue(input: { issueType: string; title?: string; summary: string; description?: string }): Promise<UnifiedIssue> {
+    const issueTitle = input.title?.trim() || input.summary;
+    const issueBody = input.title?.trim()
+      ? input.summary
+      : input.description ?? "";
     const args = [
       "issue",
       "create",
       "--repo",
       this.repoSpecifier(),
       "--title",
-      input.summary,
+      issueTitle,
       "--body",
-      input.description ?? "",
+      issueBody,
     ];
     const typeLabel = labelForIssueType(input.issueType);
     if (typeLabel) args.push("--label", typeLabel);
