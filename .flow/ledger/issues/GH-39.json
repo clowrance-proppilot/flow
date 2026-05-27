@@ -1,0 +1,48 @@
+{
+  "issue": {
+    "ref": "GH-39",
+    "title": "Clean up docs and add dashboard screenshots",
+    "repoKeys": [
+      "flow"
+    ],
+    "state": "awaiting_review",
+    "updatedAt": "2026-05-27T15:41:16.501Z",
+    "metadata": {
+      "issueStatus": "Open",
+      "issueStatusCategory": "To Do",
+      "issueUpdated": "2026-05-27T15:32:58Z",
+      "issueUrl": "https://github.com/camden-lowrance/flow/issues/39",
+      "issueType": "task",
+      "issueLabels": [],
+      "workflow.external.issue.status": "published",
+      "workflow.external.code_review.status": "unpublished",
+      "branchKind": "feature",
+      "documentationRecorded": true,
+      "documentationDisposition": "updated",
+      "documentationSummary": "Updated README and docs/runtime-and-dashboard.md with current dashboard screenshots, state source, read-only boundary, routes, and verification notes.",
+      "documentationRecordedAt": "2026-05-27T15:38:14.479Z",
+      "prRepo": "flow",
+      "prNumber": 40,
+      "prUrl": "https://github.com/camden-lowrance/flow/pull/40",
+      "prHeadRefName": "feature/gh-39-clean-up-docs-and-add-dashboard-screenshots",
+      "prIsDraft": false,
+      "humanReviewRequired": false,
+      "prRecordedAt": "2026-05-27T15:41:16.500Z",
+      "workflow.repos.flow.pr_repo": "flow",
+      "workflow.repos.flow.pr_number": 40,
+      "workflow.repos.flow.pr_url": "https://github.com/camden-lowrance/flow/pull/40",
+      "workflow.repos.flow.pr_head_ref_name": "feature/gh-39-clean-up-docs-and-add-dashboard-screenshots",
+      "workflow.repos.flow.pr_is_draft": false,
+      "workflow.repos.flow.pr_recorded_at": "2026-05-27T15:41:16.500Z",
+      "prChecksPassing": true,
+      "prTemplateMissingHeadings": [],
+      "workflow.repos.flow.pr_checks_passing": true,
+      "workflow.repos.flow.pr_template_missing_headings": []
+    }
+  },
+  "workerRuns": [],
+  "workerResults": [],
+  "workJobs": [],
+  "workJobResults": [],
+  "updatedAt": "2026-05-27T15:41:16.502Z"
+}

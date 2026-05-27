@@ -19,8 +19,10 @@ Package: [@camden-lowrance/flow](https://www.npmjs.com/package/@camden-lowrance/
 
 ## Surfaces
 
-- `flow-dashboard`: read-only human view.
 - `flow`: JSON protocol for agents and adapters.
+- `flow-dashboard`: read-only human view of the same state.
+
+![Flow dashboard overview](docs/images/dashboard-overview.png)
 
 ## Agent Contract
 
@@ -68,6 +70,6 @@ Releases are published to npm from GitHub Releases. See
 
 More:
 
-- [Host integration](docs/host-integration.md)
 - [Runtime and dashboard](docs/runtime-and-dashboard.md)
+- [Host integration](docs/host-integration.md)
 - [Why Flow](docs/why-flow.md)
