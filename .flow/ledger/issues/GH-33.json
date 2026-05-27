@@ -5,12 +5,12 @@
     "repoKeys": [
       "flow"
     ],
-    "state": "awaiting_review",
-    "updatedAt": "2026-05-27T16:05:46.830Z",
+    "state": "done",
+    "updatedAt": "2026-05-27T16:11:01.596Z",
     "metadata": {
-      "issueStatus": "Open",
-      "issueStatusCategory": "To Do",
-      "issueUpdated": "2026-05-27T03:32:41Z",
+      "issueStatus": "Closed",
+      "issueStatusCategory": "Done",
+      "issueUpdated": "2026-05-27T16:06:10Z",
       "issueUrl": "https://github.com/camden-lowrance/flow/issues/33",
       "issueType": "task",
       "issueLabels": [],
@@ -65,22 +65,36 @@
       "prHeadRefName": "feature/gh-33-fix-dashboard-api-performance-inspectdashboardqueue-time",
       "prIsDraft": false,
       "humanReviewRequired": false,
-      "prRecordedAt": "2026-05-27T16:05:46.829Z",
+      "prRecordedAt": "2026-05-27T16:09:27.776Z",
       "workflow.repos.flow.pr_repo": "flow",
       "workflow.repos.flow.pr_number": 41,
       "workflow.repos.flow.pr_url": "https://github.com/camden-lowrance/flow/pull/41",
       "workflow.repos.flow.pr_head_ref_name": "feature/gh-33-fix-dashboard-api-performance-inspectdashboardqueue-time",
       "workflow.repos.flow.pr_is_draft": false,
-      "workflow.repos.flow.pr_recorded_at": "2026-05-27T16:05:46.829Z",
+      "workflow.repos.flow.pr_recorded_at": "2026-05-27T16:09:27.776Z",
       "prChecksPassing": true,
       "prTemplateMissingHeadings": [],
       "workflow.repos.flow.pr_checks_passing": true,
-      "workflow.repos.flow.pr_template_missing_headings": []
+      "workflow.repos.flow.pr_template_missing_headings": [],
+      "prState": "MERGED",
+      "prMergedAt": "2026-05-27T16:06:08Z",
+      "prMergeCommitSha": "2e24db28b91d1e65caaac47e4747e5559299c38d",
+      "prMergeable": "MERGED",
+      "workflow.repos.flow.pr_state": "MERGED",
+      "workflow.repos.flow.pr_merged_at": "2026-05-27T16:06:08Z",
+      "workflow.repos.flow.pr_merge_commit_sha": "2e24db28b91d1e65caaac47e4747e5559299c38d",
+      "workflow.closeout.status": "merged_issue_closed",
+      "workflow.closeout.merged": true,
+      "workflow.closeout.merge_method": "squash",
+      "workflow.closeout.merge_commit_sha": "2e24db28b91d1e65caaac47e4747e5559299c38d",
+      "workflow.closeout.merged_at": "2026-05-27T16:06:08Z",
+      "workflow.closeout.issue_closed_at": "2026-05-27T16:06:10Z",
+      "workflow.closeout.checked_at": "2026-05-27T16:10:37.312Z"
     }
   },
   "workerRuns": [],
   "workerResults": [],
   "workJobs": [],
   "workJobResults": [],
-  "updatedAt": "2026-05-27T16:05:46.831Z"
+  "updatedAt": "2026-05-27T16:11:01.598Z"
 }
