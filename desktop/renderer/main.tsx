@@ -398,23 +398,8 @@ function App() {
       });
       return;
     }
-    if (event.type === "toolStarted") {
-      const id = `tool-${event.callId || Date.now()}`;
-      setConversation((items) => items.some((item) => item.id === id) ? items : [...items, {
-        id,
-        role: "system",
-        text: `${event.toolName || "Tool"} started.`,
-        createdAt: event.timestamp,
-      }]);
-    }
-    if (event.type === "toolFinished") {
-      const id = `tool-${event.callId || Date.now()}-done`;
-      setConversation((items) => items.some((item) => item.id === id) ? items : [...items, {
-        id,
-        role: "system",
-        text: `Tool ${event.success === false ? "failed" : "completed"}.`,
-        createdAt: event.timestamp,
-      }]);
+    if (event.type === "toolStarted" || event.type === "toolUpdated" || event.type === "toolFinished") {
+      return;
     }
     if (event.type === "runFailed") {
       setActiveSessionStatus("failed");
@@ -868,12 +853,15 @@ function seedConversation(context?: ContextProjection, projectId?: string, issue
 }
 
 function conversationFromPiSession(session: PiSessionSnapshot): ConversationItem[] {
-  const items = session.timeline.map((item) => ({
-    id: `pi-${session.id}-${item.id}`,
-    role: item.role === "user" || item.role === "assistant" ? item.role : "system",
-    text: item.role === "tool" && item.toolName ? `${item.toolName}: ${item.content}` : item.content,
-    createdAt: item.createdAt,
-  }));
+  const items = session.timeline.flatMap((item) => {
+    if (item.role !== "user" && item.role !== "assistant") return [];
+    return [{
+      id: `pi-${session.id}-${item.id}`,
+      role: item.role,
+      text: item.content,
+      createdAt: item.createdAt,
+    }];
+  });
   return items.length ? items : seedConversation(undefined, undefined, session.issueRef);
 }
 
