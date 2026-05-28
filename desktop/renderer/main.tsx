@@ -138,6 +138,7 @@ function App() {
   const [context, setContext] = useState<ContextProjection>({});
   const [selectedIssueRef, setSelectedIssueRef] = useState("");
   const [selectedSessionId, setSelectedSessionId] = useState("");
+  const [sessionIdByIssueRef, setSessionIdByIssueRef] = useState<Record<string, string>>({});
   const [expandedIssueRef, setExpandedIssueRef] = useState("");
   const [activeSessionStatus, setActiveSessionStatus] = useState<"idle" | "running" | "failed">("idle");
   const [activeStatus, setActiveStatus] = useState<WorkStatusFilter>("all");
@@ -269,6 +270,7 @@ function App() {
       await fetchJson(`/api/projects/${encodeURIComponent(projectId)}/active`, { method: "POST" });
       setSelectedIssueRef("");
       setSelectedSessionId("");
+      setSessionIdByIssueRef({});
       setExpandedIssueRef("");
       setSystemNotice("");
       setActiveSessionStatus("idle");
@@ -297,20 +299,12 @@ function App() {
     setConversation((items) => [...items, userItem]);
     setPrompt("");
     try {
-      const activeMatchesSelection = Boolean(selectedIssueRef && context.active?.issueRef === selectedIssueRef);
-      let sessionId = activeMatchesSelection ? context.active?.sessionId : undefined;
-      const threadId = activeMatchesSelection ? context.active?.threadId : undefined;
-      if (selectedIssueRef && !sessionId) {
-        const started = await fetchJson<{ ok?: boolean; session: PiSessionSnapshot }>(`/api/issues/${encodeURIComponent(selectedIssueRef)}/session`, {
-          method: "POST",
-        });
-        sessionId = started.session.id;
-        setSelectedSessionId(sessionId);
-        setActiveSessionStatus(sessionStatusForUi(started.session.status));
-        subscribeToSessionEvents(sessionId);
-      } else if (sessionId) {
-        setSelectedSessionId(sessionId);
-        subscribeToSessionEvents(sessionId);
+      let sessionId = selectedIssueRef ? sessionIdByIssueRef[selectedIssueRef] || selectedSessionId : undefined;
+      if (selectedIssueRef) {
+        const started = await fetchIssueSession(selectedIssueRef);
+        applyIssueSession(started);
+        sessionId = started.id;
+        setConversation((items) => items.length ? items : conversationFromPiSession(started));
       }
       const result = await fetchJson<{
         ok?: boolean;
@@ -327,7 +321,6 @@ function App() {
           prompt: text,
           projectId: activeProjectId || undefined,
           issueRef: selectedIssueRef || undefined,
-          threadId,
           sessionId,
           artifactRefs: [],
         }),
@@ -448,17 +441,27 @@ function App() {
     setSystemNotice("");
     setError("");
     try {
-      const started = await fetchJson<{ ok?: boolean; session: PiSessionSnapshot }>(`/api/issues/${encodeURIComponent(issueRef)}/session`, {
-        method: "POST",
-      });
+      const started = await fetchIssueSession(issueRef);
       if (issueSelectionRequest.current !== requestId) return;
-      setSelectedSessionId(started.session.id);
-      setActiveSessionStatus(sessionStatusForUi(started.session.status));
-      setConversation(conversationFromPiSession(started.session));
-      subscribeToSessionEvents(started.session.id);
+      applyIssueSession(started);
+      setConversation(conversationFromPiSession(started));
     } catch {
       if (issueSelectionRequest.current === requestId) setError("Unable to open issue thread.");
     }
+  }
+
+  async function fetchIssueSession(issueRef: string): Promise<PiSessionSnapshot> {
+    const started = await fetchJson<{ ok?: boolean; session: PiSessionSnapshot }>(`/api/issues/${encodeURIComponent(issueRef)}/session`, {
+      method: "POST",
+    });
+    return started.session;
+  }
+
+  function applyIssueSession(session: PiSessionSnapshot): void {
+    setSessionIdByIssueRef((current) => ({ ...current, [session.issueRef]: session.id }));
+    setSelectedSessionId(session.id);
+    setActiveSessionStatus(sessionStatusForUi(session.status));
+    subscribeToSessionEvents(session.id);
   }
 
   async function invokeAction(action: DesktopAction): Promise<void> {
@@ -891,7 +894,7 @@ function contextLine(
     project?.name,
     issue?.ref,
     contextMatchesIssue && context.active?.threadId ? `thread ${context.active.threadId}` : undefined,
-    contextMatchesIssue && context.active?.sessionId ? `session ${context.active.sessionId}` : selectedSessionId ? `session ${selectedSessionId}` : undefined,
+    selectedSessionId ? `session ${selectedSessionId}` : contextMatchesIssue && context.active?.sessionId ? `session ${context.active.sessionId}` : undefined,
   ].filter(Boolean);
   return parts.join(" / ") || "No active context";
 }
