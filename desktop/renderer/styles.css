@@ -325,8 +325,8 @@ h2 {
 }
 
 .issue-stack {
-  display: grid;
-  align-content: start;
+  display: flex;
+  flex-direction: column;
   gap: 0.55rem;
   min-height: 0;
   overflow: auto;
@@ -334,6 +334,8 @@ h2 {
 }
 
 .issue-card {
+  display: flex;
+  flex-direction: column;
   width: 100%;
   border: 1px solid var(--th-border);
   border-left: 3px solid var(--th-border);
@@ -341,7 +343,7 @@ h2 {
   background: var(--th-card);
   color: var(--th-fg);
   text-align: left;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .issue-card:hover {
@@ -355,6 +357,7 @@ h2 {
 
 .issue-summary {
   display: block;
+  appearance: none;
   width: 100%;
   border: 0;
   background: transparent;
