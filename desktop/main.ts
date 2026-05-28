@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, shell } from "electron";
 import { join, resolve, dirname } from "node:path";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, watch, type FSWatcher } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import express from "express";
 import type { Server } from "node:http";
@@ -16,6 +16,8 @@ const isDev = !app.isPackaged;
 
 let mainWindow: BrowserWindow | null = null;
 let dashboardServer: Server | undefined;
+let rendererAutoReloadWatcher: FSWatcher | undefined;
+let rendererAutoReloadTimer: ReturnType<typeof setTimeout> | undefined;
 
 interface DesktopProjectSurface {
   project: DesktopProjectRecord;
@@ -85,6 +87,7 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
         runtime: configured.runtime,
         repoRoot: project.root,
         flowSessionId: `desktop-${project.id}`,
+        agent: process.env.FLOW_DESKTOP_AGENT === "disabled" ? false : undefined,
       }),
     };
     projectSurfaces.set(project.id, surface);
@@ -100,8 +103,8 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
       let session = input.sessionId
         ? await surface.piSessionDriver.getSession(input.sessionId).catch(() => undefined)
         : undefined;
-      session ??= await surface.piSessionDriver.startSession(input.issueRef);
-      const updated = await surface.piSessionDriver.postPrompt(session.id, input.prompt);
+      session ??= await surface.piSessionDriver.openOrCreateIssueSession(input.issueRef);
+      const updated = await surface.piSessionDriver.sendUserMessage(session.id, { text: input.prompt });
       const summary = latestAssistantText(updated) || `Prompt queued for ${updated.issueRef}.`;
       return {
         session: {
@@ -230,6 +233,36 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
       res.json(result);
     } catch (error) {
       res.status(400).json({ ok: false, error: message(error) });
+    }
+  });
+  server.post("/api/issues/:issueRef/session", async (req, res) => {
+    try {
+      const project = await requireActiveProject(projectRegistry);
+      const surface = await projectSurface(project);
+      const session = await surface.piSessionDriver.openOrCreateIssueSession(String(req.params.issueRef ?? ""));
+      res.json({ ok: true, session });
+    } catch (error) {
+      res.status(400).json({ ok: false, error: message(error) });
+    }
+  });
+  server.get("/api/sessions/:sessionId/events", async (req, res) => {
+    try {
+      const project = await requireActiveProject(projectRegistry);
+      const surface = await projectSurface(project);
+      const sessionId = String(req.params.sessionId ?? "");
+      await surface.piSessionDriver.getSession(sessionId);
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+      });
+      res.write(`event: ready\ndata: ${JSON.stringify({ ok: true, sessionId })}\n\n`);
+      const unsubscribe = surface.piSessionDriver.subscribe(sessionId, (event) => {
+        res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+      });
+      req.on("close", unsubscribe);
+    } catch (error) {
+      res.status(404).json({ ok: false, error: message(error) });
     }
   });
   server.post("/api/actions/:action", jsonBody, async (req, res) => {
@@ -397,6 +430,7 @@ app.whenReady().then(async () => {
   });
 
   mainWindow = createWindow(port);
+  enableRendererAutoReload(flowRoot);
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -413,6 +447,10 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  rendererAutoReloadWatcher?.close();
+  rendererAutoReloadWatcher = undefined;
+  if (rendererAutoReloadTimer) clearTimeout(rendererAutoReloadTimer);
+  rendererAutoReloadTimer = undefined;
   dashboardServer?.close();
 });
 
@@ -432,6 +470,26 @@ function isPromptTarget(value: unknown): value is "project" | "issue" | "thread"
 
 function resolveDesktopUserDataPath(): string {
   return process.env.FLOW_DESKTOP_USER_DATA || app.getPath("userData");
+}
+
+function enableRendererAutoReload(flowRoot: string): void {
+  if (!isDev || process.env.FLOW_DESKTOP_AUTO_RELOAD !== "1") return;
+  const rendererRoot = join(flowRoot, "dist", "desktop-renderer");
+  if (!existsSync(rendererRoot)) return;
+  try {
+    rendererAutoReloadWatcher?.close();
+    rendererAutoReloadWatcher = watch(rendererRoot, { recursive: true }, () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      if (rendererAutoReloadTimer) clearTimeout(rendererAutoReloadTimer);
+      rendererAutoReloadTimer = setTimeout(() => {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        void mainWindow.webContents.reloadIgnoringCache();
+      }, 120);
+    });
+    console.log(`[flow-desktop] renderer auto reload watching ${rendererRoot}`);
+  } catch (error) {
+    console.warn(`[flow-desktop] renderer auto reload unavailable: ${message(error)}`);
+  }
 }
 
 function latestAssistantText(session: { timeline: Array<{ role: string; content: string }> }): string {

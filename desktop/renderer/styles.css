@@ -43,7 +43,7 @@ button:disabled {
 
 .desktop-shell {
   display: grid;
-  grid-template-columns: minmax(14rem, 16rem) minmax(18rem, 24rem) minmax(0, 1fr);
+  grid-template-columns: minmax(14rem, 16rem) minmax(20rem, 28rem) minmax(0, 1fr);
   min-width: 0;
   height: 100vh;
   overflow: hidden;
@@ -340,8 +340,8 @@ h2 {
   border-radius: 0.55rem;
   background: var(--th-card);
   color: var(--th-fg);
-  padding: 0.7rem;
   text-align: left;
+  overflow: hidden;
 }
 
 .issue-card:hover {
@@ -351,6 +351,16 @@ h2 {
 .issue-card.active {
   border-left-color: var(--th-primary);
   border-color: rgb(56 189 248 / 0.55);
+}
+
+.issue-summary {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0.7rem;
+  text-align: left;
 }
 
 .issue-row {
@@ -463,7 +473,7 @@ h2 {
 
 .chat-panel {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto auto auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto auto;
   background: var(--th-app);
 }
 
@@ -497,14 +507,11 @@ h2 {
   background: #ef4444;
 }
 
-.issue-detail-wrap {
-  border-bottom: 1px solid var(--th-border);
-  padding: 0.8rem 0.95rem;
-}
-
 .issue-detail {
   display: grid;
   gap: 0.65rem;
+  border-top: 1px solid var(--th-border);
+  padding: 0.7rem;
 }
 
 .detail-section {
@@ -654,6 +661,14 @@ h2 {
 .action-strip button:hover:not(:disabled) {
   color: var(--th-primary);
   border-color: var(--th-primary);
+}
+
+.session-line {
+  border-top: 1px solid var(--th-border);
+  color: var(--th-fg-muted);
+  background: var(--th-input);
+  padding: 0.45rem 0.95rem;
+  font-size: 0.74rem;
 }
 
 .composer {

@@ -90,6 +90,7 @@
     ]
   },
   "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.76.0",
     "@vitejs/plugin-react": "^5.2.0",
     "autoprefixer": "^10.5.0",
     "express": "^5.2.1",
@@ -103,14 +104,6 @@
     "vite": "^7.3.3",
     "yaml": "^2.9.0",
     "zod": "^4.4.3"
-  },
-  "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
-  },
-  "peerDependenciesMeta": {
-    "@earendil-works/pi-coding-agent": {
-      "optional": true
-    }
   },
   "devDependencies": {
     "@types/express": "^5.0.6",

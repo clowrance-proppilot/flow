@@ -99,6 +99,21 @@ type ConversationItem = {
   createdAt: string;
 };
 
+type PiSessionSnapshot = {
+  id: string;
+};
+
+type PiSessionEvent = {
+  type: "assistantDelta" | "toolStarted" | "toolUpdated" | "toolFinished" | "runFailed" | "runCompleted" | "sessionUpdated";
+  timestamp: string;
+  text?: string;
+  toolName?: string;
+  callId?: string;
+  success?: boolean;
+  error?: { message?: string };
+  snapshot?: { status?: "idle" | "running" | "failed" };
+};
+
 const workflowSteps = ["Queued", "Ready", "Running", "In Review", "Done"] as const;
 
 function App() {
@@ -108,6 +123,8 @@ function App() {
   const [snapshotLabel, setSnapshotLabel] = useState("Snapshot not loaded");
   const [context, setContext] = useState<ContextProjection>({});
   const [selectedIssueRef, setSelectedIssueRef] = useState("");
+  const [expandedIssueRef, setExpandedIssueRef] = useState("");
+  const [activeSessionStatus, setActiveSessionStatus] = useState<"idle" | "running" | "failed">("idle");
   const [activeStatus, setActiveStatus] = useState<WorkStatusFilter>("all");
   const [query, setQuery] = useState("");
   const [prompt, setPrompt] = useState("");
@@ -121,6 +138,9 @@ function App() {
   const refreshInFlight = useRef(false);
   const hasLoaded = useRef(false);
   const conversationEndRef = useRef<HTMLDivElement | null>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const subscribedSessionId = useRef("");
+  const sendingRef = useRef(false);
 
   const activeProject = projects.find((project) => project.id === activeProjectId);
   const selectedIssue = issues.find((issue) => issue.ref === selectedIssueRef);
@@ -173,7 +193,10 @@ function App() {
   useEffect(() => {
     void refresh(true);
     const interval = window.setInterval(() => void refresh(false), 5000);
-    return () => window.clearInterval(interval);
+    return () => {
+      window.clearInterval(interval);
+      eventSourceRef.current?.close();
+    };
   }, []);
 
   async function refresh(initial = false): Promise<void> {
@@ -203,12 +226,13 @@ function App() {
       setIssues(nextIssues);
       setSnapshotLabel(contextPayload.dashboard?.snapshot?.freshnessLabel || "Snapshot not loaded");
       setContext(contextPayload.context ?? {});
-      setConversation(seedConversation(contextPayload.context));
+      if (!sendingRef.current) setConversation(seedConversation(contextPayload.context));
       setSelectedIssueRef((current) => {
         if (current && nextIssues.some((issue) => issue.ref === current)) return current;
         if (activeFromContext && nextIssues.some((issue) => issue.ref === activeFromContext)) return activeFromContext;
         return nextIssues[0]?.ref ?? "";
       });
+      setExpandedIssueRef((current) => current && nextIssues.some((issue) => issue.ref === current) ? current : "");
       setStatus("ok");
       hasLoaded.current = true;
     } catch {
@@ -225,6 +249,8 @@ function App() {
     try {
       await fetchJson(`/api/projects/${encodeURIComponent(projectId)}/active`, { method: "POST" });
       setSelectedIssueRef("");
+      setExpandedIssueRef("");
+      setActiveSessionStatus("idle");
       await refresh(true);
     } catch {
       setError("Unable to switch project.");
@@ -234,7 +260,12 @@ function App() {
   async function submitPrompt(): Promise<void> {
     const text = prompt.trim();
     if (!text) return;
+    if (activeSessionStatus === "running") {
+      setError("Pi is still running. Wait for this turn to finish before sending another prompt.");
+      return;
+    }
     setSending(true);
+    sendingRef.current = true;
     setError("");
     const userItem: ConversationItem = {
       id: `local-user-${Date.now()}`,
@@ -244,6 +275,16 @@ function App() {
     };
     setConversation((items) => [...items, userItem]);
     try {
+      let sessionId = context.active?.sessionId;
+      if (selectedIssueRef && !sessionId) {
+        const started = await fetchJson<{ ok?: boolean; session: PiSessionSnapshot }>(`/api/issues/${encodeURIComponent(selectedIssueRef)}/session`, {
+          method: "POST",
+        });
+        sessionId = started.session.id;
+        subscribeToSessionEvents(sessionId);
+      } else if (sessionId) {
+        subscribeToSessionEvents(sessionId);
+      }
       const result = await fetchJson<{
         ok?: boolean;
         threadId?: string;
@@ -260,7 +301,7 @@ function App() {
           projectId: activeProjectId || undefined,
           issueRef: selectedIssueRef || undefined,
           threadId: context.active?.threadId,
-          sessionId: context.active?.sessionId,
+          sessionId,
           artifactRefs: [],
         }),
       });
@@ -282,7 +323,88 @@ function App() {
       setError("Unable to route prompt.");
     } finally {
       setSending(false);
+      sendingRef.current = false;
     }
+  }
+
+  function subscribeToSessionEvents(sessionId: string): void {
+    if (!sessionId || subscribedSessionId.current === sessionId) return;
+    eventSourceRef.current?.close();
+    subscribedSessionId.current = sessionId;
+    const source = new EventSource(`/api/sessions/${encodeURIComponent(sessionId)}/events`);
+    eventSourceRef.current = source;
+    const apply = (event: MessageEvent<string>) => {
+      const parsed = JSON.parse(event.data) as PiSessionEvent;
+      applyPiSessionEvent(sessionId, parsed);
+    };
+    source.addEventListener("sessionUpdated", apply);
+    source.addEventListener("runCompleted", apply);
+    for (const name of ["assistantDelta", "toolStarted", "toolUpdated", "toolFinished", "runFailed"] as const) {
+      source.addEventListener(name, apply);
+    }
+    source.onerror = () => {
+      source.close();
+      if (eventSourceRef.current === source) eventSourceRef.current = null;
+      if (subscribedSessionId.current === sessionId) subscribedSessionId.current = "";
+    };
+  }
+
+  function applyPiSessionEvent(sessionId: string, event: PiSessionEvent): void {
+    if (event.type === "sessionUpdated") {
+      const status = event.snapshot?.status;
+      if (status) setActiveSessionStatus(status);
+      return;
+    }
+    if (event.type === "runCompleted") {
+      setActiveSessionStatus("idle");
+      return;
+    }
+    if (event.type === "assistantDelta" && event.text) {
+      const id = `stream-${sessionId}`;
+      setConversation((items) => {
+        const existing = items.find((item) => item.id === id);
+        if (existing) {
+          return items.map((item) => item.id === id ? { ...item, text: item.text + event.text } : item);
+        }
+        return [...items, {
+          id,
+          role: "assistant",
+          text: event.text ?? "",
+          createdAt: event.timestamp,
+        }];
+      });
+      return;
+    }
+    if (event.type === "toolStarted") {
+      setConversation((items) => [...items, {
+        id: `tool-${event.callId || Date.now()}`,
+        role: "system",
+        text: `${event.toolName || "Tool"} started.`,
+        createdAt: event.timestamp,
+      }]);
+    }
+    if (event.type === "toolFinished") {
+      setConversation((items) => [...items, {
+        id: `tool-${event.callId || Date.now()}-done`,
+        role: "system",
+        text: `Tool ${event.success === false ? "failed" : "completed"}.`,
+        createdAt: event.timestamp,
+      }]);
+    }
+    if (event.type === "runFailed") {
+      setActiveSessionStatus("failed");
+      setConversation((items) => [...items, {
+        id: `failed-${sessionId}-${Date.now()}`,
+        role: "assistant",
+        text: event.error?.message || "Pi session failed.",
+        createdAt: event.timestamp,
+      }]);
+    }
+  }
+
+  function toggleIssue(issueRef: string): void {
+    setSelectedIssueRef(issueRef);
+    setExpandedIssueRef((current) => current === issueRef ? "" : issueRef);
   }
 
   async function invokeAction(action: DesktopAction): Promise<void> {
@@ -324,8 +446,8 @@ function App() {
     }
   }
 
-  async function copyHandoffPrompt(): Promise<void> {
-    const text = (selectedIssue?.handoffPrompt || selectedIssue?.nextPickup || "").trim();
+  async function copyHandoffPrompt(issue = selectedIssue): Promise<void> {
+    const text = (issue?.handoffPrompt || issue?.nextPickup || "").trim();
     if (!text) return;
     const ok = await copyText(text);
     if (!ok) return;
@@ -405,20 +527,26 @@ function App() {
 
         <section className="issue-stack">
           {filteredIssues.map((issue) => (
-            <button
+            <article
               key={issue.ref}
-              type="button"
               className={issue.ref === selectedIssueRef ? "issue-card active" : "issue-card"}
-              onClick={() => setSelectedIssueRef(issue.ref)}
             >
-              <div className="issue-row">
-                <span className="issue-ref">{issue.ref}</span>
-                <span className={statusThemeClass(workStatusLabel(issue))}>{workStatusLabel(issue)}</span>
-              </div>
-              <div className="issue-title">{issue.title || "Untitled issue"}</div>
-              <WorkflowTrack status={workStatusLabel(issue)} />
-              {issueDetail(issue) ? <div className="issue-note">{issueDetail(issue)}</div> : null}
-            </button>
+              <button type="button" className="issue-summary" onClick={() => toggleIssue(issue.ref)}>
+                <div className="issue-row">
+                  <span className="issue-ref">{issue.ref}</span>
+                  <span className={statusThemeClass(workStatusLabel(issue))}>{workStatusLabel(issue)}</span>
+                </div>
+                <div className="issue-title">{issue.title || "Untitled issue"}</div>
+                <WorkflowTrack status={workStatusLabel(issue)} />
+                {issueDetail(issue) ? <div className="issue-note">{issueDetail(issue)}</div> : null}
+              </button>
+              {expandedIssueRef === issue.ref ? (
+                <IssueDetails issue={issue} copied={copiedHandoff && selectedIssueRef === issue.ref} onCopyHandoff={() => {
+                  setSelectedIssueRef(issue.ref);
+                  void copyHandoffPrompt(issue);
+                }} />
+              ) : null}
+            </article>
           ))}
           {!filteredIssues.length ? <div className="empty-state">No matching issues</div> : null}
         </section>
@@ -436,16 +564,6 @@ function App() {
             <span>{snapshotStatusLabel}</span>
           </div>
         </header>
-
-        <div className="issue-detail-wrap">
-          {loading && !issues.length ? (
-            <div className="empty-state">Loading issues...</div>
-          ) : selectedIssue ? (
-            <IssueDetails issue={selectedIssue} copied={copiedHandoff} onCopyHandoff={() => void copyHandoffPrompt()} />
-          ) : (
-            <div className="empty-state">No issue selected</div>
-          )}
-        </div>
 
         <section className="timeline">
           {conversation.map((item) => (
@@ -484,10 +602,11 @@ function App() {
             }}
             placeholder="Work with Flow on this issue..."
           />
-          <button type="button" title="Send prompt" onClick={() => void submitPrompt()} disabled={sending || !prompt.trim()}>
+          <button type="button" title="Send prompt" onClick={() => void submitPrompt()} disabled={sending || activeSessionStatus === "running" || !prompt.trim()}>
             <Send size={17} />
           </button>
         </section>
+        {activeSessionStatus === "running" ? <div className="session-line">Pi is running. Follow-up queueing is next.</div> : null}
 
         {error ? <div className="error-line">{error}</div> : null}
       </main>

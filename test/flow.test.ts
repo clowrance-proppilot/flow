@@ -753,6 +753,39 @@ test("Pi session driver appends user prompt and assistant response", async () =>
   assert.equal(updated.timeline.length >= 3, true);
 });
 
+test("Pi session driver persists issue-linked session state for reopen", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-session-reopen-"));
+  const ledger = new MemoryWorkflowLedger();
+  const runtime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  await ledger.writeIssue({
+    ref: "GH-38",
+    title: "Persist desktop pi session state",
+    repoKeys: [],
+    state: "queued",
+    metadata: {},
+  });
+
+  const first = new PiSessionDriver({
+    runtime,
+    repoRoot: root,
+    flowSessionId: "desktop",
+    agent: false,
+  });
+  const started = await first.startSession("GH-38");
+  await first.postPrompt(started.id, "Remember this turn.");
+
+  const second = new PiSessionDriver({
+    runtime,
+    repoRoot: root,
+    flowSessionId: "desktop",
+    agent: false,
+  });
+  const reopened = await second.getSession(started.id);
+
+  assert.equal(reopened.issueRef, "GH-38");
+  assert.equal(reopened.timeline.some((item) => item.role === "user" && item.content === "Remember this turn."), true);
+});
+
 test("Pi session driver records clear failure when pi runtime fails", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-session-error-"));
   const ledger = new MemoryWorkflowLedger();
@@ -790,6 +823,7 @@ test("Pi session driver records clear failure when pi runtime fails", async () =
 test("Pi SDK session runner maps real SDK events into desktop timeline", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-sdk-runner-"));
   let listener: ((event: Record<string, unknown>) => void) | undefined;
+  const driverEvents: string[] = [];
   const runner = new PiSdkSessionRunner({
     loadModule: async () => ({
       SessionManager: {
@@ -825,12 +859,19 @@ test("Pi SDK session runner maps real SDK events into desktop timeline", async (
     issueRef: "GH-37",
     prompt: "Use pi.",
     repoRoot: root,
+    onEvent(event) {
+      driverEvents.push(event.type);
+      if (event.type === "assistantDelta") {
+        assert.equal(event.text, "Done from pi.");
+      }
+    },
   });
 
   assert.equal(result.sessionId, "real-pi-session");
   assert.equal(result.sessionFile, join(root, "session.jsonl"));
   assert.match(result.summary ?? "", /Done from pi/);
   assert.equal(result.timeline?.some((item) => item.role === "tool" && item.toolName === "read"), true);
+  assert.deepEqual(driverEvents, ["toolStarted", "toolFinished", "assistantDelta"]);
 });
 
 test("Local issue tracker creates issues through the Flow ledger surface", async () => {

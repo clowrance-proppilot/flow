@@ -48,6 +48,7 @@ try {
       ...process.env,
       FLOW_ROOT: repoRoot,
       FLOW_DESKTOP_USER_DATA: userDataRoot,
+      FLOW_DESKTOP_AGENT: "disabled",
       ELECTRON_ENABLE_LOGGING: "1",
     },
     stdio: ["ignore", "pipe", "pipe"],
