@@ -36,17 +36,25 @@ export class DesktopProjectRegistry {
 
   async listProjects(): Promise<DesktopProjectRecord[]> {
     const state = await this.readState();
-    return [...state.projects].sort((a, b) => b.lastOpenedAt.localeCompare(a.lastOpenedAt));
+    const projects = activeProjects(state.projects);
+    if (projects.length !== state.projects.length) {
+      await this.writeState({
+        activeProjectId: projects.some((project) => project.id === state.activeProjectId) ? state.activeProjectId : projects[0]?.id,
+        projects,
+      });
+    }
+    return [...projects].sort((a, b) => b.lastOpenedAt.localeCompare(a.lastOpenedAt));
   }
 
   async activeProject(preferredRoot?: string): Promise<DesktopProjectRecord | undefined> {
     const state = await this.readState();
+    const projects = activeProjects(state.projects);
     if (preferredRoot) {
       const resolvedPreferredRoot = resolve(preferredRoot);
-      const preferred = state.projects.find((project) => resolve(project.root) === resolvedPreferredRoot);
+      const preferred = projects.find((project) => resolve(project.root) === resolvedPreferredRoot);
       if (preferred) return preferred;
     }
-    return state.projects.find((project) => project.id === state.activeProjectId) ?? state.projects[0];
+    return projects.find((project) => project.id === state.activeProjectId) ?? projects[0];
   }
 
   async addProject(root: string): Promise<DesktopProjectRecord> {
@@ -127,7 +135,19 @@ export function projectIdForRoot(root: string): string {
 }
 
 function upsertProject(projects: DesktopProjectRecord[], project: DesktopProjectRecord): DesktopProjectRecord[] {
-  const index = projects.findIndex((candidate) => candidate.id === project.id);
+  const index = projects.findIndex((candidate) => candidate.id === project.id || resolve(candidate.root) === resolve(project.root));
   if (index === -1) return [...projects, project];
   return projects.map((candidate, candidateIndex) => candidateIndex === index ? project : candidate);
+}
+
+function activeProjects(projects: DesktopProjectRecord[]): DesktopProjectRecord[] {
+  const seen = new Set<string>();
+  const active: DesktopProjectRecord[] = [];
+  for (const project of projects) {
+    const root = resolve(project.root);
+    if (seen.has(root) || !existsSync(project.configPath)) continue;
+    seen.add(root);
+    active.push(project);
+  }
+  return active;
 }

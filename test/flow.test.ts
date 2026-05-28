@@ -554,6 +554,39 @@ test("Desktop project registry tracks active Flow projects from config roots", a
   assert.equal(active?.id, project.id);
 });
 
+test("Desktop project registry hides stale project records without config files", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-desktop-project-live-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  await bootstrapFlowConfig({ projectRoot: root, storage: "repo-tracked" });
+  const stateRoot = await mkdtemp(join(tmpdir(), "flow-desktop-state-stale-"));
+  const statePath = join(stateRoot, "projects.json");
+  const registry = new DesktopProjectRegistry({ statePath });
+  const project = await registry.addProject(root);
+  const staleRoot = join(tmpdir(), "flow-desktop-smoke-stale");
+
+  await writeFile(statePath, `${JSON.stringify({
+    activeProjectId: "stale",
+    projects: [
+      {
+        id: "stale",
+        name: "desktop-smoke",
+        root: staleRoot,
+        configPath: join(staleRoot, ".flow", "config.yaml"),
+        valid: true,
+        addedAt: nowIso(),
+        lastOpenedAt: nowIso(),
+      },
+      project,
+    ],
+  }, null, 2)}\n`, "utf8");
+
+  const projects = await registry.listProjects();
+  const active = await registry.activeProject();
+
+  assert.deepEqual(projects.map((candidate) => candidate.id), [project.id]);
+  assert.equal(active?.id, project.id);
+});
+
 test("Desktop prompt router records ledger context and agent artifacts", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-desktop-prompt-"));
   await execFileAsync("git", ["init"], { cwd: root });

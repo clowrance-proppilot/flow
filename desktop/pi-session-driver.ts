@@ -214,10 +214,16 @@ export class PiSessionDriver {
           onEvent: (event) => this.applyDriverEvent(session, event),
         });
         if (result.sessionId && result.sessionId !== session.id) {
+          const previousId = session.id;
           this.sessionsById.delete(session.id);
           session.id = result.sessionId;
           this.sessionsById.set(session.id, session);
           this.sessionIdByIssueRef.set(session.issueRef, session.id);
+          const listeners = this.listenersBySessionId.get(previousId);
+          if (listeners) {
+            this.listenersBySessionId.delete(previousId);
+            this.listenersBySessionId.set(session.id, listeners);
+          }
         }
         session.sessionFile = result.sessionFile ?? session.sessionFile;
         session.workspacePath = result.workspacePath ?? session.workspacePath;

@@ -226,7 +226,9 @@ function App() {
       setIssues(nextIssues);
       setSnapshotLabel(contextPayload.dashboard?.snapshot?.freshnessLabel || "Snapshot not loaded");
       setContext(contextPayload.context ?? {});
-      if (!sendingRef.current) setConversation(seedConversation(contextPayload.context));
+      if (!sendingRef.current && (initial || !hasLoaded.current)) {
+        setConversation(seedConversation(contextPayload.context, nextProjectId, activeFromContext));
+      }
       setSelectedIssueRef((current) => {
         if (current && nextIssues.some((issue) => issue.ref === current)) return current;
         if (activeFromContext && nextIssues.some((issue) => issue.ref === activeFromContext)) return activeFromContext;
@@ -274,8 +276,11 @@ function App() {
       createdAt: new Date().toISOString(),
     };
     setConversation((items) => [...items, userItem]);
+    setPrompt("");
     try {
-      let sessionId = context.active?.sessionId;
+      const activeMatchesSelection = Boolean(selectedIssueRef && context.active?.issueRef === selectedIssueRef);
+      let sessionId = activeMatchesSelection ? context.active?.sessionId : undefined;
+      const threadId = activeMatchesSelection ? context.active?.threadId : undefined;
       if (selectedIssueRef && !sessionId) {
         const started = await fetchJson<{ ok?: boolean; session: PiSessionSnapshot }>(`/api/issues/${encodeURIComponent(selectedIssueRef)}/session`, {
           method: "POST",
@@ -300,24 +305,27 @@ function App() {
           prompt: text,
           projectId: activeProjectId || undefined,
           issueRef: selectedIssueRef || undefined,
-          threadId: context.active?.threadId,
+          threadId,
           sessionId,
           artifactRefs: [],
         }),
       });
-      setPrompt("");
       setContext(result.projection ?? context);
-      setConversation((items) => [
-        ...items,
-        {
-          id: `local-assistant-${Date.now()}`,
-          role: "assistant",
-          text: result.error || result.summary || (result.sessionId
-            ? `Prompt routed to session ${result.sessionId}.`
-            : `Prompt recorded for ${activeProject?.name ?? "active project"}.`),
-          createdAt: new Date().toISOString(),
-        },
-      ]);
+      setConversation((items) => {
+        const text = result.error || result.summary || (result.sessionId
+          ? `Prompt routed to session ${result.sessionId}.`
+          : `Prompt recorded for ${activeProject?.name ?? "active project"}.`);
+        if (items.some((item) => item.role === "assistant" && item.text.trim() === text.trim())) return items;
+        return [
+          ...items,
+          {
+            id: `local-assistant-${Date.now()}`,
+            role: "assistant",
+            text,
+            createdAt: new Date().toISOString(),
+          },
+        ];
+      });
       await refresh(false);
     } catch {
       setError("Unable to route prompt.");
@@ -376,16 +384,18 @@ function App() {
       return;
     }
     if (event.type === "toolStarted") {
-      setConversation((items) => [...items, {
-        id: `tool-${event.callId || Date.now()}`,
+      const id = `tool-${event.callId || Date.now()}`;
+      setConversation((items) => items.some((item) => item.id === id) ? items : [...items, {
+        id,
         role: "system",
         text: `${event.toolName || "Tool"} started.`,
         createdAt: event.timestamp,
       }]);
     }
     if (event.type === "toolFinished") {
-      setConversation((items) => [...items, {
-        id: `tool-${event.callId || Date.now()}-done`,
+      const id = `tool-${event.callId || Date.now()}-done`;
+      setConversation((items) => items.some((item) => item.id === id) ? items : [...items, {
+        id,
         role: "system",
         text: `Tool ${event.success === false ? "failed" : "completed"}.`,
         createdAt: event.timestamp,
@@ -403,6 +413,13 @@ function App() {
   }
 
   function toggleIssue(issueRef: string): void {
+    if (issueRef !== selectedIssueRef) {
+      eventSourceRef.current?.close();
+      eventSourceRef.current = null;
+      subscribedSessionId.current = "";
+      setActiveSessionStatus("idle");
+      setConversation(seedConversation(context, activeProjectId, issueRef));
+    }
     setSelectedIssueRef(issueRef);
     setExpandedIssueRef((current) => current === issueRef ? "" : issueRef);
   }
@@ -434,7 +451,7 @@ function App() {
         {
           id: `local-action-${Date.now()}`,
           role: "system",
-          text: result.summary,
+          text: formatActionSummary(action, result.summary),
           createdAt: new Date().toISOString(),
         },
       ]);
@@ -721,47 +738,60 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   return payload;
 }
 
-function seedConversation(context?: ContextProjection): ConversationItem[] {
-  const prompts = context?.prompts ?? [];
-  const artifacts = context?.artifacts ?? [];
-  if (!prompts.length && !artifacts.length) {
-    return [{
-      id: "system-empty",
-      role: "system",
-      text: "Ask Flow what to work on, or select an issue for narrower context.",
-      createdAt: new Date().toISOString(),
-    }];
+function formatActionSummary(action: DesktopAction, summary: string): string {
+  if (action === "run_doctor") {
+    const match = summary.match(/^Doctor (\w+) for ([^.]+)\.\s*(\{.*\})$/s);
+    if (match) {
+      const [, status, issueRef, raw] = match;
+      try {
+        const payload = JSON.parse(raw) as {
+          blockers?: string[];
+          readiness?: { nextActions?: Array<{ summary?: string }> };
+          codeReview?: { prUrl?: string; state?: string; mergeStateStatus?: string };
+        };
+        const blockers = (payload.blockers ?? []).slice(0, 3);
+        const nextActions = (payload.readiness?.nextActions ?? [])
+          .map((item) => item.summary)
+          .filter(Boolean)
+          .slice(0, 2);
+        return [
+          `Doctor ${status} for ${issueRef}.`,
+          payload.codeReview?.prUrl ? `PR: ${payload.codeReview.prUrl} (${payload.codeReview.state ?? "unknown"} / ${payload.codeReview.mergeStateStatus ?? "unknown"})` : "",
+          blockers.length ? `Blockers: ${blockers.join("; ")}` : "",
+          nextActions.length ? `Next: ${nextActions.join("; ")}` : "",
+        ].filter(Boolean).join("\n");
+      } catch {
+        return `Doctor ${status} for ${issueRef}.`;
+      }
+    }
   }
-  return [
-    ...prompts.slice(-8).flatMap((prompt) => [
-      {
-        id: prompt.id,
-        role: "user" as const,
-        text: prompt.prompt,
-        createdAt: prompt.updatedAt,
-      },
-      ...(prompt.summary ? [{
-        id: `${prompt.id}-summary`,
-        role: "assistant" as const,
-        text: prompt.summary,
-        createdAt: prompt.updatedAt,
-      }] : []),
-    ]),
-    ...artifacts.slice(-2).map((artifact) => ({
-      id: `artifact-message-${artifact.id}`,
-      role: "system" as const,
-      text: artifact.summary || artifact.title,
-      createdAt: artifact.updatedAt || new Date().toISOString(),
-    })),
-  ];
+  return compactChatText(summary);
+}
+
+function compactChatText(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length <= 700) return trimmed;
+  return `${trimmed.slice(0, 680).trimEnd()}...`;
+}
+
+function seedConversation(context?: ContextProjection, projectId?: string, issueRef?: string): ConversationItem[] {
+  const target = issueRef || context?.active?.issueRef;
+  const label = target ? `Selected ${target}.` : projectId ? "Project loaded." : "Flow desktop is ready.";
+  return [{
+    id: "system-empty",
+    role: "system",
+    text: `${label} Use the composer for the current turn; older prompt history stays out of the default view.`,
+    createdAt: new Date().toISOString(),
+  }];
 }
 
 function contextLine(project: ProjectRecord | undefined, issue: DashboardIssue | undefined, context: ContextProjection): string {
+  const contextMatchesIssue = Boolean(issue?.ref && context.active?.issueRef === issue.ref);
   const parts = [
     project?.name,
     issue?.ref,
-    context.active?.threadId ? `thread ${context.active.threadId}` : undefined,
-    context.active?.sessionId ? `session ${context.active.sessionId}` : undefined,
+    contextMatchesIssue && context.active?.threadId ? `thread ${context.active.threadId}` : undefined,
+    contextMatchesIssue && context.active?.sessionId ? `session ${context.active.sessionId}` : undefined,
   ].filter(Boolean);
   return parts.join(" / ") || "No active context";
 }
