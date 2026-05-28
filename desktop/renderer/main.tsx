@@ -9,6 +9,7 @@ import {
   RefreshCw,
   Search,
   Send,
+  Stethoscope,
   Waypoints,
 } from "lucide-react";
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -143,6 +144,7 @@ function App() {
   const [query, setQuery] = useState("");
   const [prompt, setPrompt] = useState("");
   const [conversation, setConversation] = useState<ConversationItem[]>([]);
+  const [systemNotice, setSystemNotice] = useState("");
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState<StatusKind>("loading");
   const [sending, setSending] = useState(false);
@@ -268,6 +270,7 @@ function App() {
       setSelectedIssueRef("");
       setSelectedSessionId("");
       setExpandedIssueRef("");
+      setSystemNotice("");
       setActiveSessionStatus("idle");
       await refresh(true);
     } catch {
@@ -442,6 +445,7 @@ function App() {
     setExpandedIssueRef((current) => current === issueRef ? "" : issueRef);
     setActiveSessionStatus("idle");
     setConversation(seedConversation(context, activeProjectId, issueRef));
+    setSystemNotice("");
     setError("");
     try {
       const started = await fetchJson<{ ok?: boolean; session: PiSessionSnapshot }>(`/api/issues/${encodeURIComponent(issueRef)}/session`, {
@@ -479,18 +483,23 @@ function App() {
         }),
       });
       setContext(result.projection ?? context);
-      setConversation((items) => [
-        ...items,
-        {
-          id: `local-action-${Date.now()}`,
-          role: "system",
-          text: formatActionSummary(action, result.summary),
-          createdAt: new Date().toISOString(),
-        },
-      ]);
+      const actionSummary = formatActionSummary(action, result.summary);
+      if (action === "autoflow") {
+        setSystemNotice(actionSummary);
+      } else {
+        setConversation((items) => [
+          ...items,
+          {
+            id: `local-action-${Date.now()}`,
+            role: "system",
+            text: actionSummary,
+            createdAt: new Date().toISOString(),
+          },
+        ]);
+      }
       await refresh(false);
     } catch {
-      setError("Unable to record workflow action.");
+      setError("Unable to run workflow action.");
     } finally {
       setActionBusy("");
     }
@@ -621,11 +630,19 @@ function App() {
             <h2>{selectedIssue?.title || "Select an issue"}</h2>
             <p>{contextLine(activeProject, selectedIssue, context, selectedSessionId)}</p>
           </div>
-          <div className="snapshot-pill">
-            <span className={status === "error" ? "status-dot error" : status === "loading" ? "status-dot loading" : "status-dot ok"} />
-            <span>{snapshotStatusLabel}</span>
+          <div className="chat-header-actions">
+            <button type="button" className="system-autoflow-button" title="Autoflow issue" onClick={() => void invokeAction("autoflow")} disabled={!selectedIssueRef || Boolean(actionBusy)}>
+              <Activity size={15} />
+              <span>{actionBusy === "autoflow" ? "Autoflowing..." : "Autoflow"}</span>
+            </button>
+            <div className="snapshot-pill">
+              <span className={status === "error" ? "status-dot error" : status === "loading" ? "status-dot loading" : "status-dot ok"} />
+              <span>{snapshotStatusLabel}</span>
+            </div>
           </div>
         </header>
+
+        {systemNotice ? <div className="system-notice">{systemNotice}</div> : null}
 
         <section className="timeline">
           {conversation.map((item) => (
@@ -637,13 +654,9 @@ function App() {
           <div ref={conversationEndRef} />
         </section>
 
-        <div className="action-strip" aria-label="Workflow actions">
-          <button type="button" className="autoflow-button" title="Autoflow issue" onClick={() => void invokeAction("autoflow")} disabled={!selectedIssueRef || Boolean(actionBusy)}>
-            <Activity size={15} />
-            <span>{actionBusy === "autoflow" ? "Autoflowing..." : "Autoflow"}</span>
-          </button>
-          {showManualActions ? (
-            <div className="manual-action-group" aria-label="Manual closeout actions">
+        {showManualActions ? (
+          <div className="action-strip" aria-label="Manual closeout actions">
+            <div className="manual-action-group">
               <button type="button" title="Record evidence" onClick={() => void invokeAction("record_evidence")} disabled={!selectedIssueRef || Boolean(actionBusy)}>
                 <ClipboardList size={15} />
               </button>
@@ -654,11 +667,11 @@ function App() {
                 <FileText size={15} />
               </button>
               <button type="button" title="Run doctor" onClick={() => void invokeAction("run_doctor")} disabled={!selectedIssueRef || Boolean(actionBusy)}>
-                <Activity size={15} />
+                <Stethoscope size={15} />
               </button>
             </div>
-          ) : null}
-        </div>
+          </div>
+        ) : null}
 
         <section className="composer">
           <textarea
@@ -792,6 +805,7 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 function formatActionSummary(action: DesktopAction, summary: string): string {
+  if (action === "autoflow") return formatAutoflowNotice(summary);
   if (action === "run_doctor") {
     const match = summary.match(/^Doctor (\w+) for ([^.]+)\.\s*(\{.*\})$/s);
     if (match) {
@@ -819,6 +833,18 @@ function formatActionSummary(action: DesktopAction, summary: string): string {
     }
   }
   return compactChatText(summary);
+}
+
+function formatAutoflowNotice(summary: string): string {
+  const match = summary.match(/^Autoflow ([^ ]+) for ([^.]+)\.\s*(.*)$/s);
+  if (!match) return compactChatText(summary);
+  const [, status, issueRef, message] = match;
+  const label = status === "needs_confirmation" ? "Needs confirmation" : titleCase(status.replace(/_/g, " "));
+  return compactChatText(`${label}: ${message || issueRef}`);
+}
+
+function titleCase(value: string): string {
+  return value.replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 function compactChatText(value: string): string {
