@@ -101,8 +101,19 @@ type ConversationItem = {
   createdAt: string;
 };
 
+type PiTimelineItem = {
+  id: string;
+  role: "system" | "user" | "assistant" | "tool";
+  content: string;
+  createdAt: string;
+  toolName?: string;
+};
+
 type PiSessionSnapshot = {
   id: string;
+  issueRef: string;
+  status: "active" | "running" | "paused" | "done" | "failed";
+  timeline: PiTimelineItem[];
 };
 
 type PiSessionEvent = {
@@ -125,6 +136,7 @@ function App() {
   const [snapshotLabel, setSnapshotLabel] = useState("Snapshot not loaded");
   const [context, setContext] = useState<ContextProjection>({});
   const [selectedIssueRef, setSelectedIssueRef] = useState("");
+  const [selectedSessionId, setSelectedSessionId] = useState("");
   const [expandedIssueRef, setExpandedIssueRef] = useState("");
   const [activeSessionStatus, setActiveSessionStatus] = useState<"idle" | "running" | "failed">("idle");
   const [activeStatus, setActiveStatus] = useState<WorkStatusFilter>("all");
@@ -143,6 +155,7 @@ function App() {
   const eventSourceRef = useRef<EventSource | null>(null);
   const subscribedSessionId = useRef("");
   const sendingRef = useRef(false);
+  const issueSelectionRequest = useRef(0);
 
   const activeProject = projects.find((project) => project.id === activeProjectId);
   const selectedIssue = issues.find((issue) => issue.ref === selectedIssueRef);
@@ -253,6 +266,7 @@ function App() {
     try {
       await fetchJson(`/api/projects/${encodeURIComponent(projectId)}/active`, { method: "POST" });
       setSelectedIssueRef("");
+      setSelectedSessionId("");
       setExpandedIssueRef("");
       setActiveSessionStatus("idle");
       await refresh(true);
@@ -288,8 +302,11 @@ function App() {
           method: "POST",
         });
         sessionId = started.session.id;
+        setSelectedSessionId(sessionId);
+        setActiveSessionStatus(sessionStatusForUi(started.session.status));
         subscribeToSessionEvents(sessionId);
       } else if (sessionId) {
+        setSelectedSessionId(sessionId);
         subscribeToSessionEvents(sessionId);
       }
       const result = await fetchJson<{
@@ -414,21 +431,35 @@ function App() {
     }
   }
 
-  function toggleIssue(issueRef: string): void {
-    if (issueRef !== selectedIssueRef) {
-      eventSourceRef.current?.close();
-      eventSourceRef.current = null;
-      subscribedSessionId.current = "";
-      setActiveSessionStatus("idle");
-      setConversation(seedConversation(context, activeProjectId, issueRef));
-    }
+  async function selectIssueThread(issueRef: string): Promise<void> {
+    const requestId = issueSelectionRequest.current + 1;
+    issueSelectionRequest.current = requestId;
+    eventSourceRef.current?.close();
+    eventSourceRef.current = null;
+    subscribedSessionId.current = "";
     setSelectedIssueRef(issueRef);
+    setSelectedSessionId("");
     setExpandedIssueRef((current) => current === issueRef ? "" : issueRef);
+    setActiveSessionStatus("idle");
+    setConversation(seedConversation(context, activeProjectId, issueRef));
+    setError("");
+    try {
+      const started = await fetchJson<{ ok?: boolean; session: PiSessionSnapshot }>(`/api/issues/${encodeURIComponent(issueRef)}/session`, {
+        method: "POST",
+      });
+      if (issueSelectionRequest.current !== requestId) return;
+      setSelectedSessionId(started.session.id);
+      setActiveSessionStatus(sessionStatusForUi(started.session.status));
+      setConversation(conversationFromPiSession(started.session));
+      subscribeToSessionEvents(started.session.id);
+    } catch {
+      if (issueSelectionRequest.current === requestId) setError("Unable to open issue thread.");
+    }
   }
 
   async function invokeAction(action: DesktopAction): Promise<void> {
     if (!selectedIssueRef) {
-      setError("Select an issue before recording workflow state.");
+      setError("Select an issue before running Autoflow.");
       return;
     }
     setActionBusy(action);
@@ -475,6 +506,7 @@ function App() {
   }
 
   const snapshotStatusLabel = status === "error" ? "Snapshot unavailable" : snapshotLabel;
+  const showManualActions = selectedIssue ? isManualActionIssue(selectedIssue) : false;
 
   return (
     <div className="desktop-shell">
@@ -556,7 +588,7 @@ function App() {
               key={issue.ref}
               className={`${issue.ref === selectedIssueRef ? "issue-card active" : "issue-card"} ${statusFilterThemeClass(workStatusLabel(issue))}`.trim()}
             >
-              <button type="button" className="issue-summary" onClick={() => toggleIssue(issue.ref)}>
+              <button type="button" className="issue-summary" onClick={() => void selectIssueThread(issue.ref)}>
                 <div className="issue-row">
                   <span className="issue-ref">{issue.ref}</span>
                   <span className={statusThemeClass(workStatusLabel(issue))}>{workStatusLabel(issue)}</span>
@@ -566,8 +598,8 @@ function App() {
                 {issueDetail(issue) ? <div className="issue-note">{issueDetail(issue)}</div> : null}
                 <div className="issue-actions-preview">
                   {issue.prStatus ? <span>Open PR</span> : null}
-                  {issue.evidenceStatus === "Present" ? null : <span>Evidence</span>}
-                  <span>Doctor</span>
+                  {isManualActionIssue(issue) && issue.evidenceStatus !== "Present" ? <span>Evidence</span> : null}
+                  {isManualActionIssue(issue) ? <span>Doctor</span> : null}
                 </div>
               </button>
               {expandedIssueRef === issue.ref ? (
@@ -587,7 +619,7 @@ function App() {
           <div>
             <div className="eyebrow">Issue</div>
             <h2>{selectedIssue?.title || "Select an issue"}</h2>
-            <p>{contextLine(activeProject, selectedIssue, context)}</p>
+            <p>{contextLine(activeProject, selectedIssue, context, selectedSessionId)}</p>
           </div>
           <div className="snapshot-pill">
             <span className={status === "error" ? "status-dot error" : status === "loading" ? "status-dot loading" : "status-dot ok"} />
@@ -606,18 +638,26 @@ function App() {
         </section>
 
         <div className="action-strip" aria-label="Workflow actions">
-          <button type="button" title="Record evidence" onClick={() => void invokeAction("record_evidence")} disabled={!selectedIssueRef || Boolean(actionBusy)}>
-            <ClipboardList size={15} />
-          </button>
-          <button type="button" title="Record result" onClick={() => void invokeAction("record_result")} disabled={!selectedIssueRef || Boolean(actionBusy)}>
-            <CircleCheck size={15} />
-          </button>
-          <button type="button" title="Record documentation" onClick={() => void invokeAction("record_documentation")} disabled={!selectedIssueRef || Boolean(actionBusy)}>
-            <FileText size={15} />
-          </button>
-          <button type="button" title="Run doctor" onClick={() => void invokeAction("run_doctor")} disabled={!selectedIssueRef || Boolean(actionBusy)}>
+          <button type="button" className="autoflow-button" title="Autoflow issue" onClick={() => void invokeAction("autoflow")} disabled={!selectedIssueRef || Boolean(actionBusy)}>
             <Activity size={15} />
+            <span>{actionBusy === "autoflow" ? "Autoflowing..." : "Autoflow"}</span>
           </button>
+          {showManualActions ? (
+            <div className="manual-action-group" aria-label="Manual closeout actions">
+              <button type="button" title="Record evidence" onClick={() => void invokeAction("record_evidence")} disabled={!selectedIssueRef || Boolean(actionBusy)}>
+                <ClipboardList size={15} />
+              </button>
+              <button type="button" title="Record result" onClick={() => void invokeAction("record_result")} disabled={!selectedIssueRef || Boolean(actionBusy)}>
+                <CircleCheck size={15} />
+              </button>
+              <button type="button" title="Record documentation" onClick={() => void invokeAction("record_documentation")} disabled={!selectedIssueRef || Boolean(actionBusy)}>
+                <FileText size={15} />
+              </button>
+              <button type="button" title="Run doctor" onClick={() => void invokeAction("run_doctor")} disabled={!selectedIssueRef || Boolean(actionBusy)}>
+                <Activity size={15} />
+              </button>
+            </div>
+          ) : null}
         </div>
 
         <section className="composer">
@@ -742,7 +782,7 @@ function WorkflowTrack({ status }: { status?: string }) {
   );
 }
 
-type DesktopAction = "record_evidence" | "record_result" | "record_documentation" | "run_doctor";
+type DesktopAction = "autoflow" | "record_evidence" | "record_result" | "record_documentation" | "run_doctor";
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, { cache: "no-store", ...init });
@@ -798,13 +838,34 @@ function seedConversation(context?: ContextProjection, projectId?: string, issue
   }];
 }
 
-function contextLine(project: ProjectRecord | undefined, issue: DashboardIssue | undefined, context: ContextProjection): string {
+function conversationFromPiSession(session: PiSessionSnapshot): ConversationItem[] {
+  const items = session.timeline.map((item) => ({
+    id: `pi-${session.id}-${item.id}`,
+    role: item.role === "user" || item.role === "assistant" ? item.role : "system",
+    text: item.role === "tool" && item.toolName ? `${item.toolName}: ${item.content}` : item.content,
+    createdAt: item.createdAt,
+  }));
+  return items.length ? items : seedConversation(undefined, undefined, session.issueRef);
+}
+
+function sessionStatusForUi(status?: PiSessionSnapshot["status"]): "idle" | "running" | "failed" {
+  if (status === "running") return "running";
+  if (status === "failed") return "failed";
+  return "idle";
+}
+
+function contextLine(
+  project: ProjectRecord | undefined,
+  issue: DashboardIssue | undefined,
+  context: ContextProjection,
+  selectedSessionId?: string,
+): string {
   const contextMatchesIssue = Boolean(issue?.ref && context.active?.issueRef === issue.ref);
   const parts = [
     project?.name,
     issue?.ref,
     contextMatchesIssue && context.active?.threadId ? `thread ${context.active.threadId}` : undefined,
-    contextMatchesIssue && context.active?.sessionId ? `session ${context.active.sessionId}` : undefined,
+    contextMatchesIssue && context.active?.sessionId ? `session ${context.active.sessionId}` : selectedSessionId ? `session ${selectedSessionId}` : undefined,
   ].filter(Boolean);
   return parts.join(" / ") || "No active context";
 }
@@ -856,6 +917,10 @@ function statusFilterThemeClass(label: string): string {
 
 function isExceptionalStatus(status: string): boolean {
   return status === "Blocked" || status === "Needs Input";
+}
+
+function isManualActionIssue(issue: DashboardIssue): boolean {
+  return isExceptionalStatus(workStatusLabel(issue));
 }
 
 function statusRank(status: string): number {

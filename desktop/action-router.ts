@@ -11,15 +11,15 @@ import {
   workerTaskResultSchema,
   type WorkflowLedger,
 } from "../src/index.js";
-import type { FlowDoctorResult, FlowWorkRuntime } from "../src/work-runtime.js";
+import type { AutoFlowIssueResult, FlowDoctorResult, FlowWorkRuntime } from "../src/work-runtime.js";
 import type { DesktopProjectRecord, DesktopProjectRegistry } from "./project-registry.js";
 
 type DesktopActionRuntime = Pick<
   FlowWorkRuntime,
-  "createSession" | "selectIssue" | "summarizeHandoff" | "inspectIssue" | "recordEvidence" | "recordWorkerResult" | "recordDocumentation" | "diagnoseIssue"
+  "createSession" | "selectIssue" | "summarizeHandoff" | "inspectIssue" | "recordEvidence" | "recordWorkerResult" | "recordDocumentation" | "diagnoseIssue" | "autoFlowIssue"
 >;
 
-export const desktopActionValues = ["record_evidence", "record_result", "record_documentation", "run_doctor"] as const;
+export const desktopActionValues = ["autoflow", "record_evidence", "record_result", "record_documentation", "run_doctor"] as const;
 export type DesktopAction = typeof desktopActionValues[number];
 
 export interface DesktopActionInput {
@@ -74,7 +74,11 @@ export class DesktopActionRouter {
     let result: unknown;
     let summary: string;
 
-    if (input.action === "record_evidence") {
+    if (input.action === "autoflow") {
+      result = await runtime.autoFlowIssue(sessionId, { autoPrepareWorkspace: true, maxSteps: 20 });
+      const autoflow = result as AutoFlowIssueResult;
+      summary = `Autoflow ${autoflow.status} for ${issue.ref}. ${autoflow.message}`;
+    } else if (input.action === "record_evidence") {
       const record = evidencePayload(issue.ref, payload);
       result = await runtime.recordEvidence(sessionId, record);
       summary = `Evidence recorded for ${issue.ref}.`;
@@ -183,7 +187,7 @@ function actionArtifactRecord(
     projectId,
     issueRef,
     artifactRefs: [],
-    artifactType: action === "run_doctor" ? "test_output" : "other",
+    artifactType: action === "run_doctor" || action === "autoflow" ? "test_output" : "other",
     title: actionLabel(action),
     summary: `${summary}\n${compactJson(result)}`,
     createdAt: now,
@@ -193,6 +197,7 @@ function actionArtifactRecord(
 }
 
 function actionLabel(action: DesktopAction): string {
+  if (action === "autoflow") return "Autoflow output";
   if (action === "record_evidence") return "Evidence writeback";
   if (action === "record_documentation") return "Documentation writeback";
   if (action === "record_result") return "Result writeback";

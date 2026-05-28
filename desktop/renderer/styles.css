@@ -705,15 +705,35 @@ h2 {
 
 .action-strip {
   display: flex;
+  align-items: center;
   justify-content: center;
-  gap: 0.45rem;
+  gap: 0.55rem;
   border-top: 1px solid var(--th-border);
   border-bottom: 1px solid var(--th-border);
   background: var(--th-input);
   padding: 0.52rem 0.95rem;
 }
 
-.action-strip button {
+.autoflow-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.42rem;
+  min-width: 8rem;
+  height: 2.15rem;
+  border: 1px solid rgb(56 189 248 / 0.55);
+  border-radius: 0.55rem;
+  background: rgb(56 189 248 / 0.14);
+  color: var(--th-fg);
+  font-weight: 800;
+}
+
+.manual-action-group {
+  display: flex;
+  gap: 0.45rem;
+}
+
+.manual-action-group button {
   display: grid;
   place-items: center;
   width: 1.95rem;

@@ -736,6 +736,42 @@ test("Desktop action router records evidence, result, docs, and doctor output", 
   assert.equal(projection.artifacts.length, 4);
 });
 
+test("Desktop action router runs Autoflow as the primary issue action", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-desktop-autoflow-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  await bootstrapFlowConfig({ projectRoot: root, storage: "repo-tracked" });
+  const stateRoot = await mkdtemp(join(tmpdir(), "flow-desktop-autoflow-state-"));
+  const registry = new DesktopProjectRegistry({ statePath: join(stateRoot, "projects.json") });
+  const project = await registry.addProject(root);
+  const ledger = new MemoryWorkflowLedger();
+  const runtime = testWorkRuntime({ store: new FlowStore({ root: join(root, ".flow", "runtime") }), ledger });
+  await ledger.writeIssue({
+    ref: "ISSUE-55",
+    title: "Autoflow from desktop",
+    repoKeys: ["app_api"],
+    state: "queued",
+    metadata: {
+      work_dir: "/tmp/app-api-worktree",
+    },
+  });
+
+  const router = new DesktopActionRouter({
+    projects: registry,
+    runtimeForProject: () => runtime,
+    ledgerForProject: () => ledger,
+  });
+  const result = await router.invoke({ action: "autoflow", issueRef: "ISSUE-55" });
+
+  const issue = await ledger.readIssue("ISSUE-55");
+  const projection = await ledger.readContext({ projectId: project.id });
+
+  assert.match(result.summary, /Autoflow needs_confirmation for ISSUE-55/);
+  assert.equal(issue?.metadata["workflow.autoflow.attempts"], 1);
+  assert.equal(projection.artifacts.length, 1);
+  assert.equal(projection.artifacts[0].title, "Autoflow output");
+  assert.equal(projection.artifacts[0].metadata.action, "autoflow");
+});
+
 test("Pi session driver starts issue-linked sessions and records FlowSessionLink", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-session-start-"));
   const ledger = new MemoryWorkflowLedger();
