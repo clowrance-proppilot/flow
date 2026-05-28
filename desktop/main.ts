@@ -155,10 +155,29 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
   });
   server.get("/api/projects", async (_req, res) => {
     const active = await projectRegistry.activeProject();
+    const projects = await projectRegistry.listProjects();
+    const projectsWithSummary = await Promise.all(projects.map(async (project) => {
+      try {
+        const surface = await projectSurface(project);
+        const payload = await surface.dashboardState.payload({ limit: 50 });
+        const summary = summarizeProjectIssues(payload.issues);
+        return {
+          ...project,
+          attentionCount: summary.blocked + summary.needsInput,
+          statusCounts: summary,
+        };
+      } catch {
+        return {
+          ...project,
+          attentionCount: 0,
+          statusCounts: summarizeProjectIssues(undefined),
+        };
+      }
+    }));
     res.json({
       ok: true,
       activeProjectId: active?.id,
-      projects: await projectRegistry.listProjects(),
+      projects: projectsWithSummary,
     });
   });
   server.post("/api/projects", jsonBody, async (req, res) => {
@@ -417,6 +436,53 @@ function resolveDesktopUserDataPath(): string {
 
 function latestAssistantText(session: { timeline: Array<{ role: string; content: string }> }): string {
   return [...session.timeline].reverse().find((item) => item.role === "assistant")?.content.trim() ?? "";
+}
+
+type ProjectIssueSummary = {
+  blocked: number;
+  needsInput: number;
+  inReview: number;
+  running: number;
+  ready: number;
+  queued: number;
+  done: number;
+  total: number;
+};
+
+function summarizeProjectIssues(issues: unknown): ProjectIssueSummary {
+  const summary: ProjectIssueSummary = {
+    blocked: 0,
+    needsInput: 0,
+    inReview: 0,
+    running: 0,
+    ready: 0,
+    queued: 0,
+    done: 0,
+    total: 0,
+  };
+  if (!Array.isArray(issues)) return summary;
+  for (const issue of issues) {
+    const status = issueStatusLabel(issue);
+    summary.total += 1;
+    if (status === "Blocked") summary.blocked += 1;
+    else if (status === "Needs Input") summary.needsInput += 1;
+    else if (status === "In Review") summary.inReview += 1;
+    else if (status === "Running") summary.running += 1;
+    else if (status === "Ready") summary.ready += 1;
+    else if (status === "Done") summary.done += 1;
+    else summary.queued += 1;
+  }
+  return summary;
+}
+
+function issueStatusLabel(issue: unknown): string {
+  if (!issue || typeof issue !== "object") return "Queued";
+  const record = issue as { workStatus?: unknown; statusLabel?: unknown };
+  const workStatus = typeof record.workStatus === "string" ? record.workStatus.trim() : "";
+  if (workStatus) return workStatus;
+  const statusLabel = typeof record.statusLabel === "string" ? record.statusLabel.trim() : "";
+  if (statusLabel) return statusLabel;
+  return "Queued";
 }
 
 function artifactFromPiSession(

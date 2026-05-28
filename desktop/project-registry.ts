@@ -39,8 +39,13 @@ export class DesktopProjectRegistry {
     return [...state.projects].sort((a, b) => b.lastOpenedAt.localeCompare(a.lastOpenedAt));
   }
 
-  async activeProject(): Promise<DesktopProjectRecord | undefined> {
+  async activeProject(preferredRoot?: string): Promise<DesktopProjectRecord | undefined> {
     const state = await this.readState();
+    if (preferredRoot) {
+      const resolvedPreferredRoot = resolve(preferredRoot);
+      const preferred = state.projects.find((project) => resolve(project.root) === resolvedPreferredRoot);
+      if (preferred) return preferred;
+    }
     return state.projects.find((project) => project.id === state.activeProjectId) ?? state.projects[0];
   }
 

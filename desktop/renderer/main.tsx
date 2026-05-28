@@ -1,7 +1,33 @@
-import { Activity, CircleCheck, ClipboardList, FileCode, FileText, Folder, RefreshCw, Search, Send, Waypoints } from "lucide-react";
+import {
+  Activity,
+  Check,
+  CircleCheck,
+  ClipboardList,
+  Copy,
+  FileText,
+  Folder,
+  RefreshCw,
+  Search,
+  Send,
+  Waypoints,
+} from "lucide-react";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
+
+type StatusKind = "loading" | "ok" | "error";
+type WorkStatusFilter = "all" | string;
+
+type ProjectStatusCounts = {
+  blocked: number;
+  needsInput: number;
+  inReview: number;
+  running: number;
+  ready: number;
+  queued: number;
+  done: number;
+  total: number;
+};
 
 type ProjectRecord = {
   id: string;
@@ -9,19 +35,32 @@ type ProjectRecord = {
   root: string;
   valid: boolean;
   error?: string;
+  attentionCount?: number;
+  statusCounts?: ProjectStatusCounts;
 };
 
 type DashboardIssue = {
   ref: string;
   title?: string;
   workStatus?: string;
+  workStatusDetail?: string;
   statusLabel?: string;
   blockerLabels?: string[];
   repositories?: string[];
+  prStatus?: string;
+  reviewStatus?: string;
   evidenceStatus?: string;
   documentationStatus?: string;
-  reviewStatus?: string;
+  updatedLabel?: string;
+  nextPickup?: string;
   handoffPrompt?: string;
+};
+
+type DashboardPayload = {
+  snapshot?: {
+    freshnessLabel?: string;
+  };
+  issues?: DashboardIssue[];
 };
 
 type ContextProjection = {
@@ -32,8 +71,25 @@ type ContextProjection = {
     sessionId?: string;
     artifactId?: string;
   };
-  prompts?: Array<{ id: string; prompt: string; issueRef?: string; threadId?: string; sessionId?: string; artifactRefs?: string[]; summary?: string; updatedAt: string }>;
-  artifacts?: Array<{ id: string; artifactType: string; title: string; uri?: string; path?: string; summary?: string; updatedAt?: string }>;
+  prompts?: Array<{
+    id: string;
+    prompt: string;
+    issueRef?: string;
+    threadId?: string;
+    sessionId?: string;
+    artifactRefs?: string[];
+    summary?: string;
+    updatedAt: string;
+  }>;
+  artifacts?: Array<{
+    id: string;
+    artifactType: string;
+    title: string;
+    uri?: string;
+    path?: string;
+    summary?: string;
+    updatedAt?: string;
+  }>;
 };
 
 type ConversationItem = {
@@ -43,68 +99,124 @@ type ConversationItem = {
   createdAt: string;
 };
 
+const workflowSteps = ["Queued", "Ready", "Running", "In Review", "Done"] as const;
+
 function App() {
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [activeProjectId, setActiveProjectId] = useState("");
   const [issues, setIssues] = useState<DashboardIssue[]>([]);
+  const [snapshotLabel, setSnapshotLabel] = useState("Snapshot not loaded");
   const [context, setContext] = useState<ContextProjection>({});
   const [selectedIssueRef, setSelectedIssueRef] = useState("");
+  const [activeStatus, setActiveStatus] = useState<WorkStatusFilter>("all");
   const [query, setQuery] = useState("");
   const [prompt, setPrompt] = useState("");
   const [conversation, setConversation] = useState<ConversationItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [status, setStatus] = useState<StatusKind>("loading");
   const [sending, setSending] = useState(false);
   const [actionBusy, setActionBusy] = useState("");
+  const [copiedHandoff, setCopiedHandoff] = useState(false);
   const [error, setError] = useState("");
+  const refreshInFlight = useRef(false);
+  const hasLoaded = useRef(false);
   const conversationEndRef = useRef<HTMLDivElement | null>(null);
 
+  const activeProject = projects.find((project) => project.id === activeProjectId);
+  const selectedIssue = issues.find((issue) => issue.ref === selectedIssueRef);
+
+  const statusCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const issue of issues) {
+      const label = workStatusLabel(issue);
+      counts[label] = (counts[label] || 0) + 1;
+    }
+    return counts;
+  }, [issues]);
+
+  const statusFilters = useMemo(() => {
+    const labels = Object.keys(statusCounts).sort((left, right) => statusRank(left) - statusRank(right) || left.localeCompare(right));
+    return [
+      { id: "all" as const, label: "All", count: issues.length },
+      ...labels.map((label) => ({ id: label, label, count: statusCounts[label] || 0 })),
+    ];
+  }, [issues.length, statusCounts]);
+
+  const filteredIssues = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return issues.filter((issue) => {
+      if (activeStatus !== "all" && workStatusLabel(issue) !== activeStatus) return false;
+      if (!needle) return true;
+      return [
+        issue.ref,
+        issue.title,
+        workStatusLabel(issue),
+        issue.workStatusDetail,
+        issue.prStatus,
+        issue.reviewStatus,
+        issue.nextPickup,
+        issue.handoffPrompt,
+        ...(issue.blockerLabels ?? []),
+        ...(issue.repositories ?? []),
+      ].join(" ").toLowerCase().includes(needle);
+    });
+  }, [activeStatus, issues, query]);
+
   useEffect(() => {
-    void refresh();
-  }, []);
+    setCopiedHandoff(false);
+  }, [selectedIssueRef]);
 
   useEffect(() => {
     conversationEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [conversation.length]);
 
-  const activeProject = projects.find((project) => project.id === activeProjectId);
-  const selectedIssue = issues.find((issue) => issue.ref === selectedIssueRef);
-  const activeArtifact = context.artifacts?.find((artifact) => artifact.id === context.active?.artifactId) ?? context.artifacts?.at(-1);
+  useEffect(() => {
+    void refresh(true);
+    const interval = window.setInterval(() => void refresh(false), 5000);
+    return () => window.clearInterval(interval);
+  }, []);
 
-  const filteredIssues = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    return issues.filter((issue) => {
-      if (!needle) return true;
-      return [
-        issue.ref,
-        issue.title,
-        issue.workStatus,
-        issue.statusLabel,
-        ...(issue.blockerLabels ?? []),
-        ...(issue.repositories ?? []),
-      ].join(" ").toLowerCase().includes(needle);
-    });
-  }, [issues, query]);
-
-  async function refresh(): Promise<void> {
-    setLoading(true);
-    setError("");
+  async function refresh(initial = false): Promise<void> {
+    if (refreshInFlight.current) return;
+    refreshInFlight.current = true;
+    if (initial || !hasLoaded.current) {
+      setLoading(true);
+      setStatus("loading");
+    }
     try {
       const [projectsPayload, contextPayload] = await Promise.all([
         fetchJson<{ ok?: boolean; activeProjectId?: string; projects?: ProjectRecord[] }>("/api/projects"),
-        fetchJson<{ ok?: boolean; project?: ProjectRecord; dashboard?: { issues?: DashboardIssue[] }; context?: ContextProjection }>("/api/context"),
+        fetchJson<{
+          ok?: boolean;
+          project?: ProjectRecord;
+          dashboard?: DashboardPayload;
+          context?: ContextProjection;
+        }>("/api/context"),
       ]);
       const nextProjects = projectsPayload.projects ?? [];
       const nextProjectId = projectsPayload.activeProjectId || contextPayload.project?.id || nextProjects[0]?.id || "";
+      const nextIssues = contextPayload.dashboard?.issues ?? [];
+      const activeFromContext = contextPayload.context?.active?.issueRef;
+
       setProjects(nextProjects);
       setActiveProjectId(nextProjectId);
-      setIssues(contextPayload.dashboard?.issues ?? []);
+      setIssues(nextIssues);
+      setSnapshotLabel(contextPayload.dashboard?.snapshot?.freshnessLabel || "Snapshot not loaded");
       setContext(contextPayload.context ?? {});
-      setSelectedIssueRef((current) => current || contextPayload.context?.active?.issueRef || "");
       setConversation(seedConversation(contextPayload.context));
-    } catch (cause) {
-      setError("Unable to load Flow desktop context.");
+      setSelectedIssueRef((current) => {
+        if (current && nextIssues.some((issue) => issue.ref === current)) return current;
+        if (activeFromContext && nextIssues.some((issue) => issue.ref === activeFromContext)) return activeFromContext;
+        return nextIssues[0]?.ref ?? "";
+      });
+      setStatus("ok");
+      hasLoaded.current = true;
+    } catch {
+      setStatus("error");
+      if (!hasLoaded.current) setError("Unable to load Flow desktop context.");
     } finally {
       setLoading(false);
+      refreshInFlight.current = false;
     }
   }
 
@@ -113,7 +225,7 @@ function App() {
     try {
       await fetchJson(`/api/projects/${encodeURIComponent(projectId)}/active`, { method: "POST" });
       setSelectedIssueRef("");
-      await refresh();
+      await refresh(true);
     } catch {
       setError("Unable to switch project.");
     }
@@ -149,7 +261,7 @@ function App() {
           issueRef: selectedIssueRef || undefined,
           threadId: context.active?.threadId,
           sessionId: context.active?.sessionId,
-          artifactRefs: activeArtifact ? [activeArtifact.id] : [],
+          artifactRefs: [],
         }),
       });
       setPrompt("");
@@ -165,7 +277,7 @@ function App() {
           createdAt: new Date().toISOString(),
         },
       ]);
-      await refresh();
+      await refresh(false);
     } catch {
       setError("Unable to route prompt.");
     } finally {
@@ -195,7 +307,6 @@ function App() {
         }),
       });
       setContext(result.projection ?? context);
-      await refresh();
       setConversation((items) => [
         ...items,
         {
@@ -205,6 +316,7 @@ function App() {
           createdAt: new Date().toISOString(),
         },
       ]);
+      await refresh(false);
     } catch {
       setError("Unable to record workflow action.");
     } finally {
@@ -212,34 +324,61 @@ function App() {
     }
   }
 
+  async function copyHandoffPrompt(): Promise<void> {
+    const text = (selectedIssue?.handoffPrompt || selectedIssue?.nextPickup || "").trim();
+    if (!text) return;
+    const ok = await copyText(text);
+    if (!ok) return;
+    setCopiedHandoff(true);
+    window.setTimeout(() => setCopiedHandoff(false), 1200);
+  }
+
+  const snapshotStatusLabel = status === "error" ? "Snapshot unavailable" : snapshotLabel;
+
   return (
     <div className="desktop-shell">
-      <aside className="project-rail">
-        <div className="brand">
-          <Waypoints size={18} />
-        </div>
+      <aside className="project-panel">
+        <header className="project-header">
+          <span className="brand"><Waypoints size={16} /></span>
+          <div className="project-header-title">Projects</div>
+        </header>
         <div className="project-list">
           {projects.map((project) => (
             <button
               key={project.id}
               type="button"
-              title={project.name}
-              className={project.id === activeProjectId ? "project-button active" : "project-button"}
+              className={project.id === activeProjectId ? "project-card active" : "project-card"}
               onClick={() => void activateProject(project.id)}
+              title={project.root}
             >
-              <Folder size={17} />
+              <div className="project-card-row">
+                <span className="project-name">{project.name}</span>
+                <span className={project.attentionCount ? "project-badge danger" : "project-badge"}>
+                  {project.attentionCount || 0}
+                </span>
+              </div>
+              <div className="project-card-meta">
+                <Folder size={13} />
+                <span>{project.statusCounts?.total ?? 0} issues</span>
+              </div>
             </button>
           ))}
         </div>
       </aside>
 
-      <aside className="context-panel">
-        <header className="context-header">
+      <aside className="issue-panel">
+        <header className="issue-header">
           <div>
             <div className="eyebrow">Project</div>
             <h1>{activeProject?.name || "Flow"}</h1>
           </div>
-          <button type="button" className="icon-button" title="Refresh" onClick={() => void refresh()} disabled={loading}>
+          <button
+            type="button"
+            className="icon-button"
+            title="Refresh snapshot"
+            onClick={() => void refresh(false)}
+            disabled={status === "loading"}
+          >
             <RefreshCw size={15} />
           </button>
         </header>
@@ -249,113 +388,207 @@ function App() {
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search issues" />
         </label>
 
+        <div className="status-row">
+          {statusFilters.map((filter) => (
+            <button
+              key={filter.id}
+              type="button"
+              className={`status-chip ${statusFilterThemeClass(filter.label)} ${filter.id === activeStatus ? "active" : ""}`.trim()}
+              onClick={() => setActiveStatus(filter.id)}
+              title={filter.label}
+            >
+              <span>{filter.label}</span>
+              <span className="status-count">{filter.count}</span>
+            </button>
+          ))}
+        </div>
+
         <section className="issue-stack">
           {filteredIssues.map((issue) => (
             <button
               key={issue.ref}
               type="button"
-              className={issue.ref === selectedIssueRef ? "issue-context active" : "issue-context"}
+              className={issue.ref === selectedIssueRef ? "issue-card active" : "issue-card"}
               onClick={() => setSelectedIssueRef(issue.ref)}
             >
               <div className="issue-row">
                 <span className="issue-ref">{issue.ref}</span>
-                <span className="issue-state">{issue.workStatus || issue.statusLabel || "Queued"}</span>
+                <span className={statusThemeClass(workStatusLabel(issue))}>{workStatusLabel(issue)}</span>
               </div>
               <div className="issue-title">{issue.title || "Untitled issue"}</div>
-              <div className="issue-meta">
-                {(issue.repositories ?? []).slice(0, 2).map((repo) => <span key={repo}>{repo}</span>)}
-                {issue.reviewStatus ? <span>{issue.reviewStatus}</span> : null}
-              </div>
-              <div className="issue-records">
-                <span>{issue.evidenceStatus || "Evidence missing"}</span>
-                <span>{issue.documentationStatus || "Docs missing"}</span>
-              </div>
-              {issue.blockerLabels?.length ? <div className="issue-note">{issue.blockerLabels[0]}</div> : null}
+              <WorkflowTrack status={workStatusLabel(issue)} />
+              {issueDetail(issue) ? <div className="issue-note">{issueDetail(issue)}</div> : null}
             </button>
           ))}
-          {!filteredIssues.length ? <div className="empty-state">No issues</div> : null}
+          {!filteredIssues.length ? <div className="empty-state">No matching issues</div> : null}
         </section>
       </aside>
 
-      <main className="workbench">
-        <section className="conversation">
-          <header className="conversation-header">
-            <div>
-              <div className="eyebrow">Prompt Context</div>
-              <h2>{selectedIssue?.title || activeProject?.name || "Project conversation"}</h2>
-              <p>{contextLine(activeProject, selectedIssue, context)}</p>
-            </div>
-          </header>
-
-          <div className="action-strip" aria-label="Workflow actions">
-            <button type="button" title="Record evidence" onClick={() => void invokeAction("record_evidence")} disabled={!selectedIssueRef || Boolean(actionBusy)}>
-              <ClipboardList size={15} />
-            </button>
-            <button type="button" title="Record result" onClick={() => void invokeAction("record_result")} disabled={!selectedIssueRef || Boolean(actionBusy)}>
-              <CircleCheck size={15} />
-            </button>
-            <button type="button" title="Record documentation" onClick={() => void invokeAction("record_documentation")} disabled={!selectedIssueRef || Boolean(actionBusy)}>
-              <FileText size={15} />
-            </button>
-            <button type="button" title="Run doctor" onClick={() => void invokeAction("run_doctor")} disabled={!selectedIssueRef || Boolean(actionBusy)}>
-              <Activity size={15} />
-            </button>
+      <main className="chat-panel">
+        <header className="chat-header">
+          <div>
+            <div className="eyebrow">Issue</div>
+            <h2>{selectedIssue?.title || "Select an issue"}</h2>
+            <p>{contextLine(activeProject, selectedIssue, context)}</p>
           </div>
-
-          <div className="timeline">
-            {conversation.map((item) => (
-              <article key={item.id} className={`message ${item.role}`}>
-                <div className="message-role">{item.role}</div>
-                <div className="message-text">{item.text}</div>
-              </article>
-            ))}
-            <div ref={conversationEndRef} />
+          <div className="snapshot-pill">
+            <span className={status === "error" ? "status-dot error" : status === "loading" ? "status-dot loading" : "status-dot ok"} />
+            <span>{snapshotStatusLabel}</span>
           </div>
+        </header>
 
-          <section className="composer">
-            <textarea
-              value={prompt}
-              onChange={(event) => setPrompt(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  void submitPrompt();
-                }
-              }}
-              placeholder="Prompt Flow..."
-            />
-            <button type="button" title="Send prompt" onClick={() => void submitPrompt()} disabled={sending || !prompt.trim()}>
-              <Send size={17} />
-            </button>
-          </section>
-          {error ? <div className="error-line">{error}</div> : null}
+        <div className="issue-detail-wrap">
+          {loading && !issues.length ? (
+            <div className="empty-state">Loading issues...</div>
+          ) : selectedIssue ? (
+            <IssueDetails issue={selectedIssue} copied={copiedHandoff} onCopyHandoff={() => void copyHandoffPrompt()} />
+          ) : (
+            <div className="empty-state">No issue selected</div>
+          )}
+        </div>
+
+        <section className="timeline">
+          {conversation.map((item) => (
+            <article key={item.id} className={`message ${item.role}`}>
+              <div className="message-role">{item.role}</div>
+              <div className="message-text">{item.text}</div>
+            </article>
+          ))}
+          <div ref={conversationEndRef} />
         </section>
 
-        <aside className="canvas">
-          <header>
-            <div className="eyebrow">Canvas</div>
-            <h2>{activeArtifact?.title || "Artifacts"}</h2>
-          </header>
-          {activeArtifact ? (
-            <div className="artifact-card">
-              <FileCode size={18} />
-              <div>
-                <div className="artifact-type">{activeArtifact.artifactType}</div>
-                <div className="artifact-title">{activeArtifact.title}</div>
-                {activeArtifact.summary ? <div className="artifact-summary">{activeArtifact.summary}</div> : null}
-                {activeArtifact.uri || activeArtifact.path ? (
-                  <div className="artifact-uri">{activeArtifact.uri || activeArtifact.path}</div>
-                ) : null}
-              </div>
-            </div>
-          ) : (
-            <div className="canvas-empty">
-              <FileCode size={22} />
-              <span>Artifacts from the conversation will appear here.</span>
-            </div>
-          )}
-        </aside>
+        <div className="action-strip" aria-label="Workflow actions">
+          <button type="button" title="Record evidence" onClick={() => void invokeAction("record_evidence")} disabled={!selectedIssueRef || Boolean(actionBusy)}>
+            <ClipboardList size={15} />
+          </button>
+          <button type="button" title="Record result" onClick={() => void invokeAction("record_result")} disabled={!selectedIssueRef || Boolean(actionBusy)}>
+            <CircleCheck size={15} />
+          </button>
+          <button type="button" title="Record documentation" onClick={() => void invokeAction("record_documentation")} disabled={!selectedIssueRef || Boolean(actionBusy)}>
+            <FileText size={15} />
+          </button>
+          <button type="button" title="Run doctor" onClick={() => void invokeAction("run_doctor")} disabled={!selectedIssueRef || Boolean(actionBusy)}>
+            <Activity size={15} />
+          </button>
+        </div>
+
+        <section className="composer">
+          <textarea
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                void submitPrompt();
+              }
+            }}
+            placeholder="Work with Flow on this issue..."
+          />
+          <button type="button" title="Send prompt" onClick={() => void submitPrompt()} disabled={sending || !prompt.trim()}>
+            <Send size={17} />
+          </button>
+        </section>
+
+        {error ? <div className="error-line">{error}</div> : null}
       </main>
+    </div>
+  );
+}
+
+function IssueDetails({
+  issue,
+  copied,
+  onCopyHandoff,
+}: {
+  issue: DashboardIssue;
+  copied: boolean;
+  onCopyHandoff: () => void;
+}) {
+  const blockers = issue.blockerLabels ?? [];
+  const repos = issue.repositories ?? [];
+  const handoffPrompt = (issue.handoffPrompt || issue.nextPickup || "").trim();
+  return (
+    <section className="issue-detail">
+      <div className="detail-section">
+        <div className="eyebrow">Details</div>
+        <div className="detail-grid">
+          <span className="detail-label">Ref</span>
+          <span className="detail-value mono">{issue.ref}</span>
+
+          <span className="detail-label">Status</span>
+          <span className="detail-value">{workStatusLabel(issue)}</span>
+
+          {issue.workStatusDetail ? (
+            <>
+              <span className="detail-label">Source</span>
+              <span className="detail-value">{issue.workStatusDetail}</span>
+            </>
+          ) : null}
+
+          {repos.length ? (
+            <>
+              <span className="detail-label">Repos</span>
+              <span className="detail-value mono">{repos.join(", ")}</span>
+            </>
+          ) : null}
+
+          {issue.prStatus ? (
+            <>
+              <span className="detail-label">PR</span>
+              <span className="detail-value">{issue.prStatus}</span>
+              <span className="detail-label">Review</span>
+              <span className="detail-value">{issue.reviewStatus || "Pending"}</span>
+            </>
+          ) : null}
+
+          <span className="detail-label">Evidence</span>
+          <span className={recordStatusClass(issue.evidenceStatus)}>{recordStatusLabel(issue.evidenceStatus)}</span>
+
+          <span className="detail-label">Docs</span>
+          <span className={recordStatusClass(issue.documentationStatus)}>{recordStatusLabel(issue.documentationStatus)}</span>
+        </div>
+      </div>
+
+      {blockers.length ? (
+        <div className="detail-section">
+          <div className="eyebrow">{workStatusLabel(issue) === "Blocked" ? "Blockers" : "Readiness Notes"}</div>
+          <div className="blocker-list">
+            {blockers.map((label) => (
+              <div key={label} className={workStatusLabel(issue) === "Blocked" ? "blocker-note blocked" : "blocker-note"}>
+                {label}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {handoffPrompt ? (
+        <div className="detail-section">
+          <div className="eyebrow">Handoff Prompt</div>
+          <pre className="handoff-box">{handoffPrompt}</pre>
+          <button type="button" className="copy-button" onClick={onCopyHandoff}>
+            {copied ? <Check size={14} /> : <Copy size={14} />}
+            {copied ? "Copied" : "Copy"}
+          </button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function WorkflowTrack({ status }: { status?: string }) {
+  if (!status || isExceptionalStatus(status)) {
+    return <span className={statusThemeClass(status || "Unknown")}>{status || "Unknown"}</span>;
+  }
+  const currentIndex = workflowSteps.indexOf(status as typeof workflowSteps[number]);
+  return (
+    <div className="workflow-track" title={status}>
+      {workflowSteps.map((step, index) => (
+        <React.Fragment key={step}>
+          {index > 0 ? <span className={index <= currentIndex ? "track-line active" : "track-line"} /> : null}
+          <span className={index <= currentIndex ? "track-dot active" : "track-dot"} />
+        </React.Fragment>
+      ))}
     </div>
   );
 }
@@ -381,7 +614,7 @@ function seedConversation(context?: ContextProjection): ConversationItem[] {
     }];
   }
   return [
-    ...prompts.slice(-6).flatMap((prompt) => [
+    ...prompts.slice(-8).flatMap((prompt) => [
       {
         id: prompt.id,
         role: "user" as const,
@@ -395,7 +628,7 @@ function seedConversation(context?: ContextProjection): ConversationItem[] {
         createdAt: prompt.updatedAt,
       }] : []),
     ]),
-    ...artifacts.slice(-3).map((artifact) => ({
+    ...artifacts.slice(-2).map((artifact) => ({
       id: `artifact-message-${artifact.id}`,
       role: "system" as const,
       text: artifact.summary || artifact.title,
@@ -412,6 +645,91 @@ function contextLine(project: ProjectRecord | undefined, issue: DashboardIssue |
     context.active?.sessionId ? `session ${context.active.sessionId}` : undefined,
   ].filter(Boolean);
   return parts.join(" / ") || "No active context";
+}
+
+function workStatusLabel(issue: DashboardIssue): string {
+  return (issue.workStatus || issue.statusLabel || "Queued").trim() || "Queued";
+}
+
+function issueDetail(issue: DashboardIssue): string {
+  const primary = issue.blockerLabels?.[0]
+    || issue.reviewStatus
+    || issue.evidenceStatus
+    || issue.documentationStatus
+    || issue.updatedLabel
+    || issue.repositories?.[0]
+    || "";
+  return primary === workStatusLabel(issue) ? "" : primary;
+}
+
+function recordStatusLabel(status?: string): string {
+  return status === "Present" ? "Present" : "Needed";
+}
+
+function recordStatusClass(status?: string): string {
+  return status === "Present" ? "record-present" : "record-needed";
+}
+
+function statusThemeClass(label: string): string {
+  if (label === "Blocked") return "issue-state blocked";
+  if (label === "Needs Input") return "issue-state needs-input";
+  if (label === "In Review") return "issue-state in-review";
+  if (label === "Running") return "issue-state running";
+  if (label === "Done") return "issue-state done";
+  if (label === "Ready") return "issue-state ready";
+  return "issue-state queued";
+}
+
+function statusFilterThemeClass(label: string): string {
+  if (label === "Blocked") return "status-theme-blocked";
+  if (label === "Needs Input") return "status-theme-needs-input";
+  if (label === "In Review") return "status-theme-review";
+  if (label === "Running") return "status-theme-running";
+  if (label === "Done") return "status-theme-done";
+  if (label === "Ready") return "status-theme-ready";
+  if (label === "Queued") return "status-theme-queued";
+  if (label === "All") return "status-theme-all";
+  return "status-theme-unknown";
+}
+
+function isExceptionalStatus(status: string): boolean {
+  return status === "Blocked" || status === "Needs Input";
+}
+
+function statusRank(status: string): number {
+  if (status === "Blocked") return 0;
+  if (status === "Needs Input") return 1;
+  if (status === "In Review") return 2;
+  if (status === "Running") return 3;
+  if (status === "Ready") return 4;
+  if (status === "Queued") return 5;
+  if (status === "Done") return 6;
+  return 7;
+}
+
+async function copyText(value: string): Promise<boolean> {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(value);
+      return true;
+    } catch {
+      // Fall back.
+    }
+  }
+  const target = document.createElement("textarea");
+  target.value = value;
+  target.setAttribute("readonly", "true");
+  target.style.position = "fixed";
+  target.style.left = "-9999px";
+  target.style.top = "0";
+  document.body.append(target);
+  target.select();
+  try {
+    document.execCommand("copy");
+    return true;
+  } finally {
+    target.remove();
+  }
 }
 
 function actionPayload(action: DesktopAction, prompt: string, issue: DashboardIssue | undefined): Record<string, unknown> {

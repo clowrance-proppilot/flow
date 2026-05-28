@@ -62,7 +62,7 @@ try {
   if (!html.includes("root")) throw new Error("desktop HTML did not include app root");
   if (!html.includes("/assets/")) throw new Error("desktop root should reference desktop renderer assets");
   const assets = await fetchDesktopAssets(desktopUrl, html);
-  for (const token of ["Prompt Context", "Canvas", "Prompt Flow"]) {
+  for (const token of ["Projects", "Work with Flow on this issue", "Workflow actions"]) {
     if (!assets.includes(token)) throw new Error(`desktop renderer asset should include ${token}`);
   }
 
@@ -88,9 +88,14 @@ try {
   if (!addedProject.ok || addedProject.projects?.length !== 2) {
     throw new Error(`desktop should add a second project: ${JSON.stringify(addedProject)}`);
   }
+  const secondProjectId = addedProject.projects.find((project) => project.root === secondRepoRoot)?.id;
+  if (!secondProjectId) {
+    throw new Error(`desktop should return the second project id: ${JSON.stringify(addedProject.projects)}`);
+  }
+  await fetchJson(`${desktopUrl}/api/projects/${encodeURIComponent(secondProjectId)}/active`, { method: "POST" });
   const secondContext = await fetchJson(`${desktopUrl}/api/context`);
   if (secondContext.project?.root !== secondRepoRoot) {
-    throw new Error(`desktop should switch to added project: ${JSON.stringify(secondContext.project)}`);
+    throw new Error(`desktop should switch to selected second project: ${JSON.stringify(secondContext.project)}`);
   }
   if (!secondContext.dashboard?.issues?.some((item) => item.ref === secondIssue.ref)) {
     throw new Error(`desktop second project should include its own issue: ${JSON.stringify(secondContext.dashboard)}`);
@@ -114,7 +119,7 @@ try {
     throw new Error(`desktop prompt should route to a thread and session: ${JSON.stringify(routed)}`);
   }
   if (!Array.isArray(routed.artifactRefs) || routed.artifactRefs.length === 0) {
-    throw new Error(`desktop prompt should push a session artifact to canvas: ${JSON.stringify(routed)}`);
+    throw new Error(`desktop prompt should return at least one artifact ref: ${JSON.stringify(routed)}`);
   }
 
   const contextAfter = await fetchJson(`${desktopUrl}/api/context`);
