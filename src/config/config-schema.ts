@@ -74,6 +74,7 @@ export const flowConfigSchema = z.object({
   version: z.literal("1"),
   project: z.object({
     name: z.string().min(1),
+    icon: z.string().min(1).optional(),
   }),
   topology: topologyConfigSchema,
   issueTracker: adapterSelectionConfigSchema.optional(),

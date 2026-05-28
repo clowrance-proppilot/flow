@@ -49,6 +49,7 @@ import { PiSessionDriver } from "../desktop/pi-session-driver.js";
 import { PiSdkSessionRunner } from "../desktop/pi-sdk-runner.js";
 import { DesktopProjectRegistry } from "../desktop/project-registry.js";
 import { DesktopPromptRouter } from "../desktop/prompt-router.js";
+import { projectThemeFor } from "../src/theme/project-theme.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -153,7 +154,7 @@ test("Work type definitions include category metadata", () => {
 test("Flow config schema validates topology and adapter declarations", () => {
   const config = flowConfigSchema.parse({
     version: "1",
-    project: { name: "Example" },
+    project: { name: "Example", icon: "./assets/example.svg" },
     topology: {
       repos: {
         main: { name: "example", baseBranch: "main" },
@@ -165,6 +166,7 @@ test("Flow config schema validates topology and adapter declarations", () => {
   });
 
   assert.equal(config.project.name, "Example");
+  assert.equal(config.project.icon, "./assets/example.svg");
   assert.equal(config.issueTracker?.type, "github");
   assert.equal(config.topology.issueInference[0].repo, "main");
 
@@ -552,6 +554,17 @@ test("Desktop project registry tracks active Flow projects from config roots", a
   assert.equal(project.configPath, flowConfigPath(root));
   assert.equal(projects.length, 1);
   assert.equal(active?.id, project.id);
+});
+
+test("Project theme generates stable colors and initials", () => {
+  const theme = projectThemeFor({ id: "flow-123", name: "Flow Desktop", root: "C:/repo/flow" });
+  const repeated = projectThemeFor({ id: "flow-123", name: "Flow Desktop", root: "C:/repo/flow" });
+  const withIcon = projectThemeFor({ id: "flow-123", name: "Flow Desktop", icon: "./assets/flow.svg" });
+
+  assert.equal(theme.initials, "FD");
+  assert.equal(theme.color, repeated.color);
+  assert.match(theme.color, /^#[0-9a-f]{6}$/i);
+  assert.equal(withIcon.iconUrl, "./assets/flow.svg");
 });
 
 test("Desktop project registry hides stale project records without config files", async () => {

@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { projectThemeFor } from "../../src/theme/project-theme";
 import "./styles.css";
 
 type StatusKind = "loading" | "ok" | "error";
@@ -34,6 +35,7 @@ type ProjectRecord = {
   name: string;
   root: string;
   valid: boolean;
+  icon?: string;
   error?: string;
   attentionCount?: number;
   statusCounts?: ProjectStatusCounts;
@@ -179,7 +181,7 @@ function App() {
         ...(issue.blockerLabels ?? []),
         ...(issue.repositories ?? []),
       ].join(" ").toLowerCase().includes(needle);
-    });
+    }).sort((left, right) => issueAttentionRank(left) - issueAttentionRank(right) || left.ref.localeCompare(right.ref));
   }, [activeStatus, issues, query]);
 
   useEffect(() => {
@@ -476,32 +478,38 @@ function App() {
 
   return (
     <div className="desktop-shell">
-      <aside className="project-panel">
+      <aside className="project-panel" aria-label="Projects">
         <header className="project-header">
           <span className="brand"><Waypoints size={16} /></span>
-          <div className="project-header-title">Projects</div>
         </header>
         <div className="project-list">
-          {projects.map((project) => (
-            <button
-              key={project.id}
-              type="button"
-              className={project.id === activeProjectId ? "project-card active" : "project-card"}
-              onClick={() => void activateProject(project.id)}
-              title={project.root}
-            >
-              <div className="project-card-row">
-                <span className="project-name">{project.name}</span>
-                <span className={project.attentionCount ? "project-badge danger" : "project-badge"}>
-                  {project.attentionCount || 0}
+          {projects.map((project) => {
+            const theme = projectThemeFor(project);
+            return (
+              <button
+                key={project.id}
+                type="button"
+                className={project.id === activeProjectId ? "project-card active" : "project-card"}
+                onClick={() => void activateProject(project.id)}
+                aria-label={`${project.name}. ${project.attentionCount || 0} attention items. ${project.statusCounts?.total ?? 0} issues.`}
+                title={`${project.name}\n${project.root}`}
+                style={{
+                  "--project-color": theme.color,
+                  "--project-color-soft": theme.colorSoft,
+                  "--project-color-text": theme.colorText,
+                } as React.CSSProperties}
+              >
+                <span className="project-avatar" aria-hidden="true">
+                  {theme.iconUrl ? <img src={theme.iconUrl} alt="" /> : theme.initials}
                 </span>
-              </div>
-              <div className="project-card-meta">
-                <Folder size={13} />
-                <span>{project.statusCounts?.total ?? 0} issues</span>
-              </div>
-            </button>
-          ))}
+                <span className="project-card-text">
+                  <span className="project-name">{project.name}</span>
+                  <span className="project-card-meta"><Folder size={11} />{project.statusCounts?.total ?? 0}</span>
+                </span>
+                {project.attentionCount ? <span className="project-badge danger">{project.attentionCount}</span> : null}
+              </button>
+            );
+          })}
         </div>
       </aside>
 
@@ -546,7 +554,7 @@ function App() {
           {filteredIssues.map((issue) => (
             <article
               key={issue.ref}
-              className={issue.ref === selectedIssueRef ? "issue-card active" : "issue-card"}
+              className={`${issue.ref === selectedIssueRef ? "issue-card active" : "issue-card"} ${statusFilterThemeClass(workStatusLabel(issue))}`.trim()}
             >
               <button type="button" className="issue-summary" onClick={() => toggleIssue(issue.ref)}>
                 <div className="issue-row">
@@ -556,6 +564,11 @@ function App() {
                 <div className="issue-title">{issue.title || "Untitled issue"}</div>
                 <WorkflowTrack status={workStatusLabel(issue)} />
                 {issueDetail(issue) ? <div className="issue-note">{issueDetail(issue)}</div> : null}
+                <div className="issue-actions-preview">
+                  {issue.prStatus ? <span>Open PR</span> : null}
+                  {issue.evidenceStatus === "Present" ? null : <span>Evidence</span>}
+                  <span>Doctor</span>
+                </div>
               </button>
               {expandedIssueRef === issue.ref ? (
                 <IssueDetails issue={issue} copied={copiedHandoff && selectedIssueRef === issue.ref} onCopyHandoff={() => {
@@ -854,6 +867,15 @@ function statusRank(status: string): number {
   if (status === "Queued") return 5;
   if (status === "Done") return 6;
   return 7;
+}
+
+function issueAttentionRank(issue: DashboardIssue): number {
+  const status = workStatusLabel(issue);
+  const missingEvidence = issue.evidenceStatus !== "Present";
+  const missingDocs = issue.documentationStatus !== "Present";
+  return statusRank(status) * 10
+    + (missingEvidence ? 0 : 2)
+    + (missingDocs ? 0 : 1);
 }
 
 async function copyText(value: string): Promise<boolean> {

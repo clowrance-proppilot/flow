@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, shell } from "electron";
-import { join, resolve, dirname } from "node:path";
+import { join, resolve, dirname, relative } from "node:path";
 import { existsSync, readFileSync, watch, type FSWatcher } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import express from "express";
@@ -160,18 +160,22 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
     const active = await projectRegistry.activeProject();
     const projects = await projectRegistry.listProjects();
     const projectsWithSummary = await Promise.all(projects.map(async (project) => {
+      const publicProject = {
+        ...project,
+        icon: project.icon ? `/api/projects/${encodeURIComponent(project.id)}/icon` : undefined,
+      };
       try {
         const surface = await projectSurface(project);
         const payload = await surface.dashboardState.payload({ limit: 50 });
         const summary = summarizeProjectIssues(payload.issues);
         return {
-          ...project,
+          ...publicProject,
           attentionCount: summary.blocked + summary.needsInput,
           statusCounts: summary,
         };
       } catch {
         return {
-          ...project,
+          ...publicProject,
           attentionCount: 0,
           statusCounts: summarizeProjectIssues(undefined),
         };
@@ -182,6 +186,29 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
       activeProjectId: active?.id,
       projects: projectsWithSummary,
     });
+  });
+  server.get("/api/projects/:projectId/icon", async (req, res) => {
+    try {
+      const project = (await projectRegistry.listProjects()).find((candidate) => candidate.id === String(req.params.projectId ?? ""));
+      if (!project?.icon) {
+        res.status(404).end();
+        return;
+      }
+      const projectRoot = resolve(project.root);
+      const iconPath = resolve(projectRoot, project.icon);
+      const relativeIconPath = relative(projectRoot, iconPath);
+      if (relativeIconPath.startsWith("..") || relativeIconPath === "" || relativeIconPath.includes(":")) {
+        res.status(400).json({ ok: false, error: "Project icon must stay inside the project root." });
+        return;
+      }
+      if (!existsSync(iconPath)) {
+        res.status(404).end();
+        return;
+      }
+      res.sendFile(iconPath);
+    } catch (error) {
+      res.status(400).json({ ok: false, error: message(error) });
+    }
   });
   server.post("/api/projects", jsonBody, async (req, res) => {
     try {
