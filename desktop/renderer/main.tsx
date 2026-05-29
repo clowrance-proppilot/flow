@@ -30,6 +30,7 @@ import { conversationFromPiSession, conversationItemToThreadMessage, extractAppe
 import {
   contextLine,
   isExceptionalStatus,
+  isActiveWorkStatus,
   isManualActionIssue,
   issueAttentionRank,
   issueDetail,
@@ -68,7 +69,7 @@ function App() {
   const [sessionIdByIssueRef, setSessionIdByIssueRef] = useState<Record<string, string>>({});
   const [expandedIssueRef, setExpandedIssueRef] = useState("");
   const [activeSessionStatus, setActiveSessionStatus] = useState<"idle" | "running" | "failed">("idle");
-  const [activeStatus, setActiveStatus] = useState<WorkStatusFilter>("all");
+  const [activeStatus, setActiveStatus] = useState<WorkStatusFilter>("active");
   const [query, setQuery] = useState("");
   const [prompt, setPrompt] = useState("");
   const [conversation, setConversation] = useState<ConversationItem[]>([]);
@@ -101,7 +102,9 @@ function App() {
 
   const statusFilters = useMemo(() => {
     const labels = Object.keys(statusCounts).sort((left, right) => statusRank(left) - statusRank(right) || left.localeCompare(right));
+    const activeCount = issues.filter((issue) => isActiveWorkStatus(workStatusLabel(issue))).length;
     return [
+      { id: "active" as const, label: "Active", count: activeCount },
       { id: "all" as const, label: "All", count: issues.length },
       ...labels.map((label) => ({ id: label, label, count: statusCounts[label] || 0 })),
     ];
@@ -110,7 +113,8 @@ function App() {
   const filteredIssues = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return issues.filter((issue) => {
-      if (activeStatus !== "all" && workStatusLabel(issue) !== activeStatus) return false;
+      if (activeStatus === "active" && !isActiveWorkStatus(workStatusLabel(issue))) return false;
+      if (activeStatus !== "active" && activeStatus !== "all" && workStatusLabel(issue) !== activeStatus) return false;
       if (!needle) return true;
       return [
         issue.ref,

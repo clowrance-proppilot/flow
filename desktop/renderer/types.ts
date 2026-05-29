@@ -1,5 +1,5 @@
 export type StatusKind = "loading" | "ok" | "error";
-export type WorkStatusFilter = "all" | string;
+export type WorkStatusFilter = "active" | "all" | string;
 
 export type ProjectStatusCounts = {
   blocked: number;

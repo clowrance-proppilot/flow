@@ -70,6 +70,10 @@ export function isExceptionalStatus(status: string): boolean {
   return status === "Blocked" || status === "Needs Input";
 }
 
+export function isActiveWorkStatus(status: string): boolean {
+  return status !== "Done";
+}
+
 export function isManualActionIssue(issue: DashboardIssue): boolean {
   return isExceptionalStatus(workStatusLabel(issue));
 }
