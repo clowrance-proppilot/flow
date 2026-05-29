@@ -370,6 +370,7 @@ h2 {
 .issue-card {
   display: flex;
   flex-direction: column;
+  flex: 0 0 auto;
   width: 100%;
   border: 1px solid var(--th-border);
   border-left: 4px solid currentColor;
