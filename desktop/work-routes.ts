@@ -14,6 +14,32 @@ export function registerWorkRoutes(
   const { projectRegistry, projectSurface } = context;
   const { promptRouter, actionRouter } = routers;
 
+  server.post("/api/issues", jsonBody, async (req, res) => {
+    try {
+      const project = await requireActiveProject(projectRegistry);
+      const surface = await projectSurface(project);
+      const runtime = surface.configured.runtime;
+      const sessionId = `desktop-${project.id}`;
+      try {
+        await runtime.summarizeHandoff(sessionId);
+      } catch {
+        await runtime.createSession(sessionId);
+      }
+      const issue = await runtime.createIssue(sessionId, {
+        issueType: typeof req.body?.issueType === "string" ? req.body.issueType : "Bug",
+        title: typeof req.body?.title === "string" ? req.body.title : undefined,
+        summary: typeof req.body?.summary === "string" ? req.body.summary : "",
+        description: typeof req.body?.description === "string" ? req.body.description : undefined,
+        repoKeys: Array.isArray(req.body?.repoKeys) ? req.body.repoKeys.map(String).filter(Boolean) : undefined,
+        branchKind: typeof req.body?.branchKind === "string" ? req.body.branchKind : undefined,
+        select: req.body?.select !== false,
+      });
+      res.json({ ok: true, project, issue });
+    } catch (error) {
+      res.status(400).json({ ok: false, error: message(error) });
+    }
+  });
+
   server.post("/api/prompt", jsonBody, async (req, res) => {
     try {
       const prompt = typeof req.body?.prompt === "string" ? req.body.prompt : "";

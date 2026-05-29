@@ -41,6 +41,11 @@ export type DashboardIssue = {
   handoffPrompt?: string;
 };
 
+export type CreatedIssue = {
+  ref: string;
+  title?: string;
+};
+
 export type DashboardPayload = {
   snapshot?: {
     freshnessLabel?: string;

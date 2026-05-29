@@ -407,6 +407,25 @@ button:disabled {
   background: #ecfeff;
 }
 
+.new-issue-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.38rem;
+  height: 2rem;
+  border: 1px solid rgb(96 165 250 / 0.44);
+  border-radius: 0.52rem;
+  background: rgb(37 99 235 / 0.18);
+  color: #dbeafe;
+  padding: 0 0.62rem;
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.new-issue-button:hover {
+  border-color: rgb(147 197 253 / 0.62);
+  background: rgb(37 99 235 / 0.28);
+}
+
 .eyebrow {
   margin-bottom: 0.25rem;
   color: var(--th-fg-faint);
@@ -480,6 +499,56 @@ h2 {
   background: rgb(3 8 20 / 0.5);
   color: var(--th-fg-muted);
   padding: 0 0.72rem;
+}
+
+.new-issue-form {
+  display: grid;
+  gap: 0.58rem;
+  margin: 0 1rem 0.72rem;
+  border: 1px solid var(--th-border);
+  border-radius: 0.72rem;
+  background: rgb(3 8 20 / 0.5);
+  padding: 0.78rem;
+}
+
+.new-issue-form input,
+.new-issue-form textarea {
+  width: 100%;
+  border: 1px solid rgb(30 43 63 / 0.95);
+  border-radius: 0.55rem;
+  outline: none;
+  background: rgb(7 14 27 / 0.9);
+  color: var(--th-fg);
+  padding: 0.62rem 0.72rem;
+  font-size: 0.82rem;
+}
+
+.new-issue-form textarea {
+  min-height: 4.8rem;
+  resize: vertical;
+  line-height: 1.45;
+}
+
+.new-issue-actions {
+  display: flex;
+  justify-content: end;
+  gap: 0.5rem;
+}
+
+.new-issue-actions button {
+  border: 1px solid var(--th-border);
+  border-radius: 0.5rem;
+  background: rgb(15 23 42 / 0.72);
+  color: var(--th-fg-soft);
+  padding: 0.4rem 0.65rem;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.new-issue-actions button[type="submit"] {
+  border-color: rgb(96 165 250 / 0.48);
+  background: rgb(37 99 235 / 0.22);
+  color: #dbeafe;
 }
 
 .search-box input {

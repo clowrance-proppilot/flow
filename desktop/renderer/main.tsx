@@ -4,6 +4,7 @@ import {
   ClipboardList,
   FileText,
   Folder,
+  Plus,
   RefreshCw,
   Search,
   Send,
@@ -35,6 +36,7 @@ import {
 import type {
   ContextProjection,
   ConversationItem,
+  CreatedIssue,
   DashboardIssue,
   DashboardPayload,
   DesktopAction,
@@ -66,6 +68,10 @@ function App() {
   const [activeStatus, setActiveStatus] = useState<WorkStatusFilter>("active");
   const [query, setQuery] = useState("");
   const [prompt, setPrompt] = useState("");
+  const [newIssueOpen, setNewIssueOpen] = useState(false);
+  const [newIssueTitle, setNewIssueTitle] = useState("");
+  const [newIssueDescription, setNewIssueDescription] = useState("");
+  const [creatingIssue, setCreatingIssue] = useState(false);
   const [conversation, setConversation] = useState<ConversationItem[]>([]);
   const [systemNotice, setSystemNotice] = useState("");
   const [pendingConfirmation, setPendingConfirmation] = useState<PendingConfirmationState | null>(null);
@@ -75,6 +81,7 @@ function App() {
   const [actionBusy, setActionBusy] = useState("");
   const [error, setError] = useState("");
   const refreshInFlight = useRef(false);
+  const localIssueByRefRef = useRef<Record<string, DashboardIssue>>({});
   const hasLoaded = useRef(false);
   const eventSourceRef = useRef<EventSource | null>(null);
   const subscribedSessionId = useRef("");
@@ -156,7 +163,9 @@ function App() {
       ]);
       const nextProjects = projectsPayload.projects ?? [];
       const nextProjectId = projectsPayload.activeProjectId || contextPayload.project?.id || nextProjects[0]?.id || "";
-      const nextIssues = contextPayload.dashboard?.issues ?? [];
+      const dashboardIssues = contextPayload.dashboard?.issues ?? [];
+      const stickyIssues = Object.values(localIssueByRefRef.current).filter((issue) => !dashboardIssues.some((candidate) => candidate.ref === issue.ref));
+      const nextIssues = [...stickyIssues, ...dashboardIssues];
       setProjects(nextProjects);
       setActiveProjectId(nextProjectId);
       setIssues(nextIssues);
@@ -215,6 +224,54 @@ function App() {
     } catch {
       setProjects((items) => items.map((project) => project.id === activeProject.id ? { ...project, autoflowEnabled: !enabled } : project));
       setError("Unable to update Autoflow for this project.");
+    }
+  }
+
+  async function createIssueFromDesktop(): Promise<void> {
+    const title = newIssueTitle.trim();
+    if (!title) {
+      setError("Issue title is required.");
+      return;
+    }
+    setCreatingIssue(true);
+    setError("");
+    try {
+      const result = await fetchJson<{ ok?: boolean; issue: CreatedIssue }>("/api/issues", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          issueType: "Bug",
+          title,
+          summary: title,
+          description: newIssueDescription.trim() || undefined,
+          repoKeys: ["flow"],
+          branchKind: "bug",
+          select: true,
+        }),
+      });
+      setNewIssueTitle("");
+      setNewIssueDescription("");
+      setNewIssueOpen(false);
+      if (result.issue?.ref) {
+        const created: DashboardIssue = {
+          ref: result.issue.ref,
+          title: result.issue.title || title,
+          workStatus: "Queued",
+          statusLabel: "Open",
+          repositories: ["flow"],
+          evidenceStatus: "Needed",
+          documentationStatus: "Needed",
+          updatedLabel: "now",
+        };
+        localIssueByRefRef.current = { ...localIssueByRefRef.current, [created.ref]: created };
+        setIssues((current) => [created, ...current.filter((issue) => issue.ref !== created.ref)]);
+        setActiveStatus("all");
+        await selectIssueThread(created.ref);
+      }
+    } catch (caught) {
+      setError(errorMessage(caught, "Unable to create issue."));
+    } finally {
+      setCreatingIssue(false);
     }
   }
 
@@ -556,6 +613,15 @@ function App() {
           <div className="issue-header-actions">
             <button
               type="button"
+              className="new-issue-button"
+              title="Create issue"
+              onClick={() => setNewIssueOpen(true)}
+            >
+              <Plus size={15} />
+              <span>New</span>
+            </button>
+            <button
+              type="button"
               className={autoflowEnabled ? "autoflow-switch enabled" : "autoflow-switch"}
               onClick={() => void toggleProjectAutoflow()}
               aria-pressed={autoflowEnabled}
@@ -575,6 +641,37 @@ function App() {
             </button>
           </div>
         </header>
+
+        {newIssueOpen ? (
+          <form
+            className="new-issue-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void createIssueFromDesktop();
+            }}
+          >
+            <input
+              value={newIssueTitle}
+              onChange={(event) => setNewIssueTitle(event.target.value)}
+              placeholder="Issue title"
+              disabled={creatingIssue}
+              autoFocus
+            />
+            <textarea
+              value={newIssueDescription}
+              onChange={(event) => setNewIssueDescription(event.target.value)}
+              placeholder="Details"
+              rows={3}
+              disabled={creatingIssue}
+            />
+            <div className="new-issue-actions">
+              <button type="button" onClick={() => setNewIssueOpen(false)} disabled={creatingIssue}>Cancel</button>
+              <button type="submit" disabled={creatingIssue || !newIssueTitle.trim()}>
+                {creatingIssue ? "Creating..." : "Create issue"}
+              </button>
+            </div>
+          </form>
+        ) : null}
 
         <label className="search-box">
           <Search size={14} />
