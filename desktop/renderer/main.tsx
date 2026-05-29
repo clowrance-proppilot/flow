@@ -47,6 +47,8 @@ import type {
 } from "./types";
 import "./styles.css";
 
+type AutoflowActivityState = PiActivityState & { issueRef?: string };
+
 function App() {
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [activeProjectId, setActiveProjectId] = useState("");
@@ -59,6 +61,7 @@ function App() {
   const [expandedIssueRef, setExpandedIssueRef] = useState("");
   const [activeSessionStatus, setActiveSessionStatus] = useState<"idle" | "running" | "failed">("idle");
   const [piActivity, setPiActivity] = useState<PiActivityState | null>(null);
+  const [autoflowActivity, setAutoflowActivity] = useState<AutoflowActivityState | null>(null);
   const [activeStatus, setActiveStatus] = useState<WorkStatusFilter>("active");
   const [query, setQuery] = useState("");
   const [prompt, setPrompt] = useState("");
@@ -189,6 +192,7 @@ function App() {
       setPendingConfirmation(null);
       setActiveSessionStatus("idle");
       setPiActivity(null);
+      setAutoflowActivity(null);
       await refresh(true);
     } catch {
       setError("Unable to switch project.");
@@ -415,6 +419,15 @@ function App() {
     }
     setActionBusy(action);
     setError("");
+    if (action === "autoflow") {
+      setAutoflowActivity({
+        phase: "starting",
+        label: "Autoflow starting",
+        detail: `Working ${selectedIssueRef}`,
+        issueRef: selectedIssueRef,
+        updatedAt: new Date().toISOString(),
+      });
+    }
     try {
       const result = await fetchJson<{
         ok?: boolean;
@@ -432,9 +445,17 @@ function App() {
       });
       setContext(result.projection ?? context);
       const actionSummary = formatActionSummary(action, result.summary);
-      setPendingConfirmation(pendingConfirmationFromActionResult(result.result));
+      const nextConfirmation = pendingConfirmationFromActionResult(result.result);
+      setPendingConfirmation(nextConfirmation);
       if (action === "autoflow" || action === "approve_confirmation") {
         setSystemNotice(actionSummary);
+        setAutoflowActivity({
+          phase: nextConfirmation ? "failed" : "done",
+          label: nextConfirmation ? "Autoflow needs input" : "Autoflow updated",
+          detail: actionSummary,
+          issueRef: selectedIssueRef,
+          updatedAt: new Date().toISOString(),
+        });
       } else {
         setConversation((items) => [
           ...items,
@@ -448,6 +469,15 @@ function App() {
       }
       await refresh(false);
     } catch (caught) {
+      if (action === "autoflow") {
+        setAutoflowActivity({
+          phase: "failed",
+          label: "Autoflow failed",
+          detail: errorMessage(caught, "Unable to run Autoflow."),
+          issueRef: selectedIssueRef,
+          updatedAt: new Date().toISOString(),
+        });
+      }
       setError(errorMessage(caught, "Unable to run workflow action."));
     } finally {
       setActionBusy("");
@@ -524,6 +554,7 @@ function App() {
           <div>
             <div className="eyebrow">Issues</div>
             <div className="issue-updated-label">{snapshotStatusLabel}</div>
+            <AutoflowHealth enabled={autoflowEnabled} activity={autoflowActivity} />
           </div>
           <div className="issue-header-actions">
             <button
@@ -758,6 +789,26 @@ function StatusSummary({
       <span className="pi-activity-label">{activity?.label ?? "Agent not started"}</span>
       {activity?.toolName ? <span className="pi-activity-tool">{activity.toolName}</span> : null}
       {showDetail && activity?.detail ? <span className="pi-activity-detail">{activity.detail}</span> : null}
+    </div>
+  );
+}
+
+function AutoflowHealth({
+  enabled,
+  activity,
+}: {
+  enabled: boolean;
+  activity: AutoflowActivityState | null;
+}) {
+  const stateClass = enabled ? activity?.phase ?? "idle" : "paused";
+  const label = activity?.label ?? (enabled ? "Autoflow watching" : "Autoflow paused");
+  const detail = activity?.detail ?? (enabled ? "No active run" : "Project automation is off");
+  return (
+    <div className={`autoflow-health ${stateClass}`} aria-label="Autoflow health">
+      <span className="autoflow-health-dot" aria-hidden="true" />
+      <span className="autoflow-health-label">{label}</span>
+      {activity?.issueRef ? <span className="autoflow-health-issue">{activity.issueRef}</span> : null}
+      <span className="autoflow-health-detail">{detail}</span>
     </div>
   );
 }

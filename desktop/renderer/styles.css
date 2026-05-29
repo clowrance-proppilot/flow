@@ -292,6 +292,72 @@ button:disabled {
   font-weight: 700;
 }
 
+.autoflow-health {
+  display: flex;
+  align-items: center;
+  gap: 0.42rem;
+  min-width: 0;
+  max-width: min(42rem, calc(100vw - 24rem));
+  margin-top: 0.48rem;
+  color: var(--th-fg-muted);
+  font-size: 0.72rem;
+  line-height: 1.25;
+}
+
+.autoflow-health-dot {
+  width: 0.46rem;
+  height: 0.46rem;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #64748b;
+}
+
+.autoflow-health.starting .autoflow-health-dot,
+.autoflow-health.thinking .autoflow-health-dot,
+.autoflow-health.tool .autoflow-health-dot,
+.autoflow-health.responding .autoflow-health-dot {
+  background: #38bdf8;
+  box-shadow: 0 0 0 0 rgb(56 189 248 / 0.45);
+  animation: pi-pulse 1.45s ease-out infinite;
+}
+
+.autoflow-health.done .autoflow-health-dot {
+  background: #22c55e;
+}
+
+.autoflow-health.failed .autoflow-health-dot {
+  background: #ef4444;
+}
+
+.autoflow-health.paused .autoflow-health-dot {
+  background: #f59e0b;
+}
+
+.autoflow-health-label {
+  flex: 0 0 auto;
+  color: var(--th-fg);
+  font-weight: 800;
+}
+
+.autoflow-health-issue {
+  flex: 0 0 auto;
+  border: 1px solid var(--th-border);
+  border-radius: 999px;
+  color: var(--th-primary);
+  padding: 0.05rem 0.38rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.66rem;
+  font-weight: 800;
+}
+
+.autoflow-health-detail {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--th-fg-faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .autoflow-switch {
   display: inline-flex;
   align-items: center;
