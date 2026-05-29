@@ -69,17 +69,14 @@ button:disabled {
 
 .desktop-shell {
   display: grid;
-  grid-template-columns: 11.2rem minmax(18.5rem, 24rem) minmax(0, 1fr);
+  position: relative;
+  grid-template-columns: 11.2rem minmax(0, 1fr);
   min-width: 0;
   height: 100vh;
   overflow: hidden;
   border: 1px solid rgb(59 130 246 / 0.16);
   border-radius: 0.8rem;
   background: rgb(3 8 20 / 0.88);
-}
-
-.desktop-shell.monitor-mode {
-  grid-template-columns: 11.2rem minmax(0, 1fr);
 }
 
 .project-panel,
@@ -268,14 +265,9 @@ button:disabled {
 .issue-panel {
   display: grid;
   grid-template-rows: auto auto auto minmax(0, 1fr);
-  border-right: 1px solid var(--th-border);
   background:
     linear-gradient(180deg, rgb(7 16 32 / 0.96), rgb(5 12 24 / 0.96)),
     var(--th-surface);
-}
-
-.desktop-shell.monitor-mode .issue-panel {
-  border-right: 0;
 }
 
 .issue-header,
@@ -513,34 +505,13 @@ h2 {
 }
 
 .issue-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 0.55rem;
-  min-height: 0;
-  overflow: auto;
-  padding: 0 1rem 1rem;
-}
-
-.desktop-shell.monitor-mode .issue-header {
-  padding: 1.45rem max(1.45rem, calc((100% - 76rem) / 2)) 1.05rem;
-}
-
-.desktop-shell.monitor-mode .search-box {
-  margin-right: max(1.35rem, calc((100% - 76rem) / 2));
-  margin-left: max(1.35rem, calc((100% - 76rem) / 2));
-}
-
-.desktop-shell.monitor-mode .status-row {
-  padding-right: max(1.35rem, calc((100% - 76rem) / 2));
-  padding-left: max(1.35rem, calc((100% - 76rem) / 2));
-}
-
-.desktop-shell.monitor-mode .issue-stack {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(21rem, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(24rem, 1fr));
   align-content: start;
   gap: 0.72rem;
-  padding: 0 max(1.35rem, calc((100% - 76rem) / 2)) 1.6rem;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 1rem 1.1rem;
 }
 
 .issue-card {
@@ -590,6 +561,7 @@ h2 {
   color: inherit;
   padding: 0.78rem 0.85rem;
   text-align: left;
+  white-space: normal;
 }
 
 .issue-row {
@@ -661,6 +633,7 @@ h2 {
   font-weight: 650;
   line-height: 1.45;
   overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .issue-note {
@@ -669,6 +642,7 @@ h2 {
   font-size: 0.72rem;
   line-height: 1.5;
   overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .issue-actions-preview {
@@ -719,7 +693,14 @@ h2 {
 
 .chat-panel {
   display: grid;
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  width: min(56rem, calc(100vw - 16rem));
   grid-template-rows: auto minmax(0, 1fr) auto auto;
+  border-left: 1px solid var(--th-border);
   background:
     radial-gradient(circle at 78% 14%, rgb(30 64 175 / 0.22), transparent 35rem),
     radial-gradient(circle at 18% 70%, rgb(14 165 233 / 0.08), transparent 30rem),
@@ -1155,11 +1136,12 @@ h2 {
     grid-template-columns: 4.6rem minmax(0, 1fr);
   }
 
-  .issue-panel {
-    display: none;
+  .issue-stack {
+    grid-template-columns: minmax(0, 1fr);
   }
 
-  .desktop-shell.monitor-mode .issue-panel {
-    display: grid;
+  .chat-panel {
+    left: 4.6rem;
+    width: auto;
   }
 }
