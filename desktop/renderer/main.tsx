@@ -203,6 +203,24 @@ function App() {
     }
   }
 
+  async function toggleProjectAutoflow(): Promise<void> {
+    if (!activeProject) return;
+    setError("");
+    const enabled = activeProject.autoflowEnabled === false;
+    setProjects((items) => items.map((project) => project.id === activeProject.id ? { ...project, autoflowEnabled: enabled } : project));
+    try {
+      const result = await fetchJson<{ ok?: boolean; project: ProjectRecord }>(`/api/projects/${encodeURIComponent(activeProject.id)}/autoflow`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      });
+      setProjects((items) => items.map((project) => project.id === result.project.id ? { ...project, ...result.project } : project));
+    } catch {
+      setProjects((items) => items.map((project) => project.id === activeProject.id ? { ...project, autoflowEnabled: !enabled } : project));
+      setError("Unable to update Autoflow for this project.");
+    }
+  }
+
   async function submitPrompt(textOverride?: string): Promise<void> {
     const text = (textOverride ?? prompt).trim();
     if (!text) return;
@@ -426,13 +444,34 @@ function App() {
 
   const snapshotStatusLabel = status === "error" ? "Snapshot unavailable" : snapshotLabel;
   const showManualActions = selectedIssue ? isManualActionIssue(selectedIssue) : false;
+  const autoflowEnabled = activeProject?.autoflowEnabled !== false;
 
   return (
     <div className="desktop-shell">
       <aside className="project-panel" aria-label="Projects">
         <header className="project-header">
           <span className="brand"><Waypoints size={16} /></span>
+          <span className="brand-title">Flow</span>
+          <button type="button" className="project-switch-button" title="Switch project">
+            <RefreshCw size={14} />
+          </button>
         </header>
+        <div className="project-active-block">
+          <div className="eyebrow">Project</div>
+          <button type="button" className="project-active-name" title={activeProject?.root}>
+            <span>{activeProject?.name || "Flow"}</span>
+            <span aria-hidden="true">v</span>
+          </button>
+          <button
+            type="button"
+            className={autoflowEnabled ? "project-autoflow-toggle enabled" : "project-autoflow-toggle"}
+            onClick={() => void toggleProjectAutoflow()}
+            aria-pressed={autoflowEnabled}
+          >
+            <span>Autoflow</span>
+            <span>{autoflowEnabled ? "On" : "Off"}</span>
+          </button>
+        </div>
         <div className="project-list">
           {projects.map((project) => {
             const theme = projectThemeFor(project);
@@ -462,13 +501,16 @@ function App() {
             );
           })}
         </div>
+        <footer className="project-status">
+          <span className="status-dot ok" />
+          <span>Online and ready</span>
+        </footer>
       </aside>
 
       <aside className="issue-panel">
         <header className="issue-header">
           <div>
-            <div className="eyebrow">Project</div>
-            <h1>{activeProject?.name || "Flow"}</h1>
+            <div className="eyebrow">Issues</div>
           </div>
           <button
             type="button"
@@ -531,12 +573,11 @@ function App() {
       <main className="chat-panel">
         <header className="chat-header">
           <div>
-            <div className="eyebrow">Issue</div>
-            <h2>{selectedIssue?.title || "Select an issue"}</h2>
-            <p>{contextLine(activeProject, selectedIssue, context, selectedSessionId)}</p>
+            <h2>Chat</h2>
+            <p>Your AI pair for Git workflows</p>
           </div>
           <div className="chat-header-actions">
-            <button type="button" className="system-autoflow-button" title="Autoflow issue" onClick={() => void invokeAction("autoflow")} disabled={!selectedIssueRef || Boolean(actionBusy)}>
+            <button type="button" className="system-autoflow-button" title={autoflowEnabled ? "Autoflow selected issue" : "Enable Autoflow for this project"} onClick={() => void invokeAction("autoflow")} disabled={!autoflowEnabled || !selectedIssueRef || Boolean(actionBusy)}>
               <Activity size={15} />
               <span>{actionBusy === "autoflow" ? "Autoflowing..." : "Autoflow"}</span>
             </button>

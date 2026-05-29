@@ -19,6 +19,7 @@ export type ProjectRecord = {
   valid: boolean;
   icon?: string;
   error?: string;
+  autoflowEnabled?: boolean;
   attentionCount?: number;
   statusCounts?: ProjectStatusCounts;
 };

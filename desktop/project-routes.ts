@@ -101,6 +101,17 @@ export function registerProjectRoutes(server: Express, context: RouteContext, js
     }
   });
 
+  server.post("/api/projects/:projectId/autoflow", jsonBody, async (req, res) => {
+    try {
+      const enabled = req.body?.enabled !== false;
+      const project = await projectRegistry.setProjectAutoflow(String(req.params.projectId ?? ""), enabled);
+      invalidateProjectSurface?.(project.id);
+      res.json({ ok: true, project });
+    } catch (error) {
+      res.status(404).json({ ok: false, error: message(error) });
+    }
+  });
+
   server.get("/api/context", async (_req, res) => {
     try {
       const project = await requireActiveProject(projectRegistry);

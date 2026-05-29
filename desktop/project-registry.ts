@@ -13,6 +13,7 @@ export const desktopProjectRecordSchema = z.object({
   valid: z.boolean(),
   icon: z.string().min(1).optional(),
   error: z.string().optional(),
+  autoflowEnabled: z.boolean().default(true),
   addedAt: z.string().datetime(),
   lastOpenedAt: z.string().datetime(),
 });
@@ -95,6 +96,22 @@ export class DesktopProjectRegistry {
     return refreshed;
   }
 
+  async setProjectAutoflow(projectId: string, enabled: boolean): Promise<DesktopProjectRecord> {
+    const state = await this.readState();
+    const project = state.projects.find((candidate) => candidate.id === projectId);
+    if (!project) throw new Error(`Unknown Flow project ${projectId}.`);
+    const updated = desktopProjectRecordSchema.parse({
+      ...project,
+      autoflowEnabled: enabled,
+      lastOpenedAt: nowIso(),
+    });
+    await this.writeState({
+      activeProjectId: state.activeProjectId,
+      projects: upsertProject(state.projects, updated),
+    });
+    return updated;
+  }
+
   private async projectRecord(root: string, existing?: DesktopProjectRecord): Promise<DesktopProjectRecord> {
     const now = nowIso();
     const validation = await validateFlowConfig({ projectRoot: root });
@@ -106,6 +123,7 @@ export class DesktopProjectRegistry {
       valid: validation.ok,
       icon: validation.config?.project.icon,
       error: validation.ok ? undefined : validation.errors.join("; "),
+      autoflowEnabled: existing?.autoflowEnabled ?? true,
       addedAt: existing?.addedAt ?? now,
       lastOpenedAt: now,
     });
