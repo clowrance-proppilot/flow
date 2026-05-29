@@ -61,7 +61,7 @@ function formatAutoflowNotice(summary: string): string {
   if (!match) return compactChatText(summary);
   const [, status, issueRef, message] = match;
   const label = status === "needs_confirmation" ? "Needs confirmation" : titleCase(status.replace(/_/g, " "));
-  return compactChatText(`${label}: ${message || issueRef}`);
+  return compactChatText(`${label}: ${compactAutoflowMessage(message || issueRef)}`);
 }
 
 function titleCase(value: string): string {
@@ -72,4 +72,12 @@ function compactChatText(value: string): string {
   const trimmed = value.trim();
   if (trimmed.length <= 700) return trimmed;
   return `${trimmed.slice(0, 680).trimEnd()}...`;
+}
+
+function compactAutoflowMessage(value: string): string {
+  const withoutHandoff = value
+    .replace(/\n*Copy-ready handoff prompt:\n[\s\S]*$/i, "")
+    .replace(/\bhandoff prompt\b/gi, "issue context")
+    .trim();
+  return withoutHandoff || "Flow has the issue context. Use Autoflow again after the blocker is resolved.";
 }
