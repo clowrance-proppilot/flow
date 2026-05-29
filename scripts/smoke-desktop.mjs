@@ -63,9 +63,10 @@ try {
   if (!html.includes("root")) throw new Error("desktop HTML did not include app root");
   if (!html.includes("/assets/")) throw new Error("desktop root should reference desktop renderer assets");
   const assets = await fetchDesktopAssets(desktopUrl, html);
-  for (const token of ["Projects", "Work with Flow on this issue", "Workflow actions"]) {
+  for (const token of ["Projects", "Work with Flow on this issue", "Autoflow"]) {
     if (!assets.includes(token)) throw new Error(`desktop renderer asset should include ${token}`);
   }
+  assertIssueCardLayoutCss(assets);
 
   const projects = await fetchJson(`${desktopUrl}/api/projects`);
   if (!projects.ok || !projects.activeProjectId || projects.projects?.length !== 1) {
@@ -235,6 +236,12 @@ async function fetchDesktopAssets(baseUrl, html) {
     texts.push(await fetchText(new URL(assetPath, baseUrl).toString()));
   }
   return texts.join("\n");
+}
+
+function assertIssueCardLayoutCss(assets) {
+  if (!/\.issue-card\{[^}]*display:flex[^}]*flex:0 0 auto[^}]*overflow:hidden/.test(assets)) {
+    throw new Error("desktop issue cards must not shrink inside the scroll stack");
+  }
 }
 
 async function stopChild(childProcess) {
