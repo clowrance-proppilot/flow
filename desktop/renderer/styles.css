@@ -554,6 +554,10 @@ h2 {
   font-size: 0.74rem;
 }
 
+.snapshot-text {
+  white-space: nowrap;
+}
+
 .status-dot {
   width: 0.48rem;
   height: 0.48rem;
@@ -752,12 +756,7 @@ h2 {
 }
 
 .assistant-empty-state {
-  border: 1px solid var(--th-border);
-  border-radius: 0.55rem;
-  background: var(--th-card);
-  color: var(--th-fg-muted);
-  padding: 0.72rem;
-  font-size: 0.82rem;
+  display: none;
 }
 
 .message {
@@ -779,11 +778,7 @@ h2 {
 }
 
 .message-role {
-  margin-bottom: 0.28rem;
-  color: var(--th-fg-faint);
-  font-size: 0.67rem;
-  font-weight: 700;
-  text-transform: uppercase;
+  display: none;
 }
 
 .message-text {
@@ -797,12 +792,11 @@ h2 {
 .action-strip {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-end;
   gap: 0.55rem;
-  border-top: 1px solid var(--th-border);
-  border-bottom: 1px solid var(--th-border);
-  background: var(--th-input);
-  padding: 0.52rem 0.95rem;
+  border-top: 1px solid rgb(51 65 85 / 0.5);
+  background: rgb(7 15 29 / 0.72);
+  padding: 0.36rem max(1rem, calc((100% - 52rem) / 2));
 }
 
 .manual-action-group {
@@ -813,11 +807,11 @@ h2 {
 .manual-action-group button {
   display: grid;
   place-items: center;
-  width: 1.95rem;
-  height: 1.95rem;
+  width: 1.72rem;
+  height: 1.72rem;
   border: 1px solid var(--th-border);
   border-radius: 0.45rem;
-  background: var(--th-card);
+  background: transparent;
   color: var(--th-fg-muted);
 }
 
@@ -871,6 +865,57 @@ h2 {
   border-radius: 0.5rem;
   background: var(--th-card);
   color: var(--th-primary);
+}
+
+@media (max-width: 1180px) {
+  .chat-header {
+    align-items: center;
+    padding: 0.78rem 0.86rem;
+  }
+
+  .chat-header .eyebrow {
+    display: none;
+  }
+
+  h2 {
+    font-size: 0.98rem;
+    line-height: 1.22;
+  }
+
+  .chat-header p {
+    margin-top: 0.22rem;
+    font-size: 0.72rem;
+  }
+
+  .chat-header-actions {
+    gap: 0.42rem;
+  }
+
+  .system-autoflow-button {
+    min-width: 2.35rem;
+    width: 2.35rem;
+    height: 2.35rem;
+    padding: 0;
+  }
+
+  .system-autoflow-button span {
+    display: none;
+  }
+
+  .snapshot-pill {
+    width: 2.35rem;
+    height: 2.35rem;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .snapshot-text {
+    display: none;
+  }
+
+  .timeline {
+    padding-top: 0.85rem;
+  }
 }
 
 .error-line {

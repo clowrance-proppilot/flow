@@ -628,9 +628,9 @@ function App() {
               <Activity size={15} />
               <span>{actionBusy === "autoflow" ? "Autoflowing..." : "Autoflow"}</span>
             </button>
-            <div className="snapshot-pill">
+            <div className="snapshot-pill" title={snapshotStatusLabel}>
               <span className={status === "error" ? "status-dot error" : status === "loading" ? "status-dot loading" : "status-dot ok"} />
-              <span>{snapshotStatusLabel}</span>
+              <span className="snapshot-text">{snapshotStatusLabel}</span>
             </div>
           </div>
         </header>
@@ -639,30 +639,19 @@ function App() {
           conversation={conversation}
           disabled={sending || activeSessionStatus === "running"}
           running={activeSessionStatus === "running"}
-          fallbackLabel={selectedIssueRef ? `Selected ${selectedIssueRef}.` : "Select an issue."}
+          notice={systemNotice ? <PendingActionNotice text={systemNotice} /> : null}
           onSubmit={(text) => submitPrompt(text)}
         />
 
         {showManualActions ? (
           <div className="action-strip" aria-label="Manual closeout actions">
             <div className="manual-action-group">
-              <button type="button" title="Record evidence" onClick={() => void invokeAction("record_evidence")} disabled={!selectedIssueRef || Boolean(actionBusy)}>
-                <ClipboardList size={15} />
-              </button>
-              <button type="button" title="Record result" onClick={() => void invokeAction("record_result")} disabled={!selectedIssueRef || Boolean(actionBusy)}>
-                <CircleCheck size={15} />
-              </button>
-              <button type="button" title="Record documentation" onClick={() => void invokeAction("record_documentation")} disabled={!selectedIssueRef || Boolean(actionBusy)}>
-                <FileText size={15} />
-              </button>
               <button type="button" title="Run doctor" onClick={() => void invokeAction("run_doctor")} disabled={!selectedIssueRef || Boolean(actionBusy)}>
                 <Stethoscope size={15} />
               </button>
             </div>
           </div>
         ) : null}
-
-        {systemNotice ? <PendingActionNotice text={systemNotice} /> : null}
 
         {activeSessionStatus === "running" ? <div className="session-line">Pi is running. Follow-up queueing is next.</div> : null}
 
@@ -676,13 +665,13 @@ function AssistantChatSurface({
   conversation,
   disabled,
   running,
-  fallbackLabel,
+  notice,
   onSubmit,
 }: {
   conversation: ConversationItem[];
   disabled: boolean;
   running: boolean;
-  fallbackLabel: string;
+  notice?: React.ReactNode;
   onSubmit: (text: string) => Promise<void>;
 }) {
   const visibleMessages = useMemo(
@@ -706,11 +695,12 @@ function AssistantChatSurface({
       <ThreadPrimitive.Root className="assistant-thread">
         <ThreadPrimitive.Viewport className="timeline assistant-viewport" autoScroll>
           <ThreadPrimitive.Empty>
-            <div className="assistant-empty-state">{fallbackLabel} Use the composer for the next turn.</div>
+            <div className="assistant-empty-state" aria-hidden="true" />
           </ThreadPrimitive.Empty>
           <ThreadPrimitive.Messages components={{ Message: AssistantMessage }} />
           <ThreadPrimitive.ViewportFooter />
         </ThreadPrimitive.Viewport>
+        {notice}
         <ComposerPrimitive.Root className="composer assistant-composer">
           <ComposerPrimitive.Input placeholder="Work with Flow on this issue..." submitMode="enter" minRows={1} maxRows={6} />
           <ComposerPrimitive.Send title="Send prompt" className="assistant-send-button">
@@ -954,15 +944,12 @@ function sessionStatusForUi(status?: PiSessionSnapshot["status"]): "idle" | "run
 function contextLine(
   project: ProjectRecord | undefined,
   issue: DashboardIssue | undefined,
-  context: ContextProjection,
-  selectedSessionId?: string,
+  _context: ContextProjection,
+  _selectedSessionId?: string,
 ): string {
-  const contextMatchesIssue = Boolean(issue?.ref && context.active?.issueRef === issue.ref);
   const parts = [
     project?.name,
     issue?.ref,
-    contextMatchesIssue && context.active?.threadId ? `thread ${context.active.threadId}` : undefined,
-    selectedSessionId ? `session ${selectedSessionId}` : contextMatchesIssue && context.active?.sessionId ? `session ${context.active.sessionId}` : undefined,
   ].filter(Boolean);
   return parts.join(" / ") || "No active context";
 }
