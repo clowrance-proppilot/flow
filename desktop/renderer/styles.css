@@ -399,7 +399,8 @@ h2 {
 .issue-card.status-theme-done { border-left-color: #22c55e; color: var(--th-fg); }
 
 .issue-summary {
-  display: block;
+  display: flex;
+  flex-direction: column;
   align-self: stretch;
   appearance: none;
   width: 100%;
@@ -814,12 +815,69 @@ h2 {
   border-color: var(--th-primary);
 }
 
-.session-line {
+.pi-activity-strip {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
   border-top: 1px solid var(--th-border);
   color: var(--th-fg-muted);
   background: var(--th-input);
   padding: 0.45rem 0.95rem;
   font-size: 0.74rem;
+  min-width: 0;
+}
+
+.pi-activity-pulse {
+  width: 0.5rem;
+  height: 0.5rem;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--th-primary);
+  box-shadow: 0 0 0 0 rgb(56 189 248 / 0.45);
+  animation: pi-pulse 1.45s ease-out infinite;
+}
+
+.pi-activity-strip.done .pi-activity-pulse,
+.pi-activity-strip.idle .pi-activity-pulse {
+  animation: none;
+  background: #22c55e;
+}
+
+.pi-activity-strip.failed .pi-activity-pulse {
+  animation: none;
+  background: #ef4444;
+}
+
+.pi-activity-label {
+  color: var(--th-fg);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.pi-activity-tool {
+  max-width: 11rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid var(--th-border);
+  border-radius: 999px;
+  padding: 0.08rem 0.45rem;
+  color: var(--th-primary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.68rem;
+}
+
+.pi-activity-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes pi-pulse {
+  100% {
+    box-shadow: 0 0 0 0.55rem rgb(56 189 248 / 0);
+  }
 }
 
 .composer {

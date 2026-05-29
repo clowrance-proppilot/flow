@@ -24,7 +24,7 @@ import { createRoot } from "react-dom/client";
 import { projectThemeFor } from "../../src/theme/project-theme";
 import { actionPayload, formatActionSummary, pendingConfirmationFromActionResult } from "./action-format";
 import { errorMessage, fetchJson } from "./api";
-import { conversationFromPiSession, conversationItemToThreadMessage, extractAppendMessageText, seedConversation } from "./conversation";
+import { activityFromPiEvent, activityFromPiSession, conversationFromPiSession, conversationItemToThreadMessage, extractAppendMessageText, seedConversation } from "./conversation";
 import {
   contextLine,
   isExceptionalStatus,
@@ -48,6 +48,7 @@ import type {
   DashboardPayload,
   DesktopAction,
   PendingConfirmationState,
+  PiActivityState,
   PiSessionEvent,
   PiSessionSnapshot,
   ProjectRecord,
@@ -67,6 +68,7 @@ function App() {
   const [sessionIdByIssueRef, setSessionIdByIssueRef] = useState<Record<string, string>>({});
   const [expandedIssueRef, setExpandedIssueRef] = useState("");
   const [activeSessionStatus, setActiveSessionStatus] = useState<"idle" | "running" | "failed">("idle");
+  const [piActivity, setPiActivity] = useState<PiActivityState | null>(null);
   const [activeStatus, setActiveStatus] = useState<WorkStatusFilter>("active");
   const [query, setQuery] = useState("");
   const [prompt, setPrompt] = useState("");
@@ -194,6 +196,7 @@ function App() {
       setSystemNotice("");
       setPendingConfirmation(null);
       setActiveSessionStatus("idle");
+      setPiActivity(null);
       await refresh(true);
     } catch {
       setError("Unable to switch project.");
@@ -210,6 +213,7 @@ function App() {
     setSending(true);
     sendingRef.current = true;
     setError("");
+    setPiActivity({ phase: "starting", label: "Starting Pi", detail: text, updatedAt: new Date().toISOString() });
     const userItem: ConversationItem = {
       id: `local-user-${Date.now()}`,
       role: "user",
@@ -296,13 +300,18 @@ function App() {
     if (event.type === "sessionUpdated") {
       const status = event.snapshot?.status;
       if (status) setActiveSessionStatus(status);
+      const nextActivity = activityFromPiEvent(event);
+      if (nextActivity) setPiActivity(nextActivity);
       return;
     }
     if (event.type === "runCompleted") {
       setActiveSessionStatus("idle");
+      setPiActivity(activityFromPiEvent(event) ?? { phase: "done", label: "Pi finished", updatedAt: event.timestamp });
       return;
     }
     if (event.type === "assistantDelta" && event.text) {
+      const nextActivity = activityFromPiEvent(event);
+      if (nextActivity) setPiActivity(nextActivity);
       const id = `stream-${sessionId}`;
       setConversation((items) => {
         const existing = items.find((item) => item.id === id);
@@ -319,10 +328,13 @@ function App() {
       return;
     }
     if (event.type === "toolStarted" || event.type === "toolUpdated" || event.type === "toolFinished") {
+      const nextActivity = activityFromPiEvent(event);
+      if (nextActivity) setPiActivity(nextActivity);
       return;
     }
     if (event.type === "runFailed") {
       setActiveSessionStatus("failed");
+      setPiActivity(activityFromPiEvent(event) ?? { phase: "failed", label: "Pi failed", updatedAt: event.timestamp });
       setConversation((items) => [...items, {
         id: `failed-${sessionId}-${Date.now()}`,
         role: "assistant",
@@ -342,6 +354,7 @@ function App() {
     setSelectedSessionId("");
     setExpandedIssueRef((current) => current === issueRef ? "" : issueRef);
     setActiveSessionStatus("idle");
+    setPiActivity(null);
     setConversation(seedConversation(context, activeProjectId, issueRef));
     setSystemNotice("");
     setPendingConfirmation(null);
@@ -367,6 +380,7 @@ function App() {
     setSessionIdByIssueRef((current) => ({ ...current, [session.issueRef]: session.id }));
     setSelectedSessionId(session.id);
     setActiveSessionStatus(sessionStatusForUi(session.status));
+    setPiActivity(activityFromPiSession(session));
     subscribeToSessionEvents(session.id);
   }
 
@@ -564,7 +578,7 @@ function App() {
           </div>
         ) : null}
 
-        {activeSessionStatus === "running" ? <div className="session-line">Pi is running. Follow-up queueing is next.</div> : null}
+        {activeSessionStatus === "running" || piActivity ? <PiActivityStrip activity={piActivity} status={activeSessionStatus} /> : null}
 
         {error ? <div className="error-line">{error}</div> : null}
       </main>
@@ -677,6 +691,23 @@ function PendingActionNotice({
           {approving ? "Approving..." : "Approve"}
         </button>
       ) : null}
+    </div>
+  );
+}
+
+function PiActivityStrip({ activity, status }: { activity: PiActivityState | null; status: "idle" | "running" | "failed" }) {
+  const fallback: PiActivityState = status === "failed"
+    ? { phase: "failed", label: "Pi failed" }
+    : status === "running"
+      ? { phase: "thinking", label: "Pi is working" }
+      : { phase: "idle", label: "Pi ready" };
+  const current = activity ?? fallback;
+  return (
+    <div className={`pi-activity-strip ${current.phase}`} aria-label="Pi activity">
+      <span className="pi-activity-pulse" aria-hidden="true" />
+      <span className="pi-activity-label">{current.label}</span>
+      {current.toolName ? <span className="pi-activity-tool">{current.toolName}</span> : null}
+      {current.detail ? <span className="pi-activity-detail">{current.detail}</span> : null}
     </div>
   );
 }

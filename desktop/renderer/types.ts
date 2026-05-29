@@ -115,3 +115,11 @@ export type PendingConfirmationState = {
 };
 
 export type DesktopAction = "autoflow" | "approve_confirmation" | "record_evidence" | "record_result" | "record_documentation" | "run_doctor";
+
+export type PiActivityState = {
+  phase: "idle" | "starting" | "thinking" | "tool" | "responding" | "done" | "failed";
+  label: string;
+  detail?: string;
+  toolName?: string;
+  updatedAt?: string;
+};
