@@ -70,9 +70,12 @@ function App() {
   const [query, setQuery] = useState("");
   const [prompt, setPrompt] = useState("");
   const [newIssueOpen, setNewIssueOpen] = useState(false);
+  const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [newProjectRoot, setNewProjectRoot] = useState("");
   const [newIssueTitle, setNewIssueTitle] = useState("");
   const [newIssueDescription, setNewIssueDescription] = useState("");
   const [creatingIssue, setCreatingIssue] = useState(false);
+  const [addingProject, setAddingProject] = useState(false);
   const [conversation, setConversation] = useState<ConversationItem[]>([]);
   const [systemNotice, setSystemNotice] = useState("");
   const [pendingConfirmation, setPendingConfirmation] = useState<PendingConfirmationState | null>(null);
@@ -235,6 +238,42 @@ function App() {
     } catch {
       setProjects((items) => items.map((project) => project.id === activeProject.id ? { ...project, autoflowEnabled: !enabled } : project));
       setError("Unable to update Autoflow for this project.");
+    }
+  }
+
+  async function addProjectFromDesktop(): Promise<void> {
+    const root = newProjectRoot.trim();
+    if (!root) {
+      setError("Project root is required.");
+      return;
+    }
+    setAddingProject(true);
+    setError("");
+    try {
+      const result = await fetchJson<{ ok?: boolean; activeProjectId?: string; project: ProjectRecord; projects: ProjectRecord[] }>("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ root }),
+      });
+      localIssueByRefRef.current = {};
+      setProjects(result.projects ?? [result.project]);
+      setActiveProjectId(result.activeProjectId || result.project.id);
+      setNewProjectRoot("");
+      setNewProjectOpen(false);
+      setSelectedIssueRef("");
+      setSelectedSessionId("");
+      setSessionIdByIssueRef({});
+      setExpandedIssueRef("");
+      setSystemNotice("");
+      setPendingConfirmation(null);
+      setActiveSessionStatus("idle");
+      setPiActivity(null);
+      setAutoflowActivity(null);
+      await refresh(true);
+    } catch (caught) {
+      setError(errorMessage(caught, "Unable to add Flow project."));
+    } finally {
+      setAddingProject(false);
     }
   }
 
@@ -596,8 +635,34 @@ function App() {
             <span className="project-chevron" aria-hidden="true">v</span>
           </button>
         </div>
+        <button type="button" className="project-add-button" onClick={() => setNewProjectOpen((open) => !open)}>
+          <Plus size={14} />
+          <span>Add project</span>
+        </button>
+        {newProjectOpen ? (
+          <form
+            className="project-add-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void addProjectFromDesktop();
+            }}
+          >
+            <input
+              value={newProjectRoot}
+              onChange={(event) => setNewProjectRoot(event.target.value)}
+              placeholder="Project root path"
+              disabled={addingProject}
+            />
+            <div className="project-add-actions">
+              <button type="button" onClick={() => setNewProjectOpen(false)} disabled={addingProject}>Cancel</button>
+              <button type="submit" disabled={addingProject || !newProjectRoot.trim()}>
+                {addingProject ? "Adding..." : "Add"}
+              </button>
+            </div>
+          </form>
+        ) : null}
         <div className="project-list">
-          {projects.filter((project) => project.id !== activeProjectId).map((project) => {
+          {projects.map((project) => {
             const theme = projectThemeFor(project);
             return (
               <button

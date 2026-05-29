@@ -160,9 +160,9 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
   registerStaticRoutes(server, { desktopFilePath, dashboardFilePath });
 
   const autoflowInterval = setInterval(() => {
-    void runActiveProjectAutoflowTick(projectRegistry, projectSurface);
+    void runEnabledProjectAutoflowTicks(projectRegistry, projectSurface);
   }, 15000);
-  void runActiveProjectAutoflowTick(projectRegistry, projectSurface);
+  void runEnabledProjectAutoflowTicks(projectRegistry, projectSurface);
 
   // Find a free port
   return new Promise((resolve, reject) => {
@@ -180,14 +180,15 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
   });
 }
 
-async function runActiveProjectAutoflowTick(
+export async function runEnabledProjectAutoflowTicks(
   projectRegistry: DesktopProjectRegistry,
   projectSurface: (project: DesktopProjectRecord) => Promise<DesktopProjectSurface>,
 ): Promise<void> {
-  const project = await projectRegistry.activeProject();
-  if (!project || project.autoflowEnabled === false) return;
-  const surface = await projectSurface(project);
-  await surface.piAgentOrchestrator.tick();
+  const projects = await projectRegistry.listProjects();
+  await Promise.all(projects.filter((project) => project.valid && project.autoflowEnabled !== false).map(async (project) => {
+    const surface = await projectSurface(project);
+    await surface.piAgentOrchestrator.tick();
+  }));
 }
 
 function createWindow(port: number): BrowserWindow {

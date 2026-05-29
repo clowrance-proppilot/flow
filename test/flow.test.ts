@@ -541,20 +541,27 @@ test("Flow config bootstrap can keep repo-local config in local git exclude", as
 
 test("Desktop project registry tracks active Flow projects from config roots", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-desktop-project-"));
+  const secondRoot = await mkdtemp(join(tmpdir(), "flow-desktop-project-two-"));
   await execFileAsync("git", ["init"], { cwd: root });
+  await execFileAsync("git", ["init"], { cwd: secondRoot });
   await bootstrapFlowConfig({ projectRoot: root, storage: "repo-tracked" });
+  await bootstrapFlowConfig({ projectRoot: secondRoot, storage: "repo-tracked" });
   const stateRoot = await mkdtemp(join(tmpdir(), "flow-desktop-state-"));
   const registry = new DesktopProjectRegistry({ statePath: join(stateRoot, "projects.json") });
 
   const project = await registry.addProject(root);
+  const secondProject = await registry.addProject(secondRoot);
   const projects = await registry.listProjects();
   const active = await registry.activeProject();
+  const reactivated = await registry.setActiveProject(project.id);
 
   assert.equal(project.valid, true);
   assert.equal(project.root, root);
   assert.equal(project.configPath, flowConfigPath(root));
-  assert.equal(projects.length, 1);
-  assert.equal(active?.id, project.id);
+  assert.equal(projects.length, 2);
+  assert.equal(active?.id, secondProject.id);
+  assert.equal(reactivated.id, project.id);
+  assert.equal((await registry.activeProject())?.id, project.id);
 });
 
 test("Project theme generates stable colors and initials", () => {
