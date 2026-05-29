@@ -309,6 +309,7 @@ h2 {
   font-size: 0.69rem;
 }
 
+.status-theme-active,
 .status-theme-all {
   color: #dbeafe;
   border-color: rgb(203 213 225 / 0.36);

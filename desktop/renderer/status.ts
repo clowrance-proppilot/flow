@@ -1,6 +1,27 @@
 import type { DashboardIssue, PiSessionSnapshot, ProjectRecord, ContextProjection } from "./types";
 
-export const workflowSteps = ["Queued", "Ready", "Running", "In Review", "Done"] as const;
+const statusMetadata = [
+  { label: "Blocked", rank: 0, themeClass: "status-theme-blocked", stateClass: "blocked", exceptional: true, active: true },
+  { label: "Needs Input", rank: 1, themeClass: "status-theme-needs-input", stateClass: "needs-input", exceptional: true, active: true },
+  { label: "In Review", rank: 2, workflowRank: 3, themeClass: "status-theme-review", stateClass: "in-review", exceptional: false, active: true },
+  { label: "Running", rank: 3, workflowRank: 2, themeClass: "status-theme-running", stateClass: "running", exceptional: false, active: true },
+  { label: "Ready", rank: 4, workflowRank: 1, themeClass: "status-theme-ready", stateClass: "ready", exceptional: false, active: true },
+  { label: "Queued", rank: 5, workflowRank: 0, themeClass: "status-theme-queued", stateClass: "queued", exceptional: false, active: true },
+  { label: "Done", rank: 6, workflowRank: 4, themeClass: "status-theme-done", stateClass: "done", exceptional: false, active: false },
+] as const;
+
+const statusMetadataByLabel = new Map<string, typeof statusMetadata[number]>(
+  statusMetadata.map((status) => [status.label, status]),
+);
+
+export const workflowSteps = statusMetadata
+  .filter((status) => status.workflowRank !== undefined)
+  .sort((left, right) => (left.workflowRank ?? 0) - (right.workflowRank ?? 0))
+  .map((status) => status.label);
+
+function statusMeta(label: string): typeof statusMetadata[number] | undefined {
+  return statusMetadataByLabel.get(label);
+}
 
 export function sessionStatusForUi(status?: PiSessionSnapshot["status"]): "idle" | "running" | "failed" {
   if (status === "running") return "running";
@@ -45,33 +66,21 @@ export function recordStatusClass(status?: string): string {
 }
 
 export function statusThemeClass(label: string): string {
-  if (label === "Blocked") return "issue-state blocked";
-  if (label === "Needs Input") return "issue-state needs-input";
-  if (label === "In Review") return "issue-state in-review";
-  if (label === "Running") return "issue-state running";
-  if (label === "Done") return "issue-state done";
-  if (label === "Ready") return "issue-state ready";
-  return "issue-state queued";
+  return `issue-state ${statusMeta(label)?.stateClass ?? "queued"}`;
 }
 
 export function statusFilterThemeClass(label: string): string {
-  if (label === "Blocked") return "status-theme-blocked";
-  if (label === "Needs Input") return "status-theme-needs-input";
-  if (label === "In Review") return "status-theme-review";
-  if (label === "Running") return "status-theme-running";
-  if (label === "Done") return "status-theme-done";
-  if (label === "Ready") return "status-theme-ready";
-  if (label === "Queued") return "status-theme-queued";
+  if (label === "Active") return "status-theme-active";
   if (label === "All") return "status-theme-all";
-  return "status-theme-unknown";
+  return statusMeta(label)?.themeClass ?? "status-theme-unknown";
 }
 
 export function isExceptionalStatus(status: string): boolean {
-  return status === "Blocked" || status === "Needs Input";
+  return Boolean(statusMeta(status)?.exceptional);
 }
 
 export function isActiveWorkStatus(status: string): boolean {
-  return status !== "Done";
+  return statusMeta(status)?.active ?? true;
 }
 
 export function isManualActionIssue(issue: DashboardIssue): boolean {
@@ -79,14 +88,7 @@ export function isManualActionIssue(issue: DashboardIssue): boolean {
 }
 
 export function statusRank(status: string): number {
-  if (status === "Blocked") return 0;
-  if (status === "Needs Input") return 1;
-  if (status === "In Review") return 2;
-  if (status === "Running") return 3;
-  if (status === "Ready") return 4;
-  if (status === "Queued") return 5;
-  if (status === "Done") return 6;
-  return 7;
+  return statusMeta(status)?.rank ?? 7;
 }
 
 export function issueAttentionRank(issue: DashboardIssue): number {
