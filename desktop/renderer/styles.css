@@ -377,7 +377,7 @@ h2 {
   background: var(--th-card);
   color: var(--th-fg);
   text-align: left;
-  overflow: visible;
+  overflow: hidden;
 }
 
 .issue-card:hover {
@@ -399,6 +399,7 @@ h2 {
 
 .issue-summary {
   display: block;
+  align-self: stretch;
   appearance: none;
   width: 100%;
   border: 0;

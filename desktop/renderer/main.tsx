@@ -501,8 +501,8 @@ function App() {
         ]);
       }
       await refresh(false);
-    } catch {
-      setError("Unable to run workflow action.");
+    } catch (caught) {
+      setError(errorMessage(caught, "Unable to run workflow action."));
     } finally {
       setActionBusy("");
     }
@@ -954,6 +954,10 @@ function compactChatText(value: string): string {
   return `${trimmed.slice(0, 680).trimEnd()}...`;
 }
 
+function errorMessage(caught: unknown, fallback: string): string {
+  return caught instanceof Error && caught.message ? caught.message : fallback;
+}
+
 function seedConversation(context?: ContextProjection, projectId?: string, issueRef?: string): ConversationItem[] {
   const target = issueRef || context?.active?.issueRef;
   const label = target ? `Selected ${target}.` : projectId ? "Project loaded." : "Flow desktop is ready.";
@@ -966,15 +970,20 @@ function seedConversation(context?: ContextProjection, projectId?: string, issue
 }
 
 function conversationFromPiSession(session: PiSessionSnapshot): ConversationItem[] {
-  const items = session.timeline.flatMap((item) => {
-    if (item.role !== "user" && item.role !== "assistant") return [];
-    return [{
+  const items: ConversationItem[] = [];
+  for (const item of session.timeline) {
+    if (item.role !== "user" && item.role !== "assistant") continue;
+    const text = item.content.trim();
+    if (!text) continue;
+    const previous = items.at(-1);
+    if (previous?.role === item.role && previous.text.trim() === text) continue;
+    items.push({
       id: `pi-${session.id}-${item.id}`,
       role: item.role,
-      text: item.content,
+      text,
       createdAt: item.createdAt,
-    }];
-  });
+    });
+  }
   return items.length ? items : seedConversation(undefined, undefined, session.issueRef);
 }
 
