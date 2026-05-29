@@ -79,6 +79,21 @@ function App() {
 
   const activeProject = projects.find((project) => project.id === activeProjectId);
   const selectedIssue = issues.find((issue) => issue.ref === selectedIssueRef);
+  const attentionIssues = useMemo(
+    () => issues.filter((issue) => isActiveWorkStatus(workStatusLabel(issue)))
+      .sort((left, right) => issueAttentionRank(left) - issueAttentionRank(right) || left.ref.localeCompare(right.ref)),
+    [issues],
+  );
+  const blockedIssues = useMemo(
+    () => issues.filter((issue) => isExceptionalStatus(workStatusLabel(issue)))
+      .sort((left, right) => issueAttentionRank(left) - issueAttentionRank(right) || left.ref.localeCompare(right.ref)),
+    [issues],
+  );
+  const runningIssues = useMemo(
+    () => issues.filter((issue) => workStatusLabel(issue) === "Running")
+      .sort((left, right) => issueAttentionRank(left) - issueAttentionRank(right) || left.ref.localeCompare(right.ref)),
+    [issues],
+  );
 
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -93,7 +108,7 @@ function App() {
     const labels = Object.keys(statusCounts).sort((left, right) => statusRank(left) - statusRank(right) || left.localeCompare(right));
     const activeCount = issues.filter((issue) => isActiveWorkStatus(workStatusLabel(issue))).length;
     return [
-      { id: "active" as const, label: "Active", count: activeCount },
+      { id: "active" as const, label: "Attention", count: activeCount },
       { id: "all" as const, label: "All", count: issues.length },
       ...labels.map((label) => ({ id: label, label, count: statusCounts[label] || 0 })),
     ];
@@ -153,20 +168,17 @@ function App() {
       const nextProjects = projectsPayload.projects ?? [];
       const nextProjectId = projectsPayload.activeProjectId || contextPayload.project?.id || nextProjects[0]?.id || "";
       const nextIssues = contextPayload.dashboard?.issues ?? [];
-      const activeFromContext = contextPayload.context?.active?.issueRef;
-
       setProjects(nextProjects);
       setActiveProjectId(nextProjectId);
       setIssues(nextIssues);
       setSnapshotLabel((contextPayload.dashboard?.snapshot?.freshnessLabel || "not loaded").replace(/^Snapshot\s+/i, ""));
       setContext(contextPayload.context ?? {});
       if (!sendingRef.current && (initial || !hasLoaded.current)) {
-        setConversation(seedConversation(contextPayload.context, nextProjectId, activeFromContext));
+        setConversation(seedConversation(contextPayload.context, nextProjectId));
       }
       setSelectedIssueRef((current) => {
         if (current && nextIssues.some((issue) => issue.ref === current)) return current;
-        if (activeFromContext && nextIssues.some((issue) => issue.ref === activeFromContext)) return activeFromContext;
-        return nextIssues[0]?.ref ?? "";
+        return "";
       });
       setExpandedIssueRef((current) => current && nextIssues.some((issue) => issue.ref === current) ? current : "");
       setStatus("ok");
@@ -369,6 +381,22 @@ function App() {
     void loadIssueThread(issueRef, requestId);
   }
 
+  function returnToMonitor(): void {
+    issueSelectionRequest.current += 1;
+    eventSourceRef.current?.close();
+    eventSourceRef.current = null;
+    subscribedSessionId.current = "";
+    setSelectedIssueRef("");
+    setSelectedSessionId("");
+    setExpandedIssueRef("");
+    setActiveSessionStatus("idle");
+    setPiActivity(null);
+    setConversation(seedConversation(context, activeProjectId));
+    setSystemNotice("");
+    setPendingConfirmation(null);
+    setError("");
+  }
+
   async function loadIssueThread(issueRef: string, requestId = issueSelectionRequest.current): Promise<void> {
     try {
       const started = await fetchIssueSession(issueRef);
@@ -449,6 +477,11 @@ function App() {
     phase: activeSessionStatus === "failed" ? "failed" : activeSessionStatus === "running" ? "thinking" : "idle",
     label: activeSessionStatus === "failed" ? "Agent failed" : activeSessionStatus === "running" ? "Agent is working" : "Agent ready",
   } satisfies PiActivityState : null);
+  const monitorActivity = headerActivity ?? {
+    phase: autoflowEnabled ? "idle" : "failed",
+    label: autoflowEnabled ? "Autoflow monitoring" : "Autoflow paused",
+  } satisfies PiActivityState;
+  const nextAutoflowIssue = runningIssues[0] ?? attentionIssues.find((issue) => !isExceptionalStatus(workStatusLabel(issue))) ?? attentionIssues[0];
 
   return (
     <div className="desktop-shell">
@@ -586,41 +619,134 @@ function App() {
         <header className="chat-header">
           <div className="chat-title-block">
             <div className="chat-title-row">
-              <h2>{selectedIssue ? selectedIssue.ref : "Select an issue"}</h2>
+              <h2>{selectedIssue ? selectedIssue.ref : "Autoflow Monitor"}</h2>
               {selectedIssue ? <span className={statusThemeClass(workStatusLabel(selectedIssue))}>{workStatusLabel(selectedIssue)}</span> : null}
             </div>
-            <p>{selectedIssue?.title || "Open an issue thread from the queue."}</p>
+            <p>{selectedIssue?.title || "Watching active work and surfacing issues that need intervention."}</p>
           </div>
           <div className="chat-header-actions">
+            {selectedIssue ? (
+              <button type="button" className="monitor-back-button" onClick={returnToMonitor}>
+                Monitor
+              </button>
+            ) : null}
             <StatusSummary
-              activity={headerActivity}
+              activity={selectedIssue ? headerActivity : monitorActivity}
             />
           </div>
         </header>
 
-        <AssistantChatSurface
-          conversation={conversation}
-          disabled={sending || activeSessionStatus === "running"}
-          running={activeSessionStatus === "running"}
-          notice={systemNotice ? (
-            <PendingActionNotice
-              text={systemNotice}
-              pendingConfirmation={pendingConfirmation}
-              approving={actionBusy === "approve_confirmation"}
-              onApprove={pendingConfirmation ? () => void invokeAction("approve_confirmation") : undefined}
-            />
-          ) : null}
-          onSubmit={(text) => submitPrompt(text)}
-          prompt={prompt}
-          onPromptChange={setPrompt}
-          showDoctor={showManualActions}
-          doctorBusy={actionBusy === "run_doctor"}
-          onDoctor={() => void invokeAction("run_doctor")}
-        />
+        {selectedIssue ? (
+          <AssistantChatSurface
+            conversation={conversation}
+            disabled={sending || activeSessionStatus === "running"}
+            running={activeSessionStatus === "running"}
+            notice={systemNotice ? (
+              <PendingActionNotice
+                text={systemNotice}
+                pendingConfirmation={pendingConfirmation}
+                approving={actionBusy === "approve_confirmation"}
+                onApprove={pendingConfirmation ? () => void invokeAction("approve_confirmation") : undefined}
+              />
+            ) : null}
+            onSubmit={(text) => submitPrompt(text)}
+            prompt={prompt}
+            onPromptChange={setPrompt}
+            showDoctor={showManualActions}
+            doctorBusy={actionBusy === "run_doctor"}
+            onDoctor={() => void invokeAction("run_doctor")}
+          />
+        ) : (
+          <AutoflowMonitor
+            enabled={autoflowEnabled}
+            issues={issues}
+            blockedIssues={blockedIssues}
+            runningIssues={runningIssues}
+            nextIssue={nextAutoflowIssue}
+            onSelectIssue={(issueRef) => void selectIssueThread(issueRef)}
+            onToggle={() => void toggleProjectAutoflow()}
+          />
+        )}
 
         {error ? <div className="error-line">{error}</div> : null}
       </main>
     </div>
+  );
+}
+
+function AutoflowMonitor({
+  enabled,
+  issues,
+  blockedIssues,
+  runningIssues,
+  nextIssue,
+  onSelectIssue,
+  onToggle,
+}: {
+  enabled: boolean;
+  issues: DashboardIssue[];
+  blockedIssues: DashboardIssue[];
+  runningIssues: DashboardIssue[];
+  nextIssue?: DashboardIssue;
+  onSelectIssue: (issueRef: string) => void;
+  onToggle: () => void;
+}) {
+  const doneCount = issues.filter((issue) => workStatusLabel(issue) === "Done").length;
+  const activeCount = issues.filter((issue) => isActiveWorkStatus(workStatusLabel(issue))).length;
+  return (
+    <section className="autoflow-monitor" aria-label="Autoflow monitor">
+      <div className={enabled ? "monitor-hero enabled" : "monitor-hero paused"}>
+        <div>
+          <div className="eyebrow">Autoflow</div>
+          <h2>{enabled ? "Monitoring active work" : "Paused"}</h2>
+          <p>{enabled ? "Flow will keep moving ready work and stop when an issue needs you." : "Turn Autoflow back on when you want Flow to keep advancing work."}</p>
+        </div>
+        <button type="button" className={enabled ? "monitor-toggle enabled" : "monitor-toggle"} onClick={onToggle}>
+          {enabled ? "On" : "Off"}
+        </button>
+      </div>
+
+      <div className="monitor-grid">
+        <article className="monitor-card">
+          <span className="monitor-number">{blockedIssues.length}</span>
+          <span className="monitor-label">Need intervention</span>
+        </article>
+        <article className="monitor-card">
+          <span className="monitor-number">{runningIssues.length}</span>
+          <span className="monitor-label">Running now</span>
+        </article>
+        <article className="monitor-card">
+          <span className="monitor-number">{activeCount}</span>
+          <span className="monitor-label">Active queue</span>
+        </article>
+        <article className="monitor-card">
+          <span className="monitor-number">{doneCount}</span>
+          <span className="monitor-label">Done hidden</span>
+        </article>
+      </div>
+
+      {nextIssue ? (
+        <button type="button" className="monitor-next" onClick={() => onSelectIssue(nextIssue.ref)}>
+          <span className="eyebrow">Next focus</span>
+          <strong>{nextIssue.ref} · {nextIssue.title || "Untitled issue"}</strong>
+          <span>{workStatusLabel(nextIssue)}{issueDetail(nextIssue) ? ` · ${issueDetail(nextIssue)}` : ""}</span>
+        </button>
+      ) : null}
+
+      <div className="monitor-section">
+        <div className="monitor-section-header">
+          <span>Needs user input</span>
+          <span>{blockedIssues.length}</span>
+        </div>
+        {blockedIssues.length ? blockedIssues.slice(0, 4).map((issue) => (
+          <button key={issue.ref} type="button" className="monitor-exception" onClick={() => onSelectIssue(issue.ref)}>
+            <span className={statusThemeClass(workStatusLabel(issue))}>{workStatusLabel(issue)}</span>
+            <strong>{issue.ref}</strong>
+            <span>{issue.title || "Untitled issue"}</span>
+          </button>
+        )) : <div className="monitor-empty">No blockers right now.</div>}
+      </div>
+    </section>
   );
 }
 

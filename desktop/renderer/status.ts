@@ -70,7 +70,7 @@ export function statusThemeClass(label: string): string {
 }
 
 export function statusFilterThemeClass(label: string): string {
-  if (label === "Active") return "status-theme-active";
+  if (label === "Active" || label === "Attention") return "status-theme-active";
   if (label === "All") return "status-theme-all";
   return statusMeta(label)?.themeClass ?? "status-theme-unknown";
 }
