@@ -9,10 +9,8 @@ import {
 } from "@assistant-ui/react";
 import {
   Activity,
-  Check,
   CircleCheck,
   ClipboardList,
-  Copy,
   FileText,
   Folder,
   RefreshCw,
@@ -79,7 +77,6 @@ function App() {
   const [status, setStatus] = useState<StatusKind>("loading");
   const [sending, setSending] = useState(false);
   const [actionBusy, setActionBusy] = useState("");
-  const [copiedHandoff, setCopiedHandoff] = useState(false);
   const [error, setError] = useState("");
   const refreshInFlight = useRef(false);
   const hasLoaded = useRef(false);
@@ -124,16 +121,11 @@ function App() {
         issue.prStatus,
         issue.reviewStatus,
         issue.nextPickup,
-        issue.handoffPrompt,
         ...(issue.blockerLabels ?? []),
         ...(issue.repositories ?? []),
       ].join(" ").toLowerCase().includes(needle);
     }).sort((left, right) => issueAttentionRank(left) - issueAttentionRank(right) || left.ref.localeCompare(right.ref));
   }, [activeStatus, issues, query]);
-
-  useEffect(() => {
-    setCopiedHandoff(false);
-  }, [selectedIssueRef]);
 
   useEffect(() => {
     void refresh(true);
@@ -424,15 +416,6 @@ function App() {
     }
   }
 
-  async function copyHandoffPrompt(issue = selectedIssue): Promise<void> {
-    const text = (issue?.handoffPrompt || issue?.nextPickup || "").trim();
-    if (!text) return;
-    const ok = await copyText(text);
-    if (!ok) return;
-    setCopiedHandoff(true);
-    window.setTimeout(() => setCopiedHandoff(false), 1200);
-  }
-
   const snapshotStatusLabel = status === "error" ? "Snapshot unavailable" : snapshotLabel;
   const showManualActions = selectedIssue ? isManualActionIssue(selectedIssue) : false;
 
@@ -530,12 +513,7 @@ function App() {
                   {isManualActionIssue(issue) ? <span>Doctor</span> : null}
                 </div>
               </button>
-              {expandedIssueRef === issue.ref ? (
-                <IssueDetails issue={issue} copied={copiedHandoff && selectedIssueRef === issue.ref} onCopyHandoff={() => {
-                  setSelectedIssueRef(issue.ref);
-                  void copyHandoffPrompt(issue);
-                }} />
-              ) : null}
+              {expandedIssueRef === issue.ref ? <IssueDetails issue={issue} /> : null}
             </article>
           ))}
           {!filteredIssues.length ? <div className="empty-state">No matching issues</div> : null}
@@ -705,16 +683,11 @@ function PendingActionNotice({
 
 function IssueDetails({
   issue,
-  copied,
-  onCopyHandoff,
 }: {
   issue: DashboardIssue;
-  copied: boolean;
-  onCopyHandoff: () => void;
 }) {
   const blockers = issue.blockerLabels ?? [];
   const repos = issue.repositories ?? [];
-  const handoffPrompt = (issue.handoffPrompt || issue.nextPickup || "").trim();
   return (
     <section className="issue-detail">
       <div className="detail-section">
@@ -769,17 +742,6 @@ function IssueDetails({
           </div>
         </div>
       ) : null}
-
-      {handoffPrompt ? (
-        <div className="detail-section">
-          <div className="eyebrow">Handoff Prompt</div>
-          <pre className="handoff-box">{handoffPrompt}</pre>
-          <button type="button" className="copy-button" onClick={onCopyHandoff}>
-            {copied ? <Check size={14} /> : <Copy size={14} />}
-            {copied ? "Copied" : "Copy"}
-          </button>
-        </div>
-      ) : null}
     </section>
   );
 }
@@ -799,31 +761,6 @@ function WorkflowTrack({ status }: { status?: string }) {
       ))}
     </div>
   );
-}
-
-async function copyText(value: string): Promise<boolean> {
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(value);
-      return true;
-    } catch {
-      // Fall back.
-    }
-  }
-  const target = document.createElement("textarea");
-  target.value = value;
-  target.setAttribute("readonly", "true");
-  target.style.position = "fixed";
-  target.style.left = "-9999px";
-  target.style.top = "0";
-  document.body.append(target);
-  target.select();
-  try {
-    document.execCommand("copy");
-    return true;
-  } finally {
-    target.remove();
-  }
 }
 
 function actionPayload(

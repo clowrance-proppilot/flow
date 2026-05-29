@@ -243,8 +243,7 @@ h2 {
   font-size: 0.77rem;
 }
 
-.icon-button,
-.copy-button {
+.icon-button {
   display: grid;
   place-items: center;
   border: 1px solid var(--th-border);
@@ -640,31 +639,6 @@ h2 {
   border-color: rgb(239 68 68 / 0.45);
   background: rgb(239 68 68 / 0.14);
   color: #fee2e2;
-}
-
-.handoff-box {
-  margin: 0;
-  max-height: 10rem;
-  overflow: auto;
-  white-space: pre-wrap;
-  border: 1px solid var(--th-border);
-  border-radius: 0.45rem;
-  background: var(--th-input);
-  color: var(--th-fg-soft);
-  padding: 0.65rem;
-  font-size: 0.74rem;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
-
-.copy-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  margin-top: 0.5rem;
-  padding: 0.34rem 0.58rem;
-  color: var(--th-primary);
-  background: rgb(56 189 248 / 0.1);
 }
 
 .chat-header-actions {
