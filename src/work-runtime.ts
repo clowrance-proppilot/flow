@@ -741,9 +741,15 @@ export class FlowWorkRuntime {
   }
 
   async inspectDashboardQueue(limit = 10, sessionId?: string): Promise<DashboardQueueIssue[]> {
-    const issues = await this.ledger.listIssues(limit);
+    const sourceIssues = await this.ledger.listIssues(Math.max(limit * 4, 1000));
     const session = sessionId ? await this.store.readSession(sessionId) : undefined;
     const selectedIssueRef = session?.selectedIssueRef;
+    const reconciledIssues = await mapWithConcurrency(sourceIssues, workRuntimeQueueConcurrency(), (issue) =>
+      this.reconcileDashboardTerminalState(issue)
+    );
+    const issues = reconciledIssues
+      .filter((issue) => issue.state !== "done")
+      .slice(0, limit);
     return mapWithConcurrency(issues, workRuntimeQueueConcurrency(), async (issue) => {
       const review = reviewMetadata(issue);
       const workerResults = await this.ledger.listWorkerResults(issue.ref);
@@ -787,6 +793,11 @@ export class FlowWorkRuntime {
         handoffPrompt: latestWorkerResult?.handoffPrompt?.trim() || undefined,
       };
     });
+  }
+
+  private async reconcileDashboardTerminalState(issue: WorkItem): Promise<WorkItem> {
+    if (issue.state === "done" || !isIssueTrackerDone(issue)) return issue;
+    return this.ledger.writeIssue({ ...issue, state: "done" });
   }
 
   async inspectBacklog(limit = 10): Promise<WorkItem[]> {

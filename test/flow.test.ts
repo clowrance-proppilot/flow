@@ -3350,6 +3350,40 @@ test("Dashboard queue reads ledger state without provider refresh", async () => 
   assert.equal(collaborationCalls, 0);
 });
 
+test("Dashboard queue reconciles and hides closed issue tracker records", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-dashboard-closed-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  await ledger.writeIssue({
+    ref: "GH-166-CLOSED",
+    title: "Closed stale issue",
+    repoKeys: ["app_api"],
+    state: "selected",
+    metadata: {
+      issueStatus: "Closed",
+      issueStatusCategory: "Complete",
+      issueResolution: "Done",
+    },
+  });
+  await ledger.writeIssue({
+    ref: "GH-166-OPEN",
+    title: "Open issue",
+    repoKeys: ["app_api"],
+    state: "queued",
+    metadata: {
+      issueStatus: "Open",
+      issueStatusCategory: "To Do",
+    },
+  });
+
+  const queue = await workRuntime.inspectDashboardQueue(10);
+  const closed = await ledger.readIssue("GH-166-CLOSED");
+
+  assert.equal(queue.some((issue) => issue.ref === "GH-166-CLOSED"), false);
+  assert.equal(queue.some((issue) => issue.ref === "GH-166-OPEN"), true);
+  assert.equal(closed?.state, "done");
+});
+
 test("Dashboard queue omits source-control and provider internals", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-dashboard-public-contract-"));
   const ledger = new MemoryWorkflowLedger();
