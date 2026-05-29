@@ -58,6 +58,7 @@ export interface PiAgentPromptInput {
   sessionFile?: string;
   issueRef: string;
   prompt: string;
+  mode?: PiAgentMessageMode;
   repoRoot: string;
   workspacePath?: string;
   onEvent?: SessionEventListener;
@@ -77,6 +78,7 @@ export interface PiAgentRunner {
 }
 
 export type PiSessionStatus = "active" | "running" | "paused" | "done" | "failed";
+export type PiAgentMessageMode = "prompt" | "followUp" | "steer";
 
 export class PiSessionDriver {
   private readonly runtime: RuntimeIssueSurface;
@@ -175,18 +177,18 @@ export class PiSessionDriver {
     };
   }
 
-  async postPrompt(sessionId: string, prompt: string): Promise<PiSessionSnapshot> {
+  async postPrompt(sessionId: string, prompt: string, mode: PiAgentMessageMode = "prompt"): Promise<PiSessionSnapshot> {
     const { session, contextualPrompt } = await this.appendUserPrompt(sessionId, prompt);
-    await this.runPrompt(session, contextualPrompt);
+    await this.runPrompt(session, contextualPrompt, mode);
     return session;
   }
 
-  async sendUserMessage(sessionId: string, input: { text: string }): Promise<PiSessionSnapshot> {
+  async sendUserMessage(sessionId: string, input: { text: string; mode?: PiAgentMessageMode }): Promise<PiSessionSnapshot> {
     const { session, contextualPrompt } = await this.appendUserPrompt(sessionId, input.text);
     const previous = this.promptQueueBySessionId.get(session.id) ?? Promise.resolve();
     const queued = previous
       .catch(() => undefined)
-      .then(() => this.runPrompt(session, contextualPrompt));
+      .then(() => this.runPrompt(session, contextualPrompt, input.mode ?? "followUp"));
     this.promptQueueBySessionId.set(session.id, queued);
     void queued.finally(() => {
       if (this.promptQueueBySessionId.get(session.id) === queued) this.promptQueueBySessionId.delete(session.id);
@@ -252,7 +254,7 @@ export class PiSessionDriver {
     return { session, contextualPrompt };
   }
 
-  private async runPrompt(session: PiSessionSnapshot, contextualPrompt: string): Promise<void> {
+  private async runPrompt(session: PiSessionSnapshot, contextualPrompt: string, mode: PiAgentMessageMode = "prompt"): Promise<void> {
     if (!this.agent) {
       const handoff = await this.runtime.summarizeHandoff(session.flowSessionId).catch(() => "");
       session.timeline.push({
@@ -271,6 +273,7 @@ export class PiSessionDriver {
           sessionFile: session.sessionFile,
           issueRef: session.issueRef,
           prompt: contextualPrompt,
+          mode,
           repoRoot: this.repoRoot,
           workspacePath: session.workspacePath,
           onEvent: (event) => this.applyDriverEvent(session, event),

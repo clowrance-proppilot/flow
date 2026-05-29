@@ -8,6 +8,7 @@ import { DashboardState } from "../src/dashboard-state.js";
 import { validateFlowConfig } from "../src/config/config-loader.js";
 import { createConfiguredWorkRuntime } from "../src/runtime-factory.js";
 import { DesktopActionRouter } from "./action-router.js";
+import { PiAgentOrchestrator } from "./pi-agent-orchestrator.js";
 import { PiSessionDriver } from "./pi-session-driver.js";
 import { DesktopProjectRegistry, type DesktopProjectRecord } from "./project-registry.js";
 import { DesktopPromptRouter, type DesktopAgentSessionAdapter } from "./prompt-router.js";
@@ -77,15 +78,24 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
       projectRoot: project.root,
       flowConfig: configValidation.config,
     });
+    const dashboardState = new DashboardState({ runtime: configured.runtime });
+    const piSessionDriver = new PiSessionDriver({
+      runtime: configured.runtime,
+      repoRoot: project.root,
+      flowSessionId: `desktop-${project.id}`,
+      agent: process.env.FLOW_DESKTOP_AGENT === "disabled" ? false : undefined,
+    });
     const surface: DesktopProjectSurface = {
       project,
       configured,
-      dashboardState: new DashboardState({ runtime: configured.runtime }),
-      piSessionDriver: new PiSessionDriver({
+      dashboardState,
+      piSessionDriver,
+      piAgentOrchestrator: new PiAgentOrchestrator({
+        projectId: project.id,
         runtime: configured.runtime,
-        repoRoot: project.root,
-        flowSessionId: `desktop-${project.id}`,
-        agent: process.env.FLOW_DESKTOP_AGENT === "disabled" ? false : undefined,
+        dashboardState,
+        piSessionDriver,
+        enabled: () => project.autoflowEnabled !== false,
       }),
     };
     projectSurfaces.set(project.id, surface);
@@ -98,19 +108,23 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
         return { summary: "Prompt recorded for project context." };
       }
       const surface = await projectSurface(input.project);
-      let session = input.sessionId
+      const session = input.sessionId
         ? await surface.piSessionDriver.getSession(input.sessionId).catch(() => undefined)
         : undefined;
-      session ??= await surface.piSessionDriver.openOrCreateIssueSession(input.issueRef);
-      void surface.piSessionDriver.sendUserMessage(session.id, { text: input.prompt }).catch((error) => {
+      void surface.piAgentOrchestrator.sendUserMessage({
+        issueRef: input.issueRef,
+        sessionId: session?.id,
+        text: input.prompt,
+      }).catch((error) => {
         console.error("[flow-desktop] pi prompt failed:", error);
       });
-      const summary = `Prompt sent to ${session.issueRef}.`;
+      const target = session ?? await surface.piSessionDriver.openOrCreateIssueSession(input.issueRef);
+      const summary = `Prompt sent to ${target.issueRef}.`;
       return {
         session: {
-          id: session.id,
+          id: target.id,
           provider: "pi",
-          workspacePath: session.workspacePath,
+          workspacePath: target.workspacePath,
           status: "active",
           summary,
         },
@@ -145,6 +159,11 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
   registerWorkRoutes(server, routeContext, { promptRouter, actionRouter }, jsonBody);
   registerStaticRoutes(server, { desktopFilePath, dashboardFilePath });
 
+  const autoflowInterval = setInterval(() => {
+    void runActiveProjectAutoflowTick(projectRegistry, projectSurface);
+  }, 15000);
+  void runActiveProjectAutoflowTick(projectRegistry, projectSurface);
+
   // Find a free port
   return new Promise((resolve, reject) => {
     const listener = server.listen(0, "127.0.0.1", () => {
@@ -156,8 +175,19 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
       }
     });
     listener.on("error", reject);
+    listener.on("close", () => clearInterval(autoflowInterval));
     dashboardServer = listener;
   });
+}
+
+async function runActiveProjectAutoflowTick(
+  projectRegistry: DesktopProjectRegistry,
+  projectSurface: (project: DesktopProjectRecord) => Promise<DesktopProjectSurface>,
+): Promise<void> {
+  const project = await projectRegistry.activeProject();
+  if (!project || project.autoflowEnabled === false) return;
+  const surface = await projectSurface(project);
+  await surface.piAgentOrchestrator.tick();
 }
 
 function createWindow(port: number): BrowserWindow {

@@ -41,6 +41,7 @@ import type {
   DashboardPayload,
   DesktopAction,
   PendingConfirmationState,
+  PiAgentOrchestratorStatus,
   PiActivityState,
   PiSessionEvent,
   PiSessionSnapshot,
@@ -144,6 +145,15 @@ function App() {
     void loadIssueThread(selectedIssueRef);
   }, [selectedIssueRef, selectedSessionId]);
 
+  useEffect(() => {
+    if (!activeProjectId) return;
+    void refreshAutoflowStatus();
+    const interval = window.setInterval(() => void refreshAutoflowStatus(), 5000);
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [activeProjectId]);
+
   async function refresh(initial = false): Promise<void> {
     if (refreshInFlight.current) return;
     refreshInFlight.current = true;
@@ -221,9 +231,19 @@ function App() {
         body: JSON.stringify({ enabled }),
       });
       setProjects((items) => items.map((project) => project.id === result.project.id ? { ...project, ...result.project } : project));
+      if (enabled) void fetchJson("/api/autoflow/tick", { method: "POST" }).then(() => refreshAutoflowStatus()).catch(() => undefined);
     } catch {
       setProjects((items) => items.map((project) => project.id === activeProject.id ? { ...project, autoflowEnabled: !enabled } : project));
       setError("Unable to update Autoflow for this project.");
+    }
+  }
+
+  async function refreshAutoflowStatus(): Promise<void> {
+    try {
+      const result = await fetchJson<{ ok?: boolean; status: PiAgentOrchestratorStatus }>("/api/autoflow/status");
+      setAutoflowActivity(activityFromAutoflowStatus(result.status));
+    } catch {
+      setAutoflowActivity(null);
     }
   }
 
@@ -762,6 +782,8 @@ function App() {
               showDoctor={showManualActions}
               doctorBusy={actionBusy === "run_doctor"}
               onDoctor={() => void invokeAction("run_doctor")}
+              autoflowBusy={actionBusy === "autoflow"}
+              onAutoflow={() => void invokeAction("autoflow")}
             />
 
             {error ? <div className="error-line">{error}</div> : null}
@@ -784,6 +806,8 @@ function AssistantChatSurface({
   showDoctor,
   doctorBusy,
   onDoctor,
+  autoflowBusy,
+  onAutoflow,
 }: {
   conversation: ConversationItem[];
   disabled: boolean;
@@ -796,6 +820,8 @@ function AssistantChatSurface({
   showDoctor: boolean;
   doctorBusy: boolean;
   onDoctor: () => void;
+  autoflowBusy: boolean;
+  onAutoflow: () => void;
 }) {
   const visibleMessages = useMemo(
     () => conversation.filter((item) => item.role === "user" || item.role === "assistant"),
@@ -851,6 +877,9 @@ function AssistantChatSurface({
             <Stethoscope size={17} />
           </button>
         ) : null}
+        <button type="button" title="Run Autoflow" className="composer-tool-button" onClick={onAutoflow} disabled={disabled || autoflowBusy}>
+          <Waypoints size={17} />
+        </button>
         <button type="button" title="Send prompt" className="assistant-send-button" onClick={() => void handleSubmit()} disabled={!canSubmit}>
           <Send size={17} />
         </button>
@@ -1007,6 +1036,32 @@ function StatusSummary({
       {showDetail && activity?.detail ? <span className="pi-activity-detail">{activity.detail}</span> : null}
     </div>
   );
+}
+
+function activityFromAutoflowStatus(status: PiAgentOrchestratorStatus): AutoflowActivityState {
+  const phaseMap: Record<PiAgentOrchestratorStatus["phase"], AutoflowActivityState["phase"]> = {
+    paused: "idle",
+    idle: "idle",
+    starting: "starting",
+    running: "thinking",
+    needs_input: "failed",
+    failed: "failed",
+  };
+  const labelMap: Record<PiAgentOrchestratorStatus["phase"], string> = {
+    paused: "Autoflow paused",
+    idle: "Autoflow idle",
+    starting: "Autoflow starting",
+    running: "Autoflow working",
+    needs_input: "Autoflow needs input",
+    failed: "Autoflow failed",
+  };
+  return {
+    phase: phaseMap[status.phase],
+    label: labelMap[status.phase],
+    detail: status.summary,
+    issueRef: status.issueRef,
+    updatedAt: status.updatedAt,
+  };
 }
 
 function AutoflowHealth({

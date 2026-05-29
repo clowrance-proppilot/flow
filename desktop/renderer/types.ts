@@ -129,3 +129,13 @@ export type PiActivityState = {
   toolName?: string;
   updatedAt?: string;
 };
+
+export type PiAgentOrchestratorStatus = {
+  enabled: boolean;
+  phase: "paused" | "idle" | "starting" | "running" | "needs_input" | "failed";
+  issueRef?: string;
+  sessionId?: string;
+  workspacePath?: string;
+  summary?: string;
+  updatedAt: string;
+};

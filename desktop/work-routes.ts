@@ -109,6 +109,27 @@ export function registerWorkRoutes(
     }
   });
 
+  server.get("/api/autoflow/status", async (_req, res) => {
+    try {
+      const project = await requireActiveProject(projectRegistry);
+      const surface = await projectSurface(project);
+      res.json({ ok: true, status: surface.piAgentOrchestrator.getStatus() });
+    } catch (error) {
+      res.status(400).json({ ok: false, error: message(error) });
+    }
+  });
+
+  server.post("/api/autoflow/tick", async (_req, res) => {
+    try {
+      const project = await requireActiveProject(projectRegistry);
+      const surface = await projectSurface(project);
+      const status = await surface.piAgentOrchestrator.tick();
+      res.json({ ok: true, status });
+    } catch (error) {
+      res.status(400).json({ ok: false, error: message(error) });
+    }
+  });
+
   server.get("/api/pi/issues", async (_req, res) => {
     try {
       const project = await requireActiveProject(projectRegistry);
@@ -168,7 +189,12 @@ export function registerWorkRoutes(
         return;
       }
       const prompt = typeof req.body?.prompt === "string" ? req.body.prompt : "";
-      const session = await surface.piSessionDriver.postPrompt(sessionId, prompt);
+      const current = await surface.piSessionDriver.getSession(sessionId);
+      const session = await surface.piAgentOrchestrator.sendUserMessage({
+        issueRef: current.issueRef,
+        sessionId,
+        text: prompt,
+      });
       res.json({ ok: true, session });
     } catch (error) {
       res.status(400).json({ ok: false, error: message(error) });
