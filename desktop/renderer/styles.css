@@ -695,6 +695,43 @@ h2 {
   line-height: 1.4;
 }
 
+.pending-action-notice {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+  border-top: 1px solid var(--th-border);
+  background: rgb(15 26 46 / 0.84);
+  color: var(--th-fg-soft);
+  padding: 0.46rem max(1rem, calc((100% - 52rem) / 2));
+  font-size: 0.76rem;
+}
+
+.pending-action-notice.needs-confirmation {
+  background: rgb(245 158 11 / 0.13);
+}
+
+.pending-action-label {
+  flex: 0 0 auto;
+  border: 1px solid rgb(245 158 11 / 0.5);
+  border-radius: 999px;
+  background: rgb(245 158 11 / 0.14);
+  color: #fef3c7;
+  padding: 0.12rem 0.48rem;
+  font-size: 0.66rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.045em;
+}
+
+.pending-action-text {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--th-fg);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .timeline {
   display: grid;
   align-content: start;
@@ -702,6 +739,25 @@ h2 {
   min-height: 0;
   overflow: auto;
   padding: 1.1rem max(1rem, calc((100% - 52rem) / 2));
+}
+
+.assistant-thread {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-height: 0;
+}
+
+.assistant-viewport {
+  scroll-behavior: smooth;
+}
+
+.assistant-empty-state {
+  border: 1px solid var(--th-border);
+  border-radius: 0.55rem;
+  background: var(--th-card);
+  color: var(--th-fg-muted);
+  padding: 0.72rem;
+  font-size: 0.82rem;
 }
 
 .message {
@@ -784,6 +840,10 @@ h2 {
   gap: 0.6rem;
   padding: 0.85rem max(1rem, calc((100% - 52rem) / 2));
   background: var(--th-input);
+}
+
+.assistant-composer {
+  border-top: 1px solid var(--th-border);
 }
 
 .composer textarea {

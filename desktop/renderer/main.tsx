@@ -1,4 +1,14 @@
 import {
+  AssistantRuntimeProvider,
+  ComposerPrimitive,
+  MessagePrimitive,
+  ThreadPrimitive,
+  type AppendMessage,
+  type ThreadMessageLike,
+  useExternalStoreRuntime,
+  useMessage,
+} from "@assistant-ui/react";
+import {
   Activity,
   Check,
   CircleCheck,
@@ -12,7 +22,7 @@ import {
   Stethoscope,
   Waypoints,
 } from "lucide-react";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { projectThemeFor } from "../../src/theme/project-theme";
 import "./styles.css";
@@ -154,7 +164,6 @@ function App() {
   const [error, setError] = useState("");
   const refreshInFlight = useRef(false);
   const hasLoaded = useRef(false);
-  const conversationEndRef = useRef<HTMLDivElement | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const subscribedSessionId = useRef("");
   const sendingRef = useRef(false);
@@ -203,10 +212,6 @@ function App() {
   useEffect(() => {
     setCopiedHandoff(false);
   }, [selectedIssueRef]);
-
-  useEffect(() => {
-    conversationEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [conversation.length]);
 
   useEffect(() => {
     void refresh(true);
@@ -280,8 +285,8 @@ function App() {
     }
   }
 
-  async function submitPrompt(): Promise<void> {
-    const text = prompt.trim();
+  async function submitPrompt(textOverride?: string): Promise<void> {
+    const text = (textOverride ?? prompt).trim();
     if (!text) return;
     if (activeSessionStatus === "running") {
       setError("Pi is still running. Wait for this turn to finish before sending another prompt.");
@@ -297,7 +302,7 @@ function App() {
       createdAt: new Date().toISOString(),
     };
     setConversation((items) => [...items, userItem]);
-    setPrompt("");
+    if (!textOverride) setPrompt("");
     try {
       let sessionId = selectedIssueRef ? sessionIdByIssueRef[selectedIssueRef] || selectedSessionId : undefined;
       if (selectedIssueRef) {
@@ -630,17 +635,13 @@ function App() {
           </div>
         </header>
 
-        {systemNotice ? <div className="system-notice">{systemNotice}</div> : null}
-
-        <section className="timeline">
-          {conversation.map((item) => (
-            <article key={item.id} className={`message ${item.role}`}>
-              <div className="message-role">{item.role}</div>
-              <div className="message-text">{item.text}</div>
-            </article>
-          ))}
-          <div ref={conversationEndRef} />
-        </section>
+        <AssistantChatSurface
+          conversation={conversation}
+          disabled={sending || activeSessionStatus === "running"}
+          running={activeSessionStatus === "running"}
+          fallbackLabel={selectedIssueRef ? `Selected ${selectedIssueRef}.` : "Select an issue."}
+          onSubmit={(text) => submitPrompt(text)}
+        />
 
         {showManualActions ? (
           <div className="action-strip" aria-label="Manual closeout actions">
@@ -661,26 +662,105 @@ function App() {
           </div>
         ) : null}
 
-        <section className="composer">
-          <textarea
-            value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                void submitPrompt();
-              }
-            }}
-            placeholder="Work with Flow on this issue..."
-          />
-          <button type="button" title="Send prompt" onClick={() => void submitPrompt()} disabled={sending || activeSessionStatus === "running" || !prompt.trim()}>
-            <Send size={17} />
-          </button>
-        </section>
+        {systemNotice ? <PendingActionNotice text={systemNotice} /> : null}
+
         {activeSessionStatus === "running" ? <div className="session-line">Pi is running. Follow-up queueing is next.</div> : null}
 
         {error ? <div className="error-line">{error}</div> : null}
       </main>
+    </div>
+  );
+}
+
+function AssistantChatSurface({
+  conversation,
+  disabled,
+  running,
+  fallbackLabel,
+  onSubmit,
+}: {
+  conversation: ConversationItem[];
+  disabled: boolean;
+  running: boolean;
+  fallbackLabel: string;
+  onSubmit: (text: string) => Promise<void>;
+}) {
+  const visibleMessages = useMemo(
+    () => conversation.filter((item) => item.role === "user" || item.role === "assistant"),
+    [conversation],
+  );
+  const handleNew = useCallback(async (message: AppendMessage) => {
+    const text = extractAppendMessageText(message);
+    if (text) await onSubmit(text);
+  }, [onSubmit]);
+  const runtime = useExternalStoreRuntime<ConversationItem>({
+    messages: visibleMessages,
+    isRunning: running,
+    isSendDisabled: disabled,
+    convertMessage: conversationItemToThreadMessage,
+    onNew: handleNew,
+  });
+
+  return (
+    <AssistantRuntimeProvider runtime={runtime}>
+      <ThreadPrimitive.Root className="assistant-thread">
+        <ThreadPrimitive.Viewport className="timeline assistant-viewport" autoScroll>
+          <ThreadPrimitive.Empty>
+            <div className="assistant-empty-state">{fallbackLabel} Use the composer for the next turn.</div>
+          </ThreadPrimitive.Empty>
+          <ThreadPrimitive.Messages components={{ Message: AssistantMessage }} />
+          <ThreadPrimitive.ViewportFooter />
+        </ThreadPrimitive.Viewport>
+        <ComposerPrimitive.Root className="composer assistant-composer">
+          <ComposerPrimitive.Input placeholder="Work with Flow on this issue..." submitMode="enter" minRows={1} maxRows={6} />
+          <ComposerPrimitive.Send title="Send prompt" className="assistant-send-button">
+            <Send size={17} />
+          </ComposerPrimitive.Send>
+        </ComposerPrimitive.Root>
+      </ThreadPrimitive.Root>
+    </AssistantRuntimeProvider>
+  );
+}
+
+function AssistantMessage() {
+  const role = useMessage((message) => message.role);
+  const text = useMessage((message) => message.content
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("\n\n"));
+  return (
+    <MessagePrimitive.Root className={`message ${role}`}>
+      <div className="message-role">{role}</div>
+      <div className="message-text">{text}</div>
+    </MessagePrimitive.Root>
+  );
+}
+
+function conversationItemToThreadMessage(item: ConversationItem): ThreadMessageLike {
+  return {
+    id: item.id,
+    role: item.role === "user" ? "user" : "assistant",
+    content: [{ type: "text", text: item.text }],
+    createdAt: new Date(item.createdAt),
+    status: item.role === "assistant" ? { type: "complete", reason: "stop" } : undefined,
+  };
+}
+
+function extractAppendMessageText(message: AppendMessage): string {
+  return message.content
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("\n\n")
+    .trim();
+}
+
+function PendingActionNotice({ text }: { text: string }) {
+  const isConfirmation = text.toLowerCase().startsWith("needs confirmation:");
+  const body = isConfirmation ? text.replace(/^needs confirmation:\s*/i, "").trim() : text;
+  return (
+    <div className={isConfirmation ? "pending-action-notice needs-confirmation" : "pending-action-notice"} aria-label="Workflow notice">
+      <span className="pending-action-label">{isConfirmation ? "Needs confirmation" : "Workflow"}</span>
+      <span className="pending-action-text">{body}</span>
     </div>
   );
 }

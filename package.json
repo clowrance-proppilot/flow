@@ -90,6 +90,7 @@
     ]
   },
   "dependencies": {
+    "@assistant-ui/react": "^0.14.11",
     "@earendil-works/pi-coding-agent": "^0.76.0",
     "@vitejs/plugin-react": "^5.2.0",
     "autoprefixer": "^10.5.0",
