@@ -989,7 +989,7 @@ h2 {
   text-align: center;
 }
 
-@media (max-width: 1180px) {
+@media (max-width: 760px) {
   .desktop-shell {
     grid-template-columns: 4.6rem minmax(0, 1fr);
   }

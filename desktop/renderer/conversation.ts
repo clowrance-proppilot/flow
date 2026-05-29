@@ -32,19 +32,29 @@ export function seedConversation(context?: ContextProjection, projectId?: string
 
 export function conversationFromPiSession(session: PiSessionSnapshot): ConversationItem[] {
   const items: ConversationItem[] = [];
+  let pendingAssistant: ConversationItem | undefined;
+  const flushAssistant = () => {
+    if (pendingAssistant) items.push(pendingAssistant);
+    pendingAssistant = undefined;
+  };
   for (const item of session.timeline) {
     if (item.role !== "user" && item.role !== "assistant") continue;
     const text = item.content.trim();
     if (!text) continue;
-    const previous = items.at(-1);
-    if (previous?.role === item.role && previous.text.trim() === text) continue;
-    items.push({
+    if (item.role === "user") flushAssistant();
+    const conversationItem = {
       id: `pi-${session.id}-${item.id}`,
       role: item.role,
       text,
       createdAt: item.createdAt,
-    });
+    } satisfies ConversationItem;
+    if (item.role === "assistant") {
+      pendingAssistant = conversationItem;
+    } else {
+      items.push(conversationItem);
+    }
   }
+  flushAssistant();
   return items.length ? items : seedConversation(undefined, undefined, session.issueRef);
 }
 

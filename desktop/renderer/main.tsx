@@ -250,6 +250,13 @@ function App() {
         }),
       });
       setContext(result.projection ?? context);
+      setActiveSessionStatus(result.error ? "failed" : "idle");
+      setPiActivity({
+        phase: result.error ? "failed" : "done",
+        label: result.error ? "Pi failed" : "Pi finished",
+        detail: result.error || result.summary,
+        updatedAt: new Date().toISOString(),
+      });
       setConversation((items) => {
         const text = result.error || result.summary || (result.sessionId
           ? `Prompt routed to session ${result.sessionId}.`
@@ -312,19 +319,6 @@ function App() {
     if (event.type === "assistantDelta" && event.text) {
       const nextActivity = activityFromPiEvent(event);
       if (nextActivity) setPiActivity(nextActivity);
-      const id = `stream-${sessionId}`;
-      setConversation((items) => {
-        const existing = items.find((item) => item.id === id);
-        if (existing) {
-          return items.map((item) => item.id === id ? { ...item, text: item.text + event.text } : item);
-        }
-        return [...items, {
-          id,
-          role: "assistant",
-          text: event.text ?? "",
-          createdAt: event.timestamp,
-        }];
-      });
       return;
     }
     if (event.type === "toolStarted" || event.type === "toolUpdated" || event.type === "toolFinished") {
@@ -651,24 +645,6 @@ function AssistantMessage() {
   );
 }
 
-function conversationItemToThreadMessage(item: ConversationItem): ThreadMessageLike {
-  return {
-    id: item.id,
-    role: item.role === "user" ? "user" : "assistant",
-    content: [{ type: "text", text: item.text }],
-    createdAt: new Date(item.createdAt),
-    status: item.role === "assistant" ? { type: "complete", reason: "stop" } : undefined,
-  };
-}
-
-function extractAppendMessageText(message: AppendMessage): string {
-  return message.content
-    .filter((part) => part.type === "text")
-    .map((part) => part.text)
-    .join("\n\n")
-    .trim();
-}
-
 function PendingActionNotice({
   text,
   pendingConfirmation,
@@ -792,20 +768,6 @@ function WorkflowTrack({ status }: { status?: string }) {
       ))}
     </div>
   );
-}
-
-function actionPayload(
-  action: DesktopAction,
-  prompt: string,
-  issue: DashboardIssue | undefined,
-  pendingConfirmation?: PendingConfirmationState | null,
-): Record<string, unknown> {
-  const summary = prompt.trim() || issue?.title || issue?.ref || "Flow Desktop action";
-  if (action === "approve_confirmation") return { confirmationId: pendingConfirmation?.id };
-  if (action === "record_evidence") return { summary, source: "Flow Desktop conversation" };
-  if (action === "record_documentation") return { summary, disposition: "not_needed" };
-  if (action === "record_result") return { summary, status: "succeeded" };
-  return {};
 }
 
 createRoot(document.getElementById("root") as HTMLElement).render(<App />);
