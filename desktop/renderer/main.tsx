@@ -1,13 +1,4 @@
 import {
-  AssistantRuntimeProvider,
-  ComposerPrimitive,
-  MessagePrimitive,
-  ThreadPrimitive,
-  type AppendMessage,
-  useExternalStoreRuntime,
-  useMessage,
-} from "@assistant-ui/react";
-import {
   CircleCheck,
   ClipboardList,
   FileText,
@@ -23,7 +14,7 @@ import { createRoot } from "react-dom/client";
 import { projectThemeFor } from "../../src/theme/project-theme";
 import { actionPayload, formatActionSummary, pendingConfirmationFromActionResult } from "./action-format";
 import { errorMessage, fetchJson } from "./api";
-import { activityFromPiEvent, activityFromPiSession, conversationFromPiSession, conversationItemToThreadMessage, extractAppendMessageText, seedConversation } from "./conversation";
+import { activityFromPiEvent, activityFromPiSession, conversationFromPiSession, seedConversation } from "./conversation";
 import {
   contextLine,
   isExceptionalStatus,
@@ -60,7 +51,7 @@ function App() {
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [activeProjectId, setActiveProjectId] = useState("");
   const [issues, setIssues] = useState<DashboardIssue[]>([]);
-  const [snapshotLabel, setSnapshotLabel] = useState("Snapshot not loaded");
+  const [snapshotLabel, setSnapshotLabel] = useState("not loaded");
   const [context, setContext] = useState<ContextProjection>({});
   const [selectedIssueRef, setSelectedIssueRef] = useState("");
   const [selectedSessionId, setSelectedSessionId] = useState("");
@@ -137,6 +128,11 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!selectedIssueRef || selectedSessionId) return;
+    void loadIssueThread(selectedIssueRef);
+  }, [selectedIssueRef, selectedSessionId]);
+
   async function refresh(initial = false): Promise<void> {
     if (refreshInFlight.current) return;
     refreshInFlight.current = true;
@@ -162,7 +158,7 @@ function App() {
       setProjects(nextProjects);
       setActiveProjectId(nextProjectId);
       setIssues(nextIssues);
-      setSnapshotLabel(contextPayload.dashboard?.snapshot?.freshnessLabel || "Snapshot not loaded");
+      setSnapshotLabel((contextPayload.dashboard?.snapshot?.freshnessLabel || "not loaded").replace(/^Snapshot\s+/i, ""));
       setContext(contextPayload.context ?? {});
       if (!sendingRef.current && (initial || !hasLoaded.current)) {
         setConversation(seedConversation(contextPayload.context, nextProjectId, activeFromContext));
@@ -224,13 +220,13 @@ function App() {
     const text = (textOverride ?? prompt).trim();
     if (!text) return;
     if (activeSessionStatus === "running") {
-      setError("Pi is still running. Wait for this turn to finish before sending another prompt.");
+      setError("Agent is still running. Wait for this turn to finish before sending another prompt.");
       return;
     }
     setSending(true);
     sendingRef.current = true;
     setError("");
-    setPiActivity({ phase: "starting", label: "Starting Pi", detail: text, updatedAt: new Date().toISOString() });
+    setPiActivity({ phase: "starting", label: "Starting agent", detail: text, updatedAt: new Date().toISOString() });
     const userItem: ConversationItem = {
       id: `local-user-${Date.now()}`,
       role: "user",
@@ -270,7 +266,7 @@ function App() {
       setActiveSessionStatus(result.error ? "failed" : "idle");
       setPiActivity({
         phase: result.error ? "failed" : "done",
-        label: result.error ? "Pi failed" : "Pi finished",
+        label: result.error ? "Agent failed" : "Agent finished",
         detail: result.error || result.summary,
         updatedAt: new Date().toISOString(),
       });
@@ -330,7 +326,7 @@ function App() {
     }
     if (event.type === "runCompleted") {
       setActiveSessionStatus("idle");
-      setPiActivity(activityFromPiEvent(event) ?? { phase: "done", label: "Pi finished", updatedAt: event.timestamp });
+      setPiActivity(activityFromPiEvent(event) ?? { phase: "done", label: "Agent finished", updatedAt: event.timestamp });
       return;
     }
     if (event.type === "assistantDelta" && event.text) {
@@ -345,11 +341,11 @@ function App() {
     }
     if (event.type === "runFailed") {
       setActiveSessionStatus("failed");
-      setPiActivity(activityFromPiEvent(event) ?? { phase: "failed", label: "Pi failed", updatedAt: event.timestamp });
+      setPiActivity(activityFromPiEvent(event) ?? { phase: "failed", label: "Agent failed", updatedAt: event.timestamp });
       setConversation((items) => [...items, {
         id: `failed-${sessionId}-${Date.now()}`,
         role: "assistant",
-        text: event.error?.message || "Pi session failed.",
+        text: event.error?.message || "Agent session failed.",
         createdAt: event.timestamp,
       }]);
     }
@@ -370,6 +366,10 @@ function App() {
     setSystemNotice("");
     setPendingConfirmation(null);
     setError("");
+    void loadIssueThread(issueRef, requestId);
+  }
+
+  async function loadIssueThread(issueRef: string, requestId = issueSelectionRequest.current): Promise<void> {
     try {
       const started = await fetchIssueSession(issueRef);
       if (issueSelectionRequest.current !== requestId) return;
@@ -441,10 +441,14 @@ function App() {
     }
   }
 
-  const snapshotStatusLabel = status === "error" ? "Snapshot unavailable" : snapshotLabel;
+  const snapshotStatusLabel = status === "error" ? "Issues unavailable" : `Issues updated ${snapshotLabel}`;
   const showManualActions = selectedIssue ? isManualActionIssue(selectedIssue) : false;
   const autoflowEnabled = activeProject?.autoflowEnabled !== false;
   const activeProjectTheme = activeProject ? projectThemeFor(activeProject) : undefined;
+  const headerActivity = piActivity ?? (selectedSessionId ? {
+    phase: activeSessionStatus === "failed" ? "failed" : activeSessionStatus === "running" ? "thinking" : "idle",
+    label: activeSessionStatus === "failed" ? "Agent failed" : activeSessionStatus === "running" ? "Agent is working" : "Agent ready",
+  } satisfies PiActivityState : null);
 
   return (
     <div className="desktop-shell">
@@ -452,9 +456,6 @@ function App() {
         <header className="project-header">
           <span className="brand"><Waypoints size={16} /></span>
           <span className="brand-title">Flow</span>
-          <button type="button" className="project-switch-button" title="Switch project">
-            <RefreshCw size={14} />
-          </button>
         </header>
         <div className="project-active-block">
           <div className="eyebrow">Project</div>
@@ -475,7 +476,6 @@ function App() {
               <span>{activeProject?.name || "Flow"}</span>
               <span>{activeProject?.statusCounts?.total ?? issues.length} issues</span>
             </span>
-            {activeProject?.attentionCount ? <span className="project-badge active-card-badge danger">{activeProject.attentionCount}</span> : null}
             <span className="project-chevron" aria-hidden="true">v</span>
           </button>
         </div>
@@ -504,16 +504,13 @@ function App() {
             );
           })}
         </div>
-        <footer className="project-status">
-          <span className="status-dot ok" />
-          <span>Online and ready</span>
-        </footer>
       </aside>
 
       <aside className="issue-panel">
         <header className="issue-header">
           <div>
             <div className="eyebrow">Issues</div>
+            <div className="issue-updated-label">{snapshotStatusLabel}</div>
           </div>
           <div className="issue-header-actions">
             <button
@@ -587,15 +584,17 @@ function App() {
 
       <main className="chat-panel">
         <header className="chat-header">
-          <div>
-            <h2>Chat</h2>
-            <p>{selectedIssue ? `${selectedIssue.ref} · ${workStatusLabel(selectedIssue)}` : "Select an issue to open its thread"}</p>
+          <div className="chat-title-block">
+            <div className="chat-title-row">
+              <h2>{selectedIssue ? selectedIssue.ref : "Select an issue"}</h2>
+              {selectedIssue ? <span className={statusThemeClass(workStatusLabel(selectedIssue))}>{workStatusLabel(selectedIssue)}</span> : null}
+            </div>
+            <p>{selectedIssue?.title || "Open an issue thread from the queue."}</p>
           </div>
           <div className="chat-header-actions">
-            <div className="snapshot-pill" title={snapshotStatusLabel}>
-              <span className={status === "error" ? "status-dot error" : status === "loading" ? "status-dot loading" : "status-dot ok"} />
-              <span className="snapshot-text">{snapshotStatusLabel}</span>
-            </div>
+            <StatusSummary
+              activity={headerActivity}
+            />
           </div>
         </header>
 
@@ -612,19 +611,12 @@ function App() {
             />
           ) : null}
           onSubmit={(text) => submitPrompt(text)}
+          prompt={prompt}
+          onPromptChange={setPrompt}
+          showDoctor={showManualActions}
+          doctorBusy={actionBusy === "run_doctor"}
+          onDoctor={() => void invokeAction("run_doctor")}
         />
-
-        {showManualActions ? (
-          <div className="action-strip" aria-label="Manual closeout actions">
-            <div className="manual-action-group">
-              <button type="button" title="Run doctor" onClick={() => void invokeAction("run_doctor")} disabled={!selectedIssueRef || Boolean(actionBusy)}>
-                <Stethoscope size={15} />
-              </button>
-            </div>
-          </div>
-        ) : null}
-
-        {activeSessionStatus === "running" || piActivity ? <PiActivityStrip activity={piActivity} status={activeSessionStatus} /> : null}
 
         {error ? <div className="error-line">{error}</div> : null}
       </main>
@@ -638,62 +630,69 @@ function AssistantChatSurface({
   running,
   notice,
   onSubmit,
+  prompt,
+  onPromptChange,
+  showDoctor,
+  doctorBusy,
+  onDoctor,
 }: {
   conversation: ConversationItem[];
   disabled: boolean;
   running: boolean;
   notice?: React.ReactNode;
   onSubmit: (text: string) => Promise<void>;
+  prompt: string;
+  onPromptChange: (value: string) => void;
+  showDoctor: boolean;
+  doctorBusy: boolean;
+  onDoctor: () => void;
 }) {
   const visibleMessages = useMemo(
     () => conversation.filter((item) => item.role === "user" || item.role === "assistant"),
     [conversation],
   );
-  const handleNew = useCallback(async (message: AppendMessage) => {
-    const text = extractAppendMessageText(message);
-    if (text) await onSubmit(text);
-  }, [onSubmit]);
-  const runtime = useExternalStoreRuntime<ConversationItem>({
-    messages: visibleMessages,
-    isRunning: running,
-    isSendDisabled: disabled,
-    convertMessage: conversationItemToThreadMessage,
-    onNew: handleNew,
-  });
+  const canSubmit = prompt.trim().length > 0 && !disabled;
+  const handleSubmit = useCallback(async () => {
+    if (!canSubmit) return;
+    await onSubmit(prompt);
+  }, [canSubmit, onSubmit, prompt]);
 
   return (
-    <AssistantRuntimeProvider runtime={runtime}>
-      <ThreadPrimitive.Root className="assistant-thread">
-        <ThreadPrimitive.Viewport className="timeline assistant-viewport" autoScroll>
-          <ThreadPrimitive.Empty>
-            <div className="assistant-empty-state" aria-hidden="true" />
-          </ThreadPrimitive.Empty>
-          <ThreadPrimitive.Messages components={{ Message: AssistantMessage }} />
-          <ThreadPrimitive.ViewportFooter />
-        </ThreadPrimitive.Viewport>
-        {notice}
-        <ComposerPrimitive.Root className="composer assistant-composer">
-          <ComposerPrimitive.Input placeholder="Work with Flow on this issue..." submitMode="enter" minRows={1} maxRows={6} />
-          <ComposerPrimitive.Send title="Send prompt" className="assistant-send-button">
-            <Send size={17} />
-          </ComposerPrimitive.Send>
-        </ComposerPrimitive.Root>
-      </ThreadPrimitive.Root>
-    </AssistantRuntimeProvider>
-  );
-}
-
-function AssistantMessage() {
-  const role = useMessage((message) => message.role);
-  const text = useMessage((message) => message.content
-    .filter((part) => part.type === "text")
-    .map((part) => part.text)
-    .join("\n\n"));
-  return (
-    <MessagePrimitive.Root className={`message ${role}`}>
-      <div className="message-role">{role}</div>
-      <div className="message-text">{text}</div>
-    </MessagePrimitive.Root>
+    <section className="assistant-thread" aria-label="Issue conversation">
+      <div className="timeline assistant-viewport">
+        {visibleMessages.length ? visibleMessages.map((item) => (
+          <article key={item.id} className={`message ${item.role}`}>
+            <div className="message-role">{item.role}</div>
+            <div className="message-text">{item.text}</div>
+          </article>
+        )) : <div className="assistant-empty-state" aria-hidden="true" />}
+        {running ? <div className="message assistant muted">Agent is working...</div> : null}
+      </div>
+      {notice}
+      <div className="composer assistant-composer">
+        <textarea
+          value={prompt}
+          onChange={(event) => onPromptChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              void handleSubmit();
+            }
+          }}
+          placeholder="Work with Flow on this issue..."
+          rows={1}
+          disabled={disabled}
+        />
+        {showDoctor ? (
+          <button type="button" title="Run doctor" className="composer-tool-button" onClick={onDoctor} disabled={disabled || doctorBusy}>
+            <Stethoscope size={17} />
+          </button>
+        ) : null}
+        <button type="button" title="Send prompt" className="assistant-send-button" onClick={() => void handleSubmit()} disabled={!canSubmit}>
+          <Send size={17} />
+        </button>
+      </div>
+    </section>
   );
 }
 
@@ -723,19 +722,18 @@ function PendingActionNotice({
   );
 }
 
-function PiActivityStrip({ activity, status }: { activity: PiActivityState | null; status: "idle" | "running" | "failed" }) {
-  const fallback: PiActivityState = status === "failed"
-    ? { phase: "failed", label: "Pi failed" }
-    : status === "running"
-      ? { phase: "thinking", label: "Pi is working" }
-      : { phase: "idle", label: "Pi ready" };
-  const current = activity ?? fallback;
+function StatusSummary({
+  activity,
+}: {
+  activity: PiActivityState | null;
+}) {
+  const showDetail = activity?.phase === "tool" || activity?.phase === "responding" || activity?.phase === "failed";
   return (
-    <div className={`pi-activity-strip ${current.phase}`} aria-label="Pi activity">
+    <div className={`status-summary ${activity?.phase ?? "idle"}`} aria-label="Flow status">
       <span className="pi-activity-pulse" aria-hidden="true" />
-      <span className="pi-activity-label">{current.label}</span>
-      {current.toolName ? <span className="pi-activity-tool">{current.toolName}</span> : null}
-      {current.detail ? <span className="pi-activity-detail">{current.detail}</span> : null}
+      <span className="pi-activity-label">{activity?.label ?? "Agent not started"}</span>
+      {activity?.toolName ? <span className="pi-activity-tool">{activity.toolName}</span> : null}
+      {showDetail && activity?.detail ? <span className="pi-activity-detail">{activity.detail}</span> : null}
     </div>
   );
 }

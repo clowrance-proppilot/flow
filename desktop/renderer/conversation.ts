@@ -1,23 +1,4 @@
-import type { AppendMessage, ThreadMessageLike } from "@assistant-ui/react";
 import type { ContextProjection, ConversationItem, PiActivityState, PiSessionSnapshot, PiTimelineItem } from "./types";
-
-export function conversationItemToThreadMessage(item: ConversationItem): ThreadMessageLike {
-  return {
-    id: item.id,
-    role: item.role === "user" ? "user" : "assistant",
-    content: [{ type: "text", text: item.text }],
-    createdAt: new Date(item.createdAt),
-    status: item.role === "assistant" ? { type: "complete", reason: "stop" } : undefined,
-  };
-}
-
-export function extractAppendMessageText(message: AppendMessage): string {
-  return message.content
-    .filter((part) => part.type === "text")
-    .map((part) => part.text)
-    .join("\n\n")
-    .trim();
-}
 
 export function seedConversation(context?: ContextProjection, projectId?: string, issueRef?: string): ConversationItem[] {
   const target = issueRef || context?.active?.issueRef;
@@ -25,7 +6,7 @@ export function seedConversation(context?: ContextProjection, projectId?: string
   return [{
     id: "system-empty",
     role: "system",
-    text: `${label} Use the composer for the current turn; older prompt history stays out of the default view.`,
+    text: `${label} Use the composer for the current turn.`,
     createdAt: new Date().toISOString(),
   }];
 }
@@ -63,25 +44,25 @@ export function activityFromPiSession(session: PiSessionSnapshot): PiActivitySta
   if (session.status === "failed") {
     return {
       phase: "failed",
-      label: "Pi failed",
+      label: "Agent failed",
       detail: compactActivityText(latest?.content || "Check the latest response for details."),
       updatedAt: latest?.createdAt,
     };
   }
   if (session.status === "running") {
-    return activityFromTimelineItem(latest, "Pi is working");
+    return activityFromTimelineItem(latest, "Agent is working");
   }
   if (session.status === "done") {
     return {
       phase: "done",
-      label: "Pi finished",
+      label: "Agent finished",
       detail: latest ? compactActivityText(latest.content) : undefined,
       updatedAt: latest?.createdAt,
     };
   }
   return {
     phase: "idle",
-    label: "Pi ready",
+    label: "Agent ready",
     detail: latest ? compactActivityText(latest.content) : undefined,
     updatedAt: latest?.createdAt,
   };
@@ -91,7 +72,7 @@ export function activityFromPiEvent(event: { type: string; timestamp: string; te
   if (event.type === "assistantDelta" && event.text) {
     return {
       phase: "responding",
-      label: "Pi is answering",
+      label: "Agent is answering",
       detail: compactActivityText(event.text),
       updatedAt: event.timestamp,
     };
@@ -116,7 +97,7 @@ export function activityFromPiEvent(event: { type: string; timestamp: string; te
   if (event.type === "runFailed") {
     return {
       phase: "failed",
-      label: "Pi failed",
+      label: "Agent failed",
       detail: compactActivityText(event.error?.message || "Run failed."),
       updatedAt: event.timestamp,
     };
@@ -124,14 +105,14 @@ export function activityFromPiEvent(event: { type: string; timestamp: string; te
   if (event.type === "runCompleted") {
     return {
       phase: "done",
-      label: "Pi finished",
+      label: "Agent finished",
       updatedAt: event.timestamp,
     };
   }
   if (event.type === "sessionUpdated") {
     return {
       phase: "thinking",
-      label: "Pi is working",
+      label: "Agent is working",
       updatedAt: event.timestamp,
     };
   }
@@ -152,7 +133,7 @@ function activityFromTimelineItem(item: PiTimelineItem | undefined, fallback: st
   if (item.role === "assistant") {
     return {
       phase: "responding",
-      label: "Pi is answering",
+      label: "Agent is answering",
       detail: compactActivityText(item.content),
       updatedAt: item.createdAt,
     };
@@ -166,5 +147,10 @@ function activityFromTimelineItem(item: PiTimelineItem | undefined, fallback: st
 }
 
 function compactActivityText(value: string): string {
-  return value.replace(/\s+/g, " ").trim().slice(0, 180);
+  return value
+    .replace(/\bPi session\b/g, "Agent session")
+    .replace(/\bPi\b/g, "Agent")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 180);
 }
