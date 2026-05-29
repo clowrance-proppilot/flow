@@ -102,19 +102,19 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
         ? await surface.piSessionDriver.getSession(input.sessionId).catch(() => undefined)
         : undefined;
       session ??= await surface.piSessionDriver.openOrCreateIssueSession(input.issueRef);
-      const updated = await surface.piSessionDriver.sendUserMessage(session.id, { text: input.prompt });
-      const summary = latestAssistantText(updated) || `Prompt queued for ${updated.issueRef}.`;
+      void surface.piSessionDriver.sendUserMessage(session.id, { text: input.prompt }).catch((error) => {
+        console.error("[flow-desktop] pi prompt failed:", error);
+      });
+      const summary = `Prompt sent to ${session.issueRef}.`;
       return {
         session: {
-          id: updated.id,
+          id: session.id,
           provider: "pi",
-          workspacePath: updated.workspacePath,
-          status: updated.status,
+          workspacePath: session.workspacePath,
+          status: "active",
           summary,
         },
-        artifacts: [artifactFromPiSession(updated, summary)],
         summary,
-        error: updated.error,
       };
     },
   };
@@ -254,19 +254,3 @@ function enableRendererAutoReload(flowRoot: string): void {
   }
 }
 
-function latestAssistantText(session: { timeline: Array<{ role: string; content: string }> }): string {
-  return [...session.timeline].reverse().find((item) => item.role === "assistant")?.content.trim() ?? "";
-}
-
-function artifactFromPiSession(
-  session: { id: string; issueRef: string; status: string; sessionFile?: string; error?: string },
-  summary: string,
-) {
-  return {
-    id: `artifact-${session.id}`,
-    artifactType: session.status === "failed" ? "test_output" as const : "other" as const,
-    title: `Pi session ${session.issueRef}`,
-    path: session.sessionFile,
-    summary: session.error ? `Pi error: ${session.error}` : summary,
-  };
-}
