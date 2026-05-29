@@ -1,4 +1,5 @@
 import {
+  ArrowLeft,
   CircleCheck,
   ClipboardList,
   FileText,
@@ -636,6 +637,10 @@ function App() {
             onClick={(event) => event.stopPropagation()}
           >
             <header className="chat-header">
+              <button type="button" className="monitor-back-button" onClick={returnToMonitor} title="Back to issues">
+                <ArrowLeft size={15} />
+                <span>Back</span>
+              </button>
               <div className="chat-title-block">
                 <div className="chat-title-row">
                   <h2>{selectedIssue.ref}</h2>
@@ -643,18 +648,13 @@ function App() {
                 </div>
                 <p>{selectedIssue.title || "Untitled issue"}</p>
               </div>
-              <div className="chat-header-actions">
-                <button type="button" className="monitor-back-button" onClick={returnToMonitor}>
-                  Issues
-                </button>
-                <StatusSummary activity={headerActivity} />
-              </div>
             </header>
 
             <AssistantChatSurface
               conversation={conversation}
               disabled={sending || activeSessionStatus === "running"}
               running={activeSessionStatus === "running"}
+              activity={headerActivity}
               notice={systemNotice ? (
                 <PendingActionNotice
                   text={systemNotice}
@@ -683,6 +683,7 @@ function AssistantChatSurface({
   conversation,
   disabled,
   running,
+  activity,
   notice,
   onSubmit,
   prompt,
@@ -694,6 +695,7 @@ function AssistantChatSurface({
   conversation: ConversationItem[];
   disabled: boolean;
   running: boolean;
+  activity: PiActivityState | null;
   notice?: React.ReactNode;
   onSubmit: (text: string) => Promise<void>;
   prompt: string;
@@ -721,7 +723,20 @@ function AssistantChatSurface({
             <div className="message-text">{item.text}</div>
           </article>
         )) : <div className="assistant-empty-state" aria-hidden="true" />}
-        {running ? <div className="message assistant muted">Agent is working...</div> : null}
+        {activity && activity.phase !== "idle" ? (
+          <div className={`status-message ${activity.phase}`}>
+            <span className="status-message-dot" aria-hidden="true" />
+            <span className="status-message-label">{activity.label}</span>
+            {activity.toolName ? <span className="status-message-tool">{activity.toolName}</span> : null}
+            {activity.detail ? <span className="status-message-detail">{activity.detail}</span> : null}
+          </div>
+        ) : null}
+        {running && (!activity || activity.phase === "idle") ? (
+          <div className="status-message thinking">
+            <span className="status-message-dot" aria-hidden="true" />
+            <span className="status-message-label">Agent is working...</span>
+          </div>
+        ) : null}
       </div>
       {notice}
       <div className="composer assistant-composer">
