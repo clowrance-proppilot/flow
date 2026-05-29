@@ -505,13 +505,14 @@ h2 {
 }
 
 .issue-stack {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(26rem, 1fr));
-  align-content: start;
+  display: flex;
+  flex-direction: column;
   gap: 0.85rem;
+  width: min(100% - 2.3rem, 58rem);
   min-height: 0;
+  margin: 0 auto;
   overflow: auto;
-  padding: 0 1.15rem 1.25rem;
+  padding: 0 0 1.25rem;
 }
 
 .issue-card {
