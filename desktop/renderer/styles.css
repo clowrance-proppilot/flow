@@ -506,12 +506,12 @@ h2 {
 
 .issue-stack {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(24rem, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(26rem, 1fr));
   align-content: start;
-  gap: 0.72rem;
+  gap: 0.85rem;
   min-height: 0;
   overflow: auto;
-  padding: 0 1rem 1.1rem;
+  padding: 0 1.15rem 1.25rem;
 }
 
 .issue-card {
@@ -520,15 +520,15 @@ h2 {
   flex: 0 0 auto;
   width: 100%;
   border: 1px solid rgb(30 43 63 / 0.9);
-  border-left: 2px solid currentColor;
-  border-radius: 0.58rem;
+  border-left: 3px solid currentColor;
+  border-radius: 0.72rem;
   background:
-    linear-gradient(145deg, rgb(15 26 46 / 0.86), rgb(7 14 26 / 0.78)),
+    linear-gradient(145deg, rgb(15 26 46 / 0.92), rgb(8 16 30 / 0.86)),
     var(--th-card);
   color: var(--th-fg);
   text-align: left;
   overflow: hidden;
-  box-shadow: 0 0.45rem 1.2rem rgb(0 0 0 / 0.14);
+  box-shadow: 0 0.5rem 1.35rem rgb(0 0 0 / 0.16);
 }
 
 .issue-card:hover {
@@ -559,7 +559,7 @@ h2 {
   border: 0;
   background: transparent;
   color: inherit;
-  padding: 0.78rem 0.85rem;
+  padding: 1rem 1.05rem;
   text-align: left;
   white-space: normal;
 }
@@ -574,7 +574,7 @@ h2 {
 .issue-ref {
   color: var(--th-primary);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.75rem;
+  font-size: 0.78rem;
   font-weight: 800;
 }
 
@@ -628,19 +628,20 @@ h2 {
 }
 
 .issue-title {
-  margin-top: 0.45rem;
-  font-size: 0.82rem;
-  font-weight: 650;
-  line-height: 1.45;
+  margin-top: 0.58rem;
+  color: var(--th-fg);
+  font-size: 0.91rem;
+  font-weight: 760;
+  line-height: 1.48;
   overflow-wrap: anywhere;
   word-break: break-word;
 }
 
 .issue-note {
-  margin-top: 0.45rem;
-  color: var(--th-fg-muted);
-  font-size: 0.72rem;
-  line-height: 1.5;
+  margin-top: 0.58rem;
+  color: var(--th-fg-soft);
+  font-size: 0.78rem;
+  line-height: 1.55;
   overflow-wrap: anywhere;
   word-break: break-word;
 }
@@ -649,7 +650,7 @@ h2 {
   display: flex;
   flex-wrap: wrap;
   gap: 0.3rem;
-  margin-top: 0.48rem;
+  margin-top: 0.62rem;
 }
 
 .issue-actions-preview span {
@@ -691,21 +692,33 @@ h2 {
   background: rgb(56 189 248 / 0.64);
 }
 
+.chat-popover-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  padding: 2.2rem;
+  background:
+    radial-gradient(circle at 50% 28%, rgb(37 99 235 / 0.16), transparent 34rem),
+    rgb(1 5 13 / 0.58);
+  backdrop-filter: blur(3px);
+}
+
 .chat-panel {
   display: grid;
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 5;
-  width: min(56rem, calc(100vw - 16rem));
+  width: min(58rem, calc(100vw - 4rem));
+  height: min(44rem, calc(100vh - 4rem));
   grid-template-rows: auto minmax(0, 1fr) auto auto;
-  border-left: 1px solid var(--th-border);
+  overflow: hidden;
+  border: 1px solid rgb(96 165 250 / 0.24);
+  border-radius: 1rem;
   background:
     radial-gradient(circle at 78% 14%, rgb(30 64 175 / 0.22), transparent 35rem),
     radial-gradient(circle at 18% 70%, rgb(14 165 233 / 0.08), transparent 30rem),
     linear-gradient(135deg, rgb(4 10 21 / 0.98), rgb(2 8 19 / 0.94)),
     var(--th-app);
+  box-shadow: 0 2rem 5rem rgb(0 0 0 / 0.46);
 }
 
 .snapshot-text {
@@ -1141,7 +1154,11 @@ h2 {
   }
 
   .chat-panel {
-    left: 4.6rem;
-    width: auto;
+    width: min(100%, calc(100vw - 1rem));
+    height: min(100%, calc(100vh - 1rem));
+  }
+
+  .chat-popover-layer {
+    padding: 0.5rem;
   }
 }

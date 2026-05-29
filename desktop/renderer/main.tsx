@@ -596,45 +596,53 @@ function App() {
       </aside>
 
       {selectedIssue ? (
-        <main className="chat-panel">
-          <header className="chat-header">
-            <div className="chat-title-block">
-              <div className="chat-title-row">
-                <h2>{selectedIssue.ref}</h2>
-                <span className={statusThemeClass(workStatusLabel(selectedIssue))}>{workStatusLabel(selectedIssue)}</span>
+        <div className="chat-popover-layer" role="presentation" onClick={returnToMonitor}>
+          <main
+            className="chat-panel"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`${selectedIssue.ref} chat`}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="chat-header">
+              <div className="chat-title-block">
+                <div className="chat-title-row">
+                  <h2>{selectedIssue.ref}</h2>
+                  <span className={statusThemeClass(workStatusLabel(selectedIssue))}>{workStatusLabel(selectedIssue)}</span>
+                </div>
+                <p>{selectedIssue.title || "Untitled issue"}</p>
               </div>
-              <p>{selectedIssue.title || "Untitled issue"}</p>
-            </div>
-            <div className="chat-header-actions">
-              <button type="button" className="monitor-back-button" onClick={returnToMonitor}>
-                Issues
-              </button>
-              <StatusSummary activity={headerActivity} />
-            </div>
-          </header>
+              <div className="chat-header-actions">
+                <button type="button" className="monitor-back-button" onClick={returnToMonitor}>
+                  Issues
+                </button>
+                <StatusSummary activity={headerActivity} />
+              </div>
+            </header>
 
-          <AssistantChatSurface
-            conversation={conversation}
-            disabled={sending || activeSessionStatus === "running"}
-            running={activeSessionStatus === "running"}
-            notice={systemNotice ? (
-              <PendingActionNotice
-                text={systemNotice}
-                pendingConfirmation={pendingConfirmation}
-                approving={actionBusy === "approve_confirmation"}
-                onApprove={pendingConfirmation ? () => void invokeAction("approve_confirmation") : undefined}
-              />
-            ) : null}
-            onSubmit={(text) => submitPrompt(text)}
-            prompt={prompt}
-            onPromptChange={setPrompt}
-            showDoctor={showManualActions}
-            doctorBusy={actionBusy === "run_doctor"}
-            onDoctor={() => void invokeAction("run_doctor")}
-          />
+            <AssistantChatSurface
+              conversation={conversation}
+              disabled={sending || activeSessionStatus === "running"}
+              running={activeSessionStatus === "running"}
+              notice={systemNotice ? (
+                <PendingActionNotice
+                  text={systemNotice}
+                  pendingConfirmation={pendingConfirmation}
+                  approving={actionBusy === "approve_confirmation"}
+                  onApprove={pendingConfirmation ? () => void invokeAction("approve_confirmation") : undefined}
+                />
+              ) : null}
+              onSubmit={(text) => submitPrompt(text)}
+              prompt={prompt}
+              onPromptChange={setPrompt}
+              showDoctor={showManualActions}
+              doctorBusy={actionBusy === "run_doctor"}
+              onDoctor={() => void invokeAction("run_doctor")}
+            />
 
-          {error ? <div className="error-line">{error}</div> : null}
-        </main>
+            {error ? <div className="error-line">{error}</div> : null}
+          </main>
+        </div>
       ) : error ? <div className="error-line shell-error">{error}</div> : null}
     </div>
   );
