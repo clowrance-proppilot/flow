@@ -1,16 +1,21 @@
 import { app, BrowserWindow, ipcMain, shell } from "electron";
-import { join, resolve, dirname, relative } from "node:path";
-import { existsSync, readFileSync, watch, type FSWatcher } from "node:fs";
+import { join, resolve, dirname } from "node:path";
+import { existsSync, watch, type FSWatcher } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import express from "express";
 import type { Server } from "node:http";
 import { DashboardState } from "../src/dashboard-state.js";
 import { validateFlowConfig } from "../src/config/config-loader.js";
 import { createConfiguredWorkRuntime } from "../src/runtime-factory.js";
-import { DesktopActionRouter, isDesktopAction } from "./action-router.js";
+import { DesktopActionRouter } from "./action-router.js";
 import { PiSessionDriver } from "./pi-session-driver.js";
 import { DesktopProjectRegistry, type DesktopProjectRecord } from "./project-registry.js";
 import { DesktopPromptRouter, type DesktopAgentSessionAdapter } from "./prompt-router.js";
+import { registerProjectRoutes } from "./project-routes.js";
+import { message } from "./route-helpers.js";
+import type { DesktopProjectSurface, RouteContext } from "./route-types.js";
+import { registerStaticRoutes } from "./static-routes.js";
+import { registerWorkRoutes } from "./work-routes.js";
 
 const isDev = !app.isPackaged;
 
@@ -18,13 +23,6 @@ let mainWindow: BrowserWindow | null = null;
 let dashboardServer: Server | undefined;
 let rendererAutoReloadWatcher: FSWatcher | undefined;
 let rendererAutoReloadTimer: ReturnType<typeof setTimeout> | undefined;
-
-interface DesktopProjectSurface {
-  project: DesktopProjectRecord;
-  configured: ReturnType<typeof createConfiguredWorkRuntime>;
-  dashboardState: DashboardState;
-  piSessionDriver: PiSessionDriver;
-}
 
 // Resolve the flow repo root. In dev this is the repo itself;
 // in a packaged build we use cwd or an env override.
@@ -134,267 +132,18 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
   const assetRoot = resolveAppAssetRoot();
   const desktopFilePath = resolveDesktopFilePath(assetRoot);
   const dashboardFilePath = resolveDashboardFilePath(assetRoot);
-  const desktopAssetsDir = join(dirname(desktopFilePath), "assets");
-  const dashboardAssetsDir = join(dirname(dashboardFilePath), "assets");
-
   const server = express();
   server.disable("x-powered-by");
   const jsonBody = express.json({ limit: "256kb" });
 
-  // Health
-  server.get("/healthz", (_req, res) => res.json({ ok: true }));
-
-  // Dashboard snapshot API — same shape as dashboard-server.ts
-  server.get("/api/dashboard", async (_req, res) => {
-    try {
-      const project = await requireActiveProject(projectRegistry);
-      const surface = await projectSurface(project);
-      const payload = await surface.dashboardState.payload({ limit: 50 });
-      res.json(payload);
-    } catch (error) {
-      console.error("[flow-desktop] dashboard snapshot failed:", error);
-      res.status(503).json({ ok: false });
-    }
-  });
-  server.get("/api/projects", async (_req, res) => {
-    const active = await projectRegistry.activeProject();
-    const projects = await projectRegistry.listProjects();
-    const projectsWithSummary = await Promise.all(projects.map(async (project) => {
-      const publicProject = {
-        ...project,
-        icon: project.icon ? `/api/projects/${encodeURIComponent(project.id)}/icon` : undefined,
-      };
-      try {
-        const surface = await projectSurface(project);
-        const payload = await surface.dashboardState.payload({ limit: 50 });
-        const summary = summarizeProjectIssues(payload.issues);
-        return {
-          ...publicProject,
-          attentionCount: summary.blocked + summary.needsInput,
-          statusCounts: summary,
-        };
-      } catch {
-        return {
-          ...publicProject,
-          attentionCount: 0,
-          statusCounts: summarizeProjectIssues(undefined),
-        };
-      }
-    }));
-    res.json({
-      ok: true,
-      activeProjectId: active?.id,
-      projects: projectsWithSummary,
-    });
-  });
-  server.get("/api/projects/:projectId/icon", async (req, res) => {
-    try {
-      const project = (await projectRegistry.listProjects()).find((candidate) => candidate.id === String(req.params.projectId ?? ""));
-      if (!project?.icon) {
-        res.status(404).end();
-        return;
-      }
-      const projectRoot = resolve(project.root);
-      const iconPath = resolve(projectRoot, project.icon);
-      const relativeIconPath = relative(projectRoot, iconPath);
-      if (relativeIconPath.startsWith("..") || relativeIconPath === "" || relativeIconPath.includes(":")) {
-        res.status(400).json({ ok: false, error: "Project icon must stay inside the project root." });
-        return;
-      }
-      if (!existsSync(iconPath)) {
-        res.status(404).end();
-        return;
-      }
-      res.sendFile(iconPath);
-    } catch (error) {
-      res.status(400).json({ ok: false, error: message(error) });
-    }
-  });
-  server.post("/api/projects", jsonBody, async (req, res) => {
-    try {
-      const root = typeof req.body?.root === "string" ? req.body.root : "";
-      if (!root.trim()) {
-        res.status(400).json({ ok: false, error: "Missing project root." });
-        return;
-      }
-      const project = await projectRegistry.addProject(root);
-      projectSurfaces.delete(project.id);
-      res.json({ ok: true, project, projects: await projectRegistry.listProjects() });
-    } catch (error) {
-      res.status(400).json({ ok: false, error: message(error) });
-    }
-  });
-  server.post("/api/projects/:projectId/active", async (req, res) => {
-    try {
-      const project = await projectRegistry.setActiveProject(String(req.params.projectId ?? ""));
-      res.json({ ok: true, project });
-    } catch (error) {
-      res.status(404).json({ ok: false, error: message(error) });
-    }
-  });
-  server.get("/api/context", async (_req, res) => {
-    try {
-      const project = await requireActiveProject(projectRegistry);
-      const surface = await projectSurface(project);
-      const dashboard = await surface.dashboardState.payload({ limit: 50 });
-      const context = surface.configured.workflowLedger.readContext
-        ? await surface.configured.workflowLedger.readContext({ projectId: project.id })
-        : undefined;
-      res.json({ ok: true, project, dashboard, context });
-    } catch (error) {
-      res.status(503).json({ ok: false, error: message(error) });
-    }
-  });
-  server.post("/api/prompt", jsonBody, async (req, res) => {
-    try {
-      const prompt = typeof req.body?.prompt === "string" ? req.body.prompt : "";
-      const result = await promptRouter.submit({
-        prompt,
-        projectId: typeof req.body?.projectId === "string" ? req.body.projectId : undefined,
-        issueRef: typeof req.body?.issueRef === "string" ? req.body.issueRef : undefined,
-        threadId: typeof req.body?.threadId === "string" ? req.body.threadId : undefined,
-        sessionId: typeof req.body?.sessionId === "string" ? req.body.sessionId : undefined,
-        target: isPromptTarget(req.body?.target) ? req.body.target : undefined,
-        artifactRefs: Array.isArray(req.body?.artifactRefs) ? req.body.artifactRefs.map(String).filter(Boolean) : undefined,
-      });
-      res.json(result);
-    } catch (error) {
-      res.status(400).json({ ok: false, error: message(error) });
-    }
-  });
-  server.post("/api/issues/:issueRef/session", async (req, res) => {
-    try {
-      const project = await requireActiveProject(projectRegistry);
-      const surface = await projectSurface(project);
-      const session = await surface.piSessionDriver.openOrCreateIssueSession(String(req.params.issueRef ?? ""));
-      res.json({ ok: true, session });
-    } catch (error) {
-      res.status(400).json({ ok: false, error: message(error) });
-    }
-  });
-  server.get("/api/sessions/:sessionId/events", async (req, res) => {
-    try {
-      const project = await requireActiveProject(projectRegistry);
-      const surface = await projectSurface(project);
-      const sessionId = String(req.params.sessionId ?? "");
-      await surface.piSessionDriver.getSession(sessionId);
-      res.writeHead(200, {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache, no-transform",
-        Connection: "keep-alive",
-      });
-      res.write(`event: ready\ndata: ${JSON.stringify({ ok: true, sessionId })}\n\n`);
-      const unsubscribe = surface.piSessionDriver.subscribe(sessionId, (event) => {
-        res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
-      });
-      req.on("close", unsubscribe);
-    } catch (error) {
-      res.status(404).json({ ok: false, error: message(error) });
-    }
-  });
-  server.post("/api/actions/:action", jsonBody, async (req, res) => {
-    try {
-      const action = String(req.params.action ?? "");
-      if (!isDesktopAction(action)) {
-        res.status(404).json({ ok: false, error: "Unknown desktop action." });
-        return;
-      }
-      const result = await actionRouter.invoke({
-        action,
-        projectId: typeof req.body?.projectId === "string" ? req.body.projectId : undefined,
-        issueRef: typeof req.body?.issueRef === "string" ? req.body.issueRef : undefined,
-        payload: typeof req.body?.payload === "object" && req.body.payload !== null ? req.body.payload : {},
-      });
-      res.json(result);
-    } catch (error) {
-      res.status(400).json({ ok: false, error: message(error) });
-    }
-  });
-  server.get("/api/pi/issues", async (_req, res) => {
-    try {
-      const project = await requireActiveProject(projectRegistry);
-      const surface = await projectSurface(project);
-      const payload = await surface.dashboardState.payload({ limit: 50 });
-      res.json({
-        ok: true,
-        project,
-        issues: Array.isArray(payload.issues) ? payload.issues : [],
-      });
-    } catch (error) {
-      console.error("[flow-desktop] pi issue list failed:", error);
-      res.status(503).json({ ok: false });
-    }
-  });
-  server.post("/api/pi/issues/:issueRef/session", async (req, res) => {
-    try {
-      const project = await requireActiveProject(projectRegistry);
-      const surface = await projectSurface(project);
-      const issueRef = String(req.params.issueRef ?? "").trim();
-      if (!issueRef) {
-        res.status(400).json({ ok: false, error: "Missing issueRef." });
-        return;
-      }
-      const session = await surface.piSessionDriver.startSession(issueRef);
-      res.json({ ok: true, session });
-    } catch (error) {
-      console.error("[flow-desktop] pi session start failed:", error);
-      res.status(503).json({ ok: false, error: message(error) });
-    }
-  });
-  server.get("/api/pi/sessions/:sessionId", async (req, res) => {
-    try {
-      const project = await requireActiveProject(projectRegistry);
-      const surface = await projectSurface(project);
-      const sessionId = String(req.params.sessionId ?? "").trim();
-      if (!sessionId) {
-        res.status(400).json({ ok: false, error: "Missing sessionId." });
-        return;
-      }
-      const session = await surface.piSessionDriver.getSession(sessionId);
-      res.json({ ok: true, session });
-    } catch (error) {
-      res.status(404).json({ ok: false, error: message(error) });
-    }
-  });
-  server.post("/api/pi/sessions/:sessionId/prompts", jsonBody, async (req, res) => {
-    try {
-      const project = await requireActiveProject(projectRegistry);
-      const surface = await projectSurface(project);
-      const sessionId = String(req.params.sessionId ?? "").trim();
-      if (!sessionId) {
-        res.status(400).json({ ok: false, error: "Missing sessionId." });
-        return;
-      }
-      const prompt = typeof req.body?.prompt === "string" ? req.body.prompt : "";
-      const session = await surface.piSessionDriver.postPrompt(sessionId, prompt);
-      res.json({ ok: true, session });
-    } catch (error) {
-      res.status(400).json({ ok: false, error: message(error) });
-    }
-  });
-
-  // Dashboard HTML
-  server.get("/", (_req, res) => {
-    if (!existsSync(desktopFilePath)) {
-      res.status(404).send("Desktop UI not built. Run: npm run build:desktop");
-      return;
-    }
-    res.type("html").send(readFileSync(desktopFilePath, "utf8"));
-  });
-  server.get("/dashboard", (_req, res) => {
-    if (!existsSync(dashboardFilePath)) {
-      res.status(404).send("Dashboard UI not built.");
-      return;
-    }
-    res.type("html").send(readFileSync(dashboardFilePath, "utf8"));
-  });
-
-  // Desktop and dashboard static assets
-  server.use("/assets", express.static(desktopAssetsDir));
-  server.use("/dashboard/assets", express.static(dashboardAssetsDir));
-
-  // 404
-  server.use((_req, res) => res.status(404).json({ ok: false }));
+  const routeContext: RouteContext = {
+    projectRegistry,
+    projectSurface,
+    invalidateProjectSurface: (projectId) => projectSurfaces.delete(projectId),
+  };
+  registerProjectRoutes(server, routeContext, jsonBody);
+  registerWorkRoutes(server, routeContext, { promptRouter, actionRouter }, jsonBody);
+  registerStaticRoutes(server, { desktopFilePath, dashboardFilePath });
 
   // Find a free port
   return new Promise((resolve, reject) => {
@@ -481,20 +230,6 @@ app.on("before-quit", () => {
   dashboardServer?.close();
 });
 
-function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-async function requireActiveProject(projectRegistry: DesktopProjectRegistry): Promise<DesktopProjectRecord> {
-  const project = await projectRegistry.activeProject();
-  if (!project) throw new Error("No active Flow project.");
-  return project;
-}
-
-function isPromptTarget(value: unknown): value is "project" | "issue" | "thread" | "session" | "artifact" {
-  return value === "project" || value === "issue" || value === "thread" || value === "session" || value === "artifact";
-}
-
 function resolveDesktopUserDataPath(): string {
   return process.env.FLOW_DESKTOP_USER_DATA || app.getPath("userData");
 }
@@ -521,53 +256,6 @@ function enableRendererAutoReload(flowRoot: string): void {
 
 function latestAssistantText(session: { timeline: Array<{ role: string; content: string }> }): string {
   return [...session.timeline].reverse().find((item) => item.role === "assistant")?.content.trim() ?? "";
-}
-
-type ProjectIssueSummary = {
-  blocked: number;
-  needsInput: number;
-  inReview: number;
-  running: number;
-  ready: number;
-  queued: number;
-  done: number;
-  total: number;
-};
-
-function summarizeProjectIssues(issues: unknown): ProjectIssueSummary {
-  const summary: ProjectIssueSummary = {
-    blocked: 0,
-    needsInput: 0,
-    inReview: 0,
-    running: 0,
-    ready: 0,
-    queued: 0,
-    done: 0,
-    total: 0,
-  };
-  if (!Array.isArray(issues)) return summary;
-  for (const issue of issues) {
-    const status = issueStatusLabel(issue);
-    summary.total += 1;
-    if (status === "Blocked") summary.blocked += 1;
-    else if (status === "Needs Input") summary.needsInput += 1;
-    else if (status === "In Review") summary.inReview += 1;
-    else if (status === "Running") summary.running += 1;
-    else if (status === "Ready") summary.ready += 1;
-    else if (status === "Done") summary.done += 1;
-    else summary.queued += 1;
-  }
-  return summary;
-}
-
-function issueStatusLabel(issue: unknown): string {
-  if (!issue || typeof issue !== "object") return "Queued";
-  const record = issue as { workStatus?: unknown; statusLabel?: unknown };
-  const workStatus = typeof record.workStatus === "string" ? record.workStatus.trim() : "";
-  if (workStatus) return workStatus;
-  const statusLabel = typeof record.statusLabel === "string" ? record.statusLabel.trim() : "";
-  if (statusLabel) return statusLabel;
-  return "Queued";
 }
 
 function artifactFromPiSession(
