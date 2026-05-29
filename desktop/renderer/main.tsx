@@ -138,6 +138,11 @@ type PiSessionEvent = {
   snapshot?: { status?: "idle" | "running" | "failed" };
 };
 
+type PendingConfirmationState = {
+  id: string;
+  summary: string;
+};
+
 const workflowSteps = ["Queued", "Ready", "Running", "In Review", "Done"] as const;
 
 function App() {
@@ -156,6 +161,7 @@ function App() {
   const [prompt, setPrompt] = useState("");
   const [conversation, setConversation] = useState<ConversationItem[]>([]);
   const [systemNotice, setSystemNotice] = useState("");
+  const [pendingConfirmation, setPendingConfirmation] = useState<PendingConfirmationState | null>(null);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState<StatusKind>("loading");
   const [sending, setSending] = useState(false);
@@ -278,6 +284,7 @@ function App() {
       setSessionIdByIssueRef({});
       setExpandedIssueRef("");
       setSystemNotice("");
+      setPendingConfirmation(null);
       setActiveSessionStatus("idle");
       await refresh(true);
     } catch {
@@ -429,6 +436,7 @@ function App() {
     setActiveSessionStatus("idle");
     setConversation(seedConversation(context, activeProjectId, issueRef));
     setSystemNotice("");
+    setPendingConfirmation(null);
     setError("");
     try {
       const started = await fetchIssueSession(issueRef);
@@ -465,6 +473,7 @@ function App() {
       const result = await fetchJson<{
         ok?: boolean;
         summary: string;
+        result?: unknown;
         projection?: ContextProjection;
       }>(`/api/actions/${action}`, {
         method: "POST",
@@ -472,12 +481,13 @@ function App() {
         body: JSON.stringify({
           projectId: activeProjectId || undefined,
           issueRef: selectedIssueRef,
-          payload: actionPayload(action, prompt, selectedIssue),
+          payload: actionPayload(action, prompt, selectedIssue, pendingConfirmation),
         }),
       });
       setContext(result.projection ?? context);
       const actionSummary = formatActionSummary(action, result.summary);
-      if (action === "autoflow") {
+      setPendingConfirmation(pendingConfirmationFromActionResult(result.result));
+      if (action === "autoflow" || action === "approve_confirmation") {
         setSystemNotice(actionSummary);
       } else {
         setConversation((items) => [
@@ -639,7 +649,14 @@ function App() {
           conversation={conversation}
           disabled={sending || activeSessionStatus === "running"}
           running={activeSessionStatus === "running"}
-          notice={systemNotice ? <PendingActionNotice text={systemNotice} /> : null}
+          notice={systemNotice ? (
+            <PendingActionNotice
+              text={systemNotice}
+              pendingConfirmation={pendingConfirmation}
+              approving={actionBusy === "approve_confirmation"}
+              onApprove={pendingConfirmation ? () => void invokeAction("approve_confirmation") : undefined}
+            />
+          ) : null}
           onSubmit={(text) => submitPrompt(text)}
         />
 
@@ -744,13 +761,38 @@ function extractAppendMessageText(message: AppendMessage): string {
     .trim();
 }
 
-function PendingActionNotice({ text }: { text: string }) {
+function pendingConfirmationFromActionResult(result: unknown): PendingConfirmationState | null {
+  if (!result || typeof result !== "object") return null;
+  const record = result as {
+    session?: { pendingConfirmation?: { id?: unknown; summary?: unknown } };
+  };
+  const pending = record.session?.pendingConfirmation;
+  if (!pending || typeof pending.id !== "string" || typeof pending.summary !== "string") return null;
+  return { id: pending.id, summary: pending.summary };
+}
+
+function PendingActionNotice({
+  text,
+  pendingConfirmation,
+  approving,
+  onApprove,
+}: {
+  text: string;
+  pendingConfirmation?: PendingConfirmationState | null;
+  approving?: boolean;
+  onApprove?: () => void;
+}) {
   const isConfirmation = text.toLowerCase().startsWith("needs confirmation:");
-  const body = isConfirmation ? text.replace(/^needs confirmation:\s*/i, "").trim() : text;
+  const body = pendingConfirmation?.summary || (isConfirmation ? text.replace(/^needs confirmation:\s*/i, "").trim() : text);
   return (
     <div className={isConfirmation ? "pending-action-notice needs-confirmation" : "pending-action-notice"} aria-label="Workflow notice">
       <span className="pending-action-label">{isConfirmation ? "Needs confirmation" : "Workflow"}</span>
       <span className="pending-action-text">{body}</span>
+      {pendingConfirmation && onApprove ? (
+        <button type="button" className="pending-action-button" onClick={onApprove} disabled={approving}>
+          {approving ? "Approving..." : "Approve"}
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -853,7 +895,7 @@ function WorkflowTrack({ status }: { status?: string }) {
   );
 }
 
-type DesktopAction = "autoflow" | "record_evidence" | "record_result" | "record_documentation" | "run_doctor";
+type DesktopAction = "autoflow" | "approve_confirmation" | "record_evidence" | "record_result" | "record_documentation" | "run_doctor";
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, { cache: "no-store", ...init });
@@ -864,6 +906,7 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
 
 function formatActionSummary(action: DesktopAction, summary: string): string {
   if (action === "autoflow") return formatAutoflowNotice(summary);
+  if (action === "approve_confirmation") return compactChatText(summary);
   if (action === "run_doctor") {
     const match = summary.match(/^Doctor (\w+) for ([^.]+)\.\s*(\{.*\})$/s);
     if (match) {
@@ -1052,8 +1095,14 @@ async function copyText(value: string): Promise<boolean> {
   }
 }
 
-function actionPayload(action: DesktopAction, prompt: string, issue: DashboardIssue | undefined): Record<string, unknown> {
+function actionPayload(
+  action: DesktopAction,
+  prompt: string,
+  issue: DashboardIssue | undefined,
+  pendingConfirmation?: PendingConfirmationState | null,
+): Record<string, unknown> {
   const summary = prompt.trim() || issue?.title || issue?.ref || "Flow Desktop action";
+  if (action === "approve_confirmation") return { confirmationId: pendingConfirmation?.id };
   if (action === "record_evidence") return { summary, source: "Flow Desktop conversation" };
   if (action === "record_documentation") return { summary, disposition: "not_needed" };
   if (action === "record_result") return { summary, status: "succeeded" };

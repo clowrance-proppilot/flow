@@ -16,10 +16,10 @@ import type { DesktopProjectRecord, DesktopProjectRegistry } from "./project-reg
 
 type DesktopActionRuntime = Pick<
   FlowWorkRuntime,
-  "createSession" | "selectIssue" | "summarizeHandoff" | "inspectIssue" | "recordEvidence" | "recordWorkerResult" | "recordDocumentation" | "diagnoseIssue" | "autoFlowIssue"
+  "createSession" | "selectIssue" | "summarizeHandoff" | "inspectIssue" | "recordEvidence" | "recordWorkerResult" | "recordDocumentation" | "diagnoseIssue" | "autoFlowIssue" | "advanceIssue"
 >;
 
-export const desktopActionValues = ["autoflow", "record_evidence", "record_result", "record_documentation", "run_doctor"] as const;
+export const desktopActionValues = ["autoflow", "approve_confirmation", "record_evidence", "record_result", "record_documentation", "run_doctor"] as const;
 export type DesktopAction = typeof desktopActionValues[number];
 
 export interface DesktopActionInput {
@@ -78,6 +78,11 @@ export class DesktopActionRouter {
       result = await runtime.autoFlowIssue(sessionId, { autoPrepareWorkspace: true, maxSteps: 20 });
       const autoflow = result as AutoFlowIssueResult;
       summary = `Autoflow ${autoflow.status} for ${issue.ref}. ${autoflow.message}`;
+    } else if (input.action === "approve_confirmation") {
+      const confirmationId = stringValue(payload.confirmationId);
+      if (!confirmationId) throw new Error("No pending confirmation id was provided.");
+      result = await runtime.advanceIssue(sessionId, confirmationId);
+      summary = `Confirmation approved for ${issue.ref}.`;
     } else if (input.action === "record_evidence") {
       const record = evidencePayload(issue.ref, payload);
       result = await runtime.recordEvidence(sessionId, record);
@@ -198,6 +203,7 @@ function actionArtifactRecord(
 
 function actionLabel(action: DesktopAction): string {
   if (action === "autoflow") return "Autoflow output";
+  if (action === "approve_confirmation") return "Confirmation approval";
   if (action === "record_evidence") return "Evidence writeback";
   if (action === "record_documentation") return "Documentation writeback";
   if (action === "record_result") return "Result writeback";
