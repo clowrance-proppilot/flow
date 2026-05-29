@@ -79,21 +79,6 @@ function App() {
 
   const activeProject = projects.find((project) => project.id === activeProjectId);
   const selectedIssue = issues.find((issue) => issue.ref === selectedIssueRef);
-  const attentionIssues = useMemo(
-    () => issues.filter((issue) => isActiveWorkStatus(workStatusLabel(issue)))
-      .sort((left, right) => issueAttentionRank(left) - issueAttentionRank(right) || left.ref.localeCompare(right.ref)),
-    [issues],
-  );
-  const blockedIssues = useMemo(
-    () => issues.filter((issue) => isExceptionalStatus(workStatusLabel(issue)))
-      .sort((left, right) => issueAttentionRank(left) - issueAttentionRank(right) || left.ref.localeCompare(right.ref)),
-    [issues],
-  );
-  const runningIssues = useMemo(
-    () => issues.filter((issue) => workStatusLabel(issue) === "Running")
-      .sort((left, right) => issueAttentionRank(left) - issueAttentionRank(right) || left.ref.localeCompare(right.ref)),
-    [issues],
-  );
 
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -477,14 +462,9 @@ function App() {
     phase: activeSessionStatus === "failed" ? "failed" : activeSessionStatus === "running" ? "thinking" : "idle",
     label: activeSessionStatus === "failed" ? "Agent failed" : activeSessionStatus === "running" ? "Agent is working" : "Agent ready",
   } satisfies PiActivityState : null);
-  const monitorActivity = headerActivity ?? {
-    phase: autoflowEnabled ? "idle" : "failed",
-    label: autoflowEnabled ? "Autoflow monitoring" : "Autoflow paused",
-  } satisfies PiActivityState;
-  const nextAutoflowIssue = runningIssues[0] ?? attentionIssues.find((issue) => !isExceptionalStatus(workStatusLabel(issue))) ?? attentionIssues[0];
 
   return (
-    <div className="desktop-shell">
+    <div className={selectedIssue ? "desktop-shell issue-selected" : "desktop-shell monitor-mode"}>
       <aside className="project-panel" aria-label="Projects">
         <header className="project-header">
           <span className="brand"><Waypoints size={16} /></span>
@@ -615,28 +595,24 @@ function App() {
         </section>
       </aside>
 
-      <main className="chat-panel">
-        <header className="chat-header">
-          <div className="chat-title-block">
-            <div className="chat-title-row">
-              <h2>{selectedIssue ? selectedIssue.ref : "Autoflow Monitor"}</h2>
-              {selectedIssue ? <span className={statusThemeClass(workStatusLabel(selectedIssue))}>{workStatusLabel(selectedIssue)}</span> : null}
+      {selectedIssue ? (
+        <main className="chat-panel">
+          <header className="chat-header">
+            <div className="chat-title-block">
+              <div className="chat-title-row">
+                <h2>{selectedIssue.ref}</h2>
+                <span className={statusThemeClass(workStatusLabel(selectedIssue))}>{workStatusLabel(selectedIssue)}</span>
+              </div>
+              <p>{selectedIssue.title || "Untitled issue"}</p>
             </div>
-            <p>{selectedIssue?.title || "Watching active work and surfacing issues that need intervention."}</p>
-          </div>
-          <div className="chat-header-actions">
-            {selectedIssue ? (
+            <div className="chat-header-actions">
               <button type="button" className="monitor-back-button" onClick={returnToMonitor}>
-                Monitor
+                Issues
               </button>
-            ) : null}
-            <StatusSummary
-              activity={selectedIssue ? headerActivity : monitorActivity}
-            />
-          </div>
-        </header>
+              <StatusSummary activity={headerActivity} />
+            </div>
+          </header>
 
-        {selectedIssue ? (
           <AssistantChatSurface
             conversation={conversation}
             disabled={sending || activeSessionStatus === "running"}
@@ -656,97 +632,11 @@ function App() {
             doctorBusy={actionBusy === "run_doctor"}
             onDoctor={() => void invokeAction("run_doctor")}
           />
-        ) : (
-          <AutoflowMonitor
-            enabled={autoflowEnabled}
-            issues={issues}
-            blockedIssues={blockedIssues}
-            runningIssues={runningIssues}
-            nextIssue={nextAutoflowIssue}
-            onSelectIssue={(issueRef) => void selectIssueThread(issueRef)}
-            onToggle={() => void toggleProjectAutoflow()}
-          />
-        )}
 
-        {error ? <div className="error-line">{error}</div> : null}
-      </main>
+          {error ? <div className="error-line">{error}</div> : null}
+        </main>
+      ) : error ? <div className="error-line shell-error">{error}</div> : null}
     </div>
-  );
-}
-
-function AutoflowMonitor({
-  enabled,
-  issues,
-  blockedIssues,
-  runningIssues,
-  nextIssue,
-  onSelectIssue,
-  onToggle,
-}: {
-  enabled: boolean;
-  issues: DashboardIssue[];
-  blockedIssues: DashboardIssue[];
-  runningIssues: DashboardIssue[];
-  nextIssue?: DashboardIssue;
-  onSelectIssue: (issueRef: string) => void;
-  onToggle: () => void;
-}) {
-  const doneCount = issues.filter((issue) => workStatusLabel(issue) === "Done").length;
-  const activeCount = issues.filter((issue) => isActiveWorkStatus(workStatusLabel(issue))).length;
-  return (
-    <section className="autoflow-monitor" aria-label="Autoflow monitor">
-      <div className={enabled ? "monitor-hero enabled" : "monitor-hero paused"}>
-        <div>
-          <div className="eyebrow">Autoflow</div>
-          <h2>{enabled ? "Monitoring active work" : "Paused"}</h2>
-          <p>{enabled ? "Flow will keep moving ready work and stop when an issue needs you." : "Turn Autoflow back on when you want Flow to keep advancing work."}</p>
-        </div>
-        <button type="button" className={enabled ? "monitor-toggle enabled" : "monitor-toggle"} onClick={onToggle}>
-          {enabled ? "On" : "Off"}
-        </button>
-      </div>
-
-      <div className="monitor-grid">
-        <article className="monitor-card">
-          <span className="monitor-number">{blockedIssues.length}</span>
-          <span className="monitor-label">Need intervention</span>
-        </article>
-        <article className="monitor-card">
-          <span className="monitor-number">{runningIssues.length}</span>
-          <span className="monitor-label">Running now</span>
-        </article>
-        <article className="monitor-card">
-          <span className="monitor-number">{activeCount}</span>
-          <span className="monitor-label">Active queue</span>
-        </article>
-        <article className="monitor-card">
-          <span className="monitor-number">{doneCount}</span>
-          <span className="monitor-label">Done hidden</span>
-        </article>
-      </div>
-
-      {nextIssue ? (
-        <button type="button" className="monitor-next" onClick={() => onSelectIssue(nextIssue.ref)}>
-          <span className="eyebrow">Next focus</span>
-          <strong>{nextIssue.ref} · {nextIssue.title || "Untitled issue"}</strong>
-          <span>{workStatusLabel(nextIssue)}{issueDetail(nextIssue) ? ` · ${issueDetail(nextIssue)}` : ""}</span>
-        </button>
-      ) : null}
-
-      <div className="monitor-section">
-        <div className="monitor-section-header">
-          <span>Needs user input</span>
-          <span>{blockedIssues.length}</span>
-        </div>
-        {blockedIssues.length ? blockedIssues.slice(0, 4).map((issue) => (
-          <button key={issue.ref} type="button" className="monitor-exception" onClick={() => onSelectIssue(issue.ref)}>
-            <span className={statusThemeClass(workStatusLabel(issue))}>{workStatusLabel(issue)}</span>
-            <strong>{issue.ref}</strong>
-            <span>{issue.title || "Untitled issue"}</span>
-          </button>
-        )) : <div className="monitor-empty">No blockers right now.</div>}
-      </div>
-    </section>
   );
 }
 

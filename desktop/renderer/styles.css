@@ -78,6 +78,10 @@ button:disabled {
   background: rgb(3 8 20 / 0.88);
 }
 
+.desktop-shell.monitor-mode {
+  grid-template-columns: 11.2rem minmax(0, 1fr);
+}
+
 .project-panel,
 .issue-panel,
 .chat-panel {
@@ -268,6 +272,10 @@ button:disabled {
   background:
     linear-gradient(180deg, rgb(7 16 32 / 0.96), rgb(5 12 24 / 0.96)),
     var(--th-surface);
+}
+
+.desktop-shell.monitor-mode .issue-panel {
+  border-right: 0;
 }
 
 .issue-header,
@@ -511,6 +519,28 @@ h2 {
   min-height: 0;
   overflow: auto;
   padding: 0 1rem 1rem;
+}
+
+.desktop-shell.monitor-mode .issue-header {
+  padding: 1.45rem max(1.45rem, calc((100% - 76rem) / 2)) 1.05rem;
+}
+
+.desktop-shell.monitor-mode .search-box {
+  margin-right: max(1.35rem, calc((100% - 76rem) / 2));
+  margin-left: max(1.35rem, calc((100% - 76rem) / 2));
+}
+
+.desktop-shell.monitor-mode .status-row {
+  padding-right: max(1.35rem, calc((100% - 76rem) / 2));
+  padding-left: max(1.35rem, calc((100% - 76rem) / 2));
+}
+
+.desktop-shell.monitor-mode .issue-stack {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(21rem, 1fr));
+  align-content: start;
+  gap: 0.72rem;
+  padding: 0 max(1.35rem, calc((100% - 76rem) / 2)) 1.6rem;
 }
 
 .issue-card {
@@ -867,141 +897,6 @@ h2 {
   background: rgb(245 158 11 / 0.28);
 }
 
-.autoflow-monitor {
-  display: grid;
-  align-content: start;
-  gap: 1rem;
-  min-height: 0;
-  overflow: auto;
-  padding: 2.1rem max(2rem, calc((100% - 58rem) / 2));
-}
-
-.monitor-hero,
-.monitor-card,
-.monitor-next,
-.monitor-section {
-  border: 1px solid rgb(30 43 63 / 0.9);
-  border-radius: 0.8rem;
-  background: rgb(12 22 39 / 0.84);
-  box-shadow: 0 0.8rem 2rem rgb(0 0 0 / 0.16);
-}
-
-.monitor-hero {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 1.15rem 1.25rem;
-}
-
-.monitor-hero.enabled {
-  border-color: rgb(34 211 238 / 0.34);
-  background:
-    radial-gradient(circle at 18% 0%, rgb(34 211 238 / 0.16), transparent 20rem),
-    rgb(12 22 39 / 0.88);
-}
-
-.monitor-hero h2 {
-  font-size: 1.15rem;
-}
-
-.monitor-hero p,
-.monitor-next span,
-.monitor-empty {
-  color: var(--th-fg-muted);
-  font-size: 0.82rem;
-  line-height: 1.45;
-}
-
-.monitor-toggle {
-  flex: 0 0 auto;
-  border: 1px solid var(--th-border);
-  border-radius: 999px;
-  background: rgb(15 23 42 / 0.88);
-  color: var(--th-fg-muted);
-  padding: 0.34rem 0.8rem;
-  font-weight: 850;
-}
-
-.monitor-toggle.enabled {
-  border-color: rgb(16 185 129 / 0.48);
-  background: rgb(16 185 129 / 0.16);
-  color: #86efac;
-}
-
-.monitor-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.75rem;
-}
-
-.monitor-card {
-  display: grid;
-  gap: 0.25rem;
-  padding: 0.9rem 1rem;
-}
-
-.monitor-number {
-  color: var(--th-fg);
-  font-size: 1.35rem;
-  font-weight: 900;
-}
-
-.monitor-label {
-  color: var(--th-fg-muted);
-  font-size: 0.72rem;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.monitor-next {
-  display: grid;
-  gap: 0.32rem;
-  width: 100%;
-  color: var(--th-fg);
-  padding: 0.95rem 1rem;
-  text-align: left;
-}
-
-.monitor-next strong {
-  font-size: 0.95rem;
-}
-
-.monitor-section {
-  display: grid;
-  gap: 0.5rem;
-  padding: 0.9rem;
-}
-
-.monitor-section-header {
-  display: flex;
-  justify-content: space-between;
-  color: var(--th-fg-soft);
-  font-size: 0.78rem;
-  font-weight: 850;
-}
-
-.monitor-exception {
-  display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr);
-  align-items: center;
-  gap: 0.55rem;
-  border: 1px solid var(--th-border);
-  border-radius: 0.62rem;
-  background: rgb(7 14 27 / 0.72);
-  color: var(--th-fg);
-  padding: 0.62rem 0.7rem;
-  text-align: left;
-}
-
-.monitor-exception > span:last-child {
-  overflow: hidden;
-  color: var(--th-fg-muted);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .timeline {
   display: grid;
   align-content: start;
@@ -1236,6 +1131,14 @@ h2 {
   font-size: 0.78rem;
 }
 
+.shell-error {
+  grid-column: 2;
+  align-self: end;
+  margin: 0 1rem 1rem;
+  border: 1px solid rgb(239 68 68 / 0.35);
+  border-radius: 0.6rem;
+}
+
 .empty-state {
   display: grid;
   place-items: center;
@@ -1254,5 +1157,9 @@ h2 {
 
   .issue-panel {
     display: none;
+  }
+
+  .desktop-shell.monitor-mode .issue-panel {
+    display: grid;
   }
 }
