@@ -4,7 +4,6 @@ import {
   MessagePrimitive,
   ThreadPrimitive,
   type AppendMessage,
-  type ThreadMessageLike,
   useExternalStoreRuntime,
   useMessage,
 } from "@assistant-ui/react";
@@ -25,125 +24,38 @@ import {
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { projectThemeFor } from "../../src/theme/project-theme";
+import { actionPayload, formatActionSummary, pendingConfirmationFromActionResult } from "./action-format";
+import { errorMessage, fetchJson } from "./api";
+import { conversationFromPiSession, conversationItemToThreadMessage, extractAppendMessageText, seedConversation } from "./conversation";
+import {
+  contextLine,
+  isExceptionalStatus,
+  isManualActionIssue,
+  issueAttentionRank,
+  issueDetail,
+  recordStatusClass,
+  recordStatusLabel,
+  sessionStatusForUi,
+  statusFilterThemeClass,
+  statusRank,
+  statusThemeClass,
+  workflowSteps,
+  workStatusLabel,
+} from "./status";
+import type {
+  ContextProjection,
+  ConversationItem,
+  DashboardIssue,
+  DashboardPayload,
+  DesktopAction,
+  PendingConfirmationState,
+  PiSessionEvent,
+  PiSessionSnapshot,
+  ProjectRecord,
+  StatusKind,
+  WorkStatusFilter,
+} from "./types";
 import "./styles.css";
-
-type StatusKind = "loading" | "ok" | "error";
-type WorkStatusFilter = "all" | string;
-
-type ProjectStatusCounts = {
-  blocked: number;
-  needsInput: number;
-  inReview: number;
-  running: number;
-  ready: number;
-  queued: number;
-  done: number;
-  total: number;
-};
-
-type ProjectRecord = {
-  id: string;
-  name: string;
-  root: string;
-  valid: boolean;
-  icon?: string;
-  error?: string;
-  attentionCount?: number;
-  statusCounts?: ProjectStatusCounts;
-};
-
-type DashboardIssue = {
-  ref: string;
-  title?: string;
-  workStatus?: string;
-  workStatusDetail?: string;
-  statusLabel?: string;
-  blockerLabels?: string[];
-  repositories?: string[];
-  prStatus?: string;
-  reviewStatus?: string;
-  evidenceStatus?: string;
-  documentationStatus?: string;
-  updatedLabel?: string;
-  nextPickup?: string;
-  handoffPrompt?: string;
-};
-
-type DashboardPayload = {
-  snapshot?: {
-    freshnessLabel?: string;
-  };
-  issues?: DashboardIssue[];
-};
-
-type ContextProjection = {
-  active?: {
-    projectId?: string;
-    issueRef?: string;
-    threadId?: string;
-    sessionId?: string;
-    artifactId?: string;
-  };
-  prompts?: Array<{
-    id: string;
-    prompt: string;
-    issueRef?: string;
-    threadId?: string;
-    sessionId?: string;
-    artifactRefs?: string[];
-    summary?: string;
-    updatedAt: string;
-  }>;
-  artifacts?: Array<{
-    id: string;
-    artifactType: string;
-    title: string;
-    uri?: string;
-    path?: string;
-    summary?: string;
-    updatedAt?: string;
-  }>;
-};
-
-type ConversationItem = {
-  id: string;
-  role: "user" | "assistant" | "system";
-  text: string;
-  createdAt: string;
-};
-
-type PiTimelineItem = {
-  id: string;
-  role: "system" | "user" | "assistant" | "tool";
-  content: string;
-  createdAt: string;
-  toolName?: string;
-};
-
-type PiSessionSnapshot = {
-  id: string;
-  issueRef: string;
-  status: "active" | "running" | "paused" | "done" | "failed";
-  timeline: PiTimelineItem[];
-};
-
-type PiSessionEvent = {
-  type: "assistantDelta" | "toolStarted" | "toolUpdated" | "toolFinished" | "runFailed" | "runCompleted" | "sessionUpdated";
-  timestamp: string;
-  text?: string;
-  toolName?: string;
-  callId?: string;
-  success?: boolean;
-  error?: { message?: string };
-  snapshot?: { status?: "idle" | "running" | "failed" };
-};
-
-type PendingConfirmationState = {
-  id: string;
-  summary: string;
-};
-
-const workflowSteps = ["Queued", "Ready", "Running", "In Review", "Done"] as const;
 
 function App() {
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
@@ -761,16 +673,6 @@ function extractAppendMessageText(message: AppendMessage): string {
     .trim();
 }
 
-function pendingConfirmationFromActionResult(result: unknown): PendingConfirmationState | null {
-  if (!result || typeof result !== "object") return null;
-  const record = result as {
-    session?: { pendingConfirmation?: { id?: unknown; summary?: unknown } };
-  };
-  const pending = record.session?.pendingConfirmation;
-  if (!pending || typeof pending.id !== "string" || typeof pending.summary !== "string") return null;
-  return { id: pending.id, summary: pending.summary };
-}
-
 function PendingActionNotice({
   text,
   pendingConfirmation,
@@ -893,190 +795,6 @@ function WorkflowTrack({ status }: { status?: string }) {
       ))}
     </div>
   );
-}
-
-type DesktopAction = "autoflow" | "approve_confirmation" | "record_evidence" | "record_result" | "record_documentation" | "run_doctor";
-
-async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, { cache: "no-store", ...init });
-  const payload = await response.json() as T & { ok?: boolean; error?: string };
-  if (!response.ok || payload.ok === false) throw new Error(payload.error || `HTTP ${response.status}`);
-  return payload;
-}
-
-function formatActionSummary(action: DesktopAction, summary: string): string {
-  if (action === "autoflow") return formatAutoflowNotice(summary);
-  if (action === "approve_confirmation") return compactChatText(summary);
-  if (action === "run_doctor") {
-    const match = summary.match(/^Doctor (\w+) for ([^.]+)\.\s*(\{.*\})$/s);
-    if (match) {
-      const [, status, issueRef, raw] = match;
-      try {
-        const payload = JSON.parse(raw) as {
-          blockers?: string[];
-          readiness?: { nextActions?: Array<{ summary?: string }> };
-          codeReview?: { prUrl?: string; state?: string; mergeStateStatus?: string };
-        };
-        const blockers = (payload.blockers ?? []).slice(0, 3);
-        const nextActions = (payload.readiness?.nextActions ?? [])
-          .map((item) => item.summary)
-          .filter(Boolean)
-          .slice(0, 2);
-        return [
-          `Doctor ${status} for ${issueRef}.`,
-          payload.codeReview?.prUrl ? `PR: ${payload.codeReview.prUrl} (${payload.codeReview.state ?? "unknown"} / ${payload.codeReview.mergeStateStatus ?? "unknown"})` : "",
-          blockers.length ? `Blockers: ${blockers.join("; ")}` : "",
-          nextActions.length ? `Next: ${nextActions.join("; ")}` : "",
-        ].filter(Boolean).join("\n");
-      } catch {
-        return `Doctor ${status} for ${issueRef}.`;
-      }
-    }
-  }
-  return compactChatText(summary);
-}
-
-function formatAutoflowNotice(summary: string): string {
-  const match = summary.match(/^Autoflow ([^ ]+) for ([^.]+)\.\s*(.*)$/s);
-  if (!match) return compactChatText(summary);
-  const [, status, issueRef, message] = match;
-  const label = status === "needs_confirmation" ? "Needs confirmation" : titleCase(status.replace(/_/g, " "));
-  return compactChatText(`${label}: ${message || issueRef}`);
-}
-
-function titleCase(value: string): string {
-  return value.replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
-function compactChatText(value: string): string {
-  const trimmed = value.trim();
-  if (trimmed.length <= 700) return trimmed;
-  return `${trimmed.slice(0, 680).trimEnd()}...`;
-}
-
-function errorMessage(caught: unknown, fallback: string): string {
-  return caught instanceof Error && caught.message ? caught.message : fallback;
-}
-
-function seedConversation(context?: ContextProjection, projectId?: string, issueRef?: string): ConversationItem[] {
-  const target = issueRef || context?.active?.issueRef;
-  const label = target ? `Selected ${target}.` : projectId ? "Project loaded." : "Flow desktop is ready.";
-  return [{
-    id: "system-empty",
-    role: "system",
-    text: `${label} Use the composer for the current turn; older prompt history stays out of the default view.`,
-    createdAt: new Date().toISOString(),
-  }];
-}
-
-function conversationFromPiSession(session: PiSessionSnapshot): ConversationItem[] {
-  const items: ConversationItem[] = [];
-  for (const item of session.timeline) {
-    if (item.role !== "user" && item.role !== "assistant") continue;
-    const text = item.content.trim();
-    if (!text) continue;
-    const previous = items.at(-1);
-    if (previous?.role === item.role && previous.text.trim() === text) continue;
-    items.push({
-      id: `pi-${session.id}-${item.id}`,
-      role: item.role,
-      text,
-      createdAt: item.createdAt,
-    });
-  }
-  return items.length ? items : seedConversation(undefined, undefined, session.issueRef);
-}
-
-function sessionStatusForUi(status?: PiSessionSnapshot["status"]): "idle" | "running" | "failed" {
-  if (status === "running") return "running";
-  if (status === "failed") return "failed";
-  return "idle";
-}
-
-function contextLine(
-  project: ProjectRecord | undefined,
-  issue: DashboardIssue | undefined,
-  _context: ContextProjection,
-  _selectedSessionId?: string,
-): string {
-  const parts = [
-    project?.name,
-    issue?.ref,
-  ].filter(Boolean);
-  return parts.join(" / ") || "No active context";
-}
-
-function workStatusLabel(issue: DashboardIssue): string {
-  return (issue.workStatus || issue.statusLabel || "Queued").trim() || "Queued";
-}
-
-function issueDetail(issue: DashboardIssue): string {
-  const primary = issue.blockerLabels?.[0]
-    || issue.reviewStatus
-    || issue.evidenceStatus
-    || issue.documentationStatus
-    || issue.updatedLabel
-    || issue.repositories?.[0]
-    || "";
-  return primary === workStatusLabel(issue) ? "" : primary;
-}
-
-function recordStatusLabel(status?: string): string {
-  return status === "Present" ? "Present" : "Needed";
-}
-
-function recordStatusClass(status?: string): string {
-  return status === "Present" ? "record-present" : "record-needed";
-}
-
-function statusThemeClass(label: string): string {
-  if (label === "Blocked") return "issue-state blocked";
-  if (label === "Needs Input") return "issue-state needs-input";
-  if (label === "In Review") return "issue-state in-review";
-  if (label === "Running") return "issue-state running";
-  if (label === "Done") return "issue-state done";
-  if (label === "Ready") return "issue-state ready";
-  return "issue-state queued";
-}
-
-function statusFilterThemeClass(label: string): string {
-  if (label === "Blocked") return "status-theme-blocked";
-  if (label === "Needs Input") return "status-theme-needs-input";
-  if (label === "In Review") return "status-theme-review";
-  if (label === "Running") return "status-theme-running";
-  if (label === "Done") return "status-theme-done";
-  if (label === "Ready") return "status-theme-ready";
-  if (label === "Queued") return "status-theme-queued";
-  if (label === "All") return "status-theme-all";
-  return "status-theme-unknown";
-}
-
-function isExceptionalStatus(status: string): boolean {
-  return status === "Blocked" || status === "Needs Input";
-}
-
-function isManualActionIssue(issue: DashboardIssue): boolean {
-  return isExceptionalStatus(workStatusLabel(issue));
-}
-
-function statusRank(status: string): number {
-  if (status === "Blocked") return 0;
-  if (status === "Needs Input") return 1;
-  if (status === "In Review") return 2;
-  if (status === "Running") return 3;
-  if (status === "Ready") return 4;
-  if (status === "Queued") return 5;
-  if (status === "Done") return 6;
-  return 7;
-}
-
-function issueAttentionRank(issue: DashboardIssue): number {
-  const status = workStatusLabel(issue);
-  const missingEvidence = issue.evidenceStatus !== "Present";
-  const missingDocs = issue.documentationStatus !== "Present";
-  return statusRank(status) * 10
-    + (missingEvidence ? 0 : 2)
-    + (missingDocs ? 0 : 1);
 }
 
 async function copyText(value: string): Promise<boolean> {
