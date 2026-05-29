@@ -110,7 +110,11 @@ export class PiSessionDriver {
     const existingId = this.sessionIdByIssueRef.get(normalizedRef);
     if (existingId) {
       const existing = this.sessionsById.get(existingId);
-      if (existing) return existing;
+      if (existing) {
+        this.refreshIssueContext(existing, issue, workspacePathFromIssue(issue));
+        await this.persistSessionState();
+        return existing;
+      }
     }
 
     const now = nowIso();
@@ -129,7 +133,7 @@ export class PiSessionDriver {
       updatedAt: now,
       timeline: [this.systemMessage({
         id: timelineId("system"),
-        issueRef: normalizedRef,
+        issue,
         workspacePath,
         createdAt: now,
       })],
@@ -174,6 +178,11 @@ export class PiSessionDriver {
     const session = await this.getSession(sessionId);
     const text = prompt.trim();
     if (!text) throw new Error("Prompt is required.");
+    const issue = await this.resolveIssue(session.issueRef);
+    const contextualPrompt = issuePrompt(issue, {
+      prompt: text,
+      workspacePath: session.workspacePath,
+    });
 
     const createdAt = nowIso();
     session.timeline.push({
@@ -208,7 +217,7 @@ export class PiSessionDriver {
           sessionId: session.id,
           sessionFile: session.sessionFile,
           issueRef: session.issueRef,
-          prompt: text,
+          prompt: contextualPrompt,
           repoRoot: this.repoRoot,
           workspacePath: session.workspacePath,
           onEvent: (event) => this.applyDriverEvent(session, event),
@@ -371,14 +380,31 @@ export class PiSessionDriver {
     await writeFile(this.sessionsPath, `${JSON.stringify({ sessions }, null, 2)}\n`, "utf8");
   }
 
-  private systemMessage(input: { id: string; issueRef: string; workspacePath?: string; createdAt: string }): PiTimelineItem {
+  private systemMessage(input: { id: string; issue: WorkItem; workspacePath?: string; createdAt: string }): PiTimelineItem {
     const workspaceLine = input.workspacePath ? `Workspace: ${input.workspacePath}` : "Workspace: pending routing";
     return {
       id: input.id,
       role: "system",
-      content: `Pi session started for ${input.issueRef}.\n${workspaceLine}`,
+      content: `Agent session started.\n${issueContext(input.issue)}\n${workspaceLine}`,
       createdAt: input.createdAt,
     };
+  }
+
+  private refreshIssueContext(session: PiSessionSnapshot, issue: WorkItem, workspacePath?: string): void {
+    session.workspacePath = workspacePath ?? session.workspacePath;
+    const system = this.systemMessage({
+      id: session.timeline.find((item) => item.role === "system")?.id ?? timelineId("system"),
+      issue,
+      workspacePath: session.workspacePath,
+      createdAt: session.timeline.find((item) => item.role === "system")?.createdAt ?? nowIso(),
+    });
+    const systemIndex = session.timeline.findIndex((item) => item.role === "system");
+    if (systemIndex >= 0) {
+      session.timeline[systemIndex] = system;
+    } else {
+      session.timeline.unshift(system);
+    }
+    session.updatedAt = nowIso();
   }
 
   private applyDriverEvent(session: PiSessionSnapshot, event: SessionDriverEvent): void {
@@ -454,6 +480,44 @@ function workspacePathFromIssue(issue: WorkItem): string | undefined {
     if (typeof value === "string" && value.trim()) return value.trim();
   }
   return undefined;
+}
+
+function issuePrompt(issue: WorkItem, input: { prompt: string; workspacePath?: string }): string {
+  return [
+    "You are working in Flow Desktop on the selected issue below.",
+    "Use this issue context as the source of truth for the current turn.",
+    "",
+    issueContext(issue),
+    input.workspacePath ? `Workspace: ${input.workspacePath}` : "Workspace: pending routing",
+    "",
+    "User request:",
+    input.prompt,
+  ].join("\n");
+}
+
+function issueContext(issue: WorkItem): string {
+  const lines = [
+    `Issue: ${issue.ref}`,
+    `Title: ${issue.title}`,
+    `State: ${issue.state}`,
+  ];
+  if (issue.repoKeys?.length) lines.push(`Repos: ${issue.repoKeys.join(", ")}`);
+  if (issue.summary?.trim()) lines.push(`Summary: ${issue.summary.trim()}`);
+
+  const metadata = issue.metadata ?? {};
+  for (const [label, key] of [
+    ["Work status", "workflow.status"],
+    ["Status detail", "workflow.status.detail"],
+    ["Next pickup", "workflow.next_pickup"],
+    ["Evidence", "workflow.acceptance.status"],
+    ["PR", "workflow.repos.flow.pr_url"],
+    ["Blocker", "workflow.blocker.summary"],
+    ["Handoff", "workflow.handoff.summary"],
+  ] as const) {
+    const value = metadata[key];
+    if (typeof value === "string" && value.trim()) lines.push(`${label}: ${value.trim()}`);
+  }
+  return lines.join("\n");
 }
 
 function normalizeIssueRef(value: string): string {

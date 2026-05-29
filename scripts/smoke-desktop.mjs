@@ -81,6 +81,11 @@ try {
   if (!Array.isArray(contextBefore.dashboard?.issues) || !contextBefore.dashboard.issues.some((item) => item.ref === issue.ref)) {
     throw new Error(`desktop context should include fixture issue ${issue.ref}: ${JSON.stringify(contextBefore.dashboard)}`);
   }
+  const issueSession = await fetchJson(`${desktopUrl}/api/issues/${encodeURIComponent(issue.ref)}/session`, { method: "POST" });
+  const systemContext = issueSession.session?.timeline?.find((item) => item.role === "system")?.content ?? "";
+  if (!systemContext.includes(`Issue: ${issue.ref}`) || !systemContext.includes(`Title: ${issue.title}`)) {
+    throw new Error(`desktop issue session should include issue context: ${JSON.stringify(issueSession.session)}`);
+  }
 
   const addedProject = await fetchJson(`${desktopUrl}/api/projects`, {
     method: "POST",
