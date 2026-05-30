@@ -21,6 +21,7 @@ export interface PullRequestStatus {
   url: string;
   body?: string;
   headRefName: string;
+  baseRefName?: string;
   state?: string;
   mergedAt?: string;
   mergeCommitSha?: string;
@@ -128,7 +129,7 @@ export class GhGitHubAdapter implements CodeCollaborationProvider {
       "--state",
       "open",
       "--json",
-      "number,title,url,headRefName,state,mergedAt,isDraft,mergeable,mergeStateStatus,reviewDecision,body,statusCheckRollup",
+      "number,title,url,headRefName,baseRefName,state,mergedAt,isDraft,mergeable,mergeStateStatus,reviewDecision,body,statusCheckRollup",
       "--limit",
       "50",
     ];
@@ -158,7 +159,7 @@ export class GhGitHubAdapter implements CodeCollaborationProvider {
         "--repo",
         this.repoSpecifier(repo),
         "--json",
-        "number,title,url,headRefName,state,mergedAt,mergeCommit,isDraft,mergeable,mergeStateStatus,reviewDecision,body,statusCheckRollup,reviews",
+        "number,title,url,headRefName,baseRefName,state,mergedAt,mergeCommit,isDraft,mergeable,mergeStateStatus,reviewDecision,body,statusCheckRollup,reviews",
         ],
         { cwd: this.cwd, maxBuffer: 20 * 1024 * 1024 },
       )
@@ -552,6 +553,7 @@ function parseSinglePullRequest(value: unknown, repo: string, requiredTemplateHe
     url: String(record.url ?? ""),
     body: typeof record.body === "string" ? record.body : undefined,
     headRefName: String(record.headRefName ?? ""),
+    baseRefName: typeof record.baseRefName === "string" ? record.baseRefName : undefined,
     state: typeof record.state === "string" ? record.state : undefined,
     mergedAt: typeof record.mergedAt === "string" ? record.mergedAt : undefined,
     mergeCommitSha: mergeCommitSha(record.mergeCommit),
@@ -737,7 +739,7 @@ export function normalizePullRequest(pr: PullRequestStatus): UnifiedCodeReview {
     url: pr.url,
     title: pr.title,
     sourceBranch: pr.headRefName,
-    targetBranch: "develop",
+    targetBranch: pr.baseRefName ?? "",
     isDraft: pr.isDraft,
     isMerged: pr.state?.toUpperCase() === "MERGED",
     isClosed: pr.state?.toUpperCase() === "CLOSED",

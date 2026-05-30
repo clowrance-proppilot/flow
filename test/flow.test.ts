@@ -43,7 +43,7 @@ import {
   classifyProviderCliError,
 } from "../src/index.js";
 import type { ProjectTopology } from "../src/project-topology.js";
-import { parseGitHubIssues, parsePullRequests } from "../src/adapters/github.js";
+import { normalizePullRequest, parseGitHubIssues, parsePullRequests } from "../src/adapters/github.js";
 import { currentUserBacklogJql, currentUserOpenSprintJql, parseJiraCommentUrl, parseJiraIssue, parseJiraSearch } from "../src/adapters/jira.js";
 import { DesktopActionRouter } from "../desktop/action-router.js";
 import { PiAgentOrchestrator } from "../desktop/pi-agent-orchestrator.js";
@@ -5740,6 +5740,7 @@ test("GitHub adapter parses pull request check status", () => {
         title: "PR",
         url: "https://github.com/example/repo/pull/1",
         headRefName: "feature/test",
+        baseRefName: "main",
         isDraft: false,
         mergeable: "MERGEABLE",
         mergeStateStatus: "CLEAN",
@@ -5773,6 +5774,8 @@ None.`,
 
   assert.equal(prs[0].checksPassing, true);
   assert.equal(prs[0].headRefName, "feature/test");
+  assert.equal(prs[0].baseRefName, "main");
+  assert.equal(normalizePullRequest(prs[0]).targetBranch, "main");
   assert.equal(prs[0].state, undefined);
   assert.equal(prs[0].mergedAt, undefined);
   assert.equal(prs[0].mergeable, "MERGEABLE");
