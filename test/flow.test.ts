@@ -1690,6 +1690,52 @@ test("Readiness blocks successful Worker output until handoff records exist", ()
   );
 });
 
+test("Readiness lets empty successful Worker output retry execution", () => {
+  const assessment = assessIssue({
+    issue: {
+      ref: "ISSUE-EMPTY",
+      title: "Empty worker result",
+      repoKeys: ["app_api"],
+      state: "ready_to_run",
+      metadata: {
+        work_dir: "/tmp/app-api-worktree",
+      },
+    },
+    workerResults: [
+      {
+        taskId: "worker-empty",
+        issueRef: "ISSUE-EMPTY",
+        repoKey: "app_api",
+        status: "succeeded",
+        summary: "Agent returned without useful output.",
+        changedFiles: [],
+        testsRun: [],
+        blockers: [],
+        completedAt: nowIso(),
+      },
+    ],
+  });
+
+  assert.equal(assessment.readyToAdvance, true);
+  assert.equal(assessment.reviewReady, false);
+  assert.equal(
+    assessment.findings.some((finding) => finding.summary === "Acceptance evidence is missing."),
+    false,
+  );
+  assert.equal(
+    assessment.findings.some((finding) => finding.summary === "Documentation disposition is missing."),
+    false,
+  );
+  assert.equal(
+    assessment.findings.some((finding) => finding.summary === "Pull request is missing."),
+    false,
+  );
+  assert.equal(
+    assessment.findings.some((finding) => finding.summary === "Successful worker result has no changed files or tests."),
+    true,
+  );
+});
+
 test("Readiness supports local no-PR workflows when code review is disabled", () => {
   const assessment = assessIssue({
     issue: {
@@ -4446,6 +4492,46 @@ test("Work Runtime autoflow stops at execution handoff confirmation", async () =
   const issue = await ledger.readIssue("ISSUE-16");
   assert.equal(issue?.metadata["workflow.autoflow.attempts"], 1);
   assert.equal(typeof issue?.metadata["workflow.autoflow.last_attempted_at"], "string");
+});
+
+test("Work Runtime autoflow retries after empty successful Worker output", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-empty-success-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  const session = await workRuntime.createSession("session-autoflow-empty-success");
+  await workRuntime.selectIssue(session.id, {
+    ref: "ISSUE-EMPTY",
+    title: "Empty successful worker result",
+    repoKeys: ["app_api"],
+    state: "ready_to_run",
+    metadata: {
+      work_dir: "/tmp/app-api-worktree",
+    },
+  });
+  await ledger.recordWorkerResult({
+    taskId: "worker-empty",
+    issueRef: "ISSUE-EMPTY",
+    repoKey: "app_api",
+    status: "succeeded",
+    summary: "Agent returned without useful output.",
+    changedFiles: [],
+    testsRun: [],
+    blockers: [],
+    completedAt: nowIso(),
+  });
+
+  const result = await workRuntime.autoFlowIssue(session.id);
+
+  assert.equal(result.status, "needs_confirmation");
+  assert.equal(result.session.pendingConfirmation?.action, "request_execution");
+  assert.equal(
+    result.steps[0]?.session.findings.some((finding) => finding.summary === "Acceptance evidence is missing."),
+    false,
+  );
+  assert.equal(
+    result.steps[0]?.session.findings.some((finding) => finding.summary === "Successful worker result has no changed files or tests."),
+    true,
+  );
 });
 
 test("Work Runtime resets Autoflow attempt state through Flow", async () => {
