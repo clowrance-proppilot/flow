@@ -12,6 +12,7 @@ export const WorkerStatusValue = LifecycleStatusValue;
 
 export const WorkerExecutorValue = {
   LiveAgentThread: "live_agent_thread",
+  HermesAgent: "hermes_agent",
 } as const;
 
 export const workerStatusValues = [
@@ -30,6 +31,7 @@ export const terminalWorkerStatusValues = [
 
 export const workerExecutorValues = [
   WorkerExecutorValue.LiveAgentThread,
+  WorkerExecutorValue.HermesAgent,
 ] as const;
 
 export const workerStatusSchema = z.enum(workerStatusValues);

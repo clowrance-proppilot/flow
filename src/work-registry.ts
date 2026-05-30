@@ -85,28 +85,28 @@ export function createDefaultFlowWorkTypeRegistry(): WorkTypeRegistry {
         workType: "flow.prepare_workspace",
         category: "prepare",
         requiredCapabilities: [],
-        allowedExecutors: [WorkJobExecutorValue.LiveAgentThread],
+        allowedExecutors: [WorkJobExecutorValue.LiveAgentThread, WorkJobExecutorValue.HermesAgent],
         outputType: "workspace_result",
       },
       {
         workType: "flow.implement",
         category: "implement",
         requiredCapabilities: [],
-        allowedExecutors: [WorkJobExecutorValue.LiveAgentThread],
+        allowedExecutors: [WorkJobExecutorValue.LiveAgentThread, WorkJobExecutorValue.HermesAgent],
         outputType: "worker_result",
       },
       {
         workType: "flow.remediate",
         category: "remediate",
         requiredCapabilities: [],
-        allowedExecutors: [WorkJobExecutorValue.LiveAgentThread],
+        allowedExecutors: [WorkJobExecutorValue.LiveAgentThread, WorkJobExecutorValue.HermesAgent],
         outputType: "worker_result",
       },
       {
         workType: "flow.verify",
         category: "verify",
         requiredCapabilities: [],
-        allowedExecutors: [WorkJobExecutorValue.LiveAgentThread],
+        allowedExecutors: [WorkJobExecutorValue.LiveAgentThread, WorkJobExecutorValue.HermesAgent],
         outputType: "evidence_result",
       },
     ],
@@ -122,10 +122,22 @@ export function createDefaultFlowWorkTypeRegistry(): WorkTypeRegistry {
         ],
         outputs: ["workspace_result", "worker_result", "blocked_result", "evidence_result"],
       },
+      {
+        executor: WorkJobExecutorValue.HermesAgent,
+        capabilities: ["repo.worktree.prepare", "code.edit", "test.run", "review.remediate", "evidence.record", "terminal.execute", "file.read", "file.write"],
+        canSubmit: [
+          "flow.prepare_workspace",
+          "flow.implement",
+          "flow.remediate",
+          "flow.verify",
+        ],
+        outputs: ["workspace_result", "worker_result", "blocked_result", "evidence_result"],
+      },
     ],
   );
 }
 
-export function workerExecutorToWorkExecutor(_executor: WorkerExecutor | undefined): WorkJobExecutor {
+export function workerExecutorToWorkExecutor(executor: WorkerExecutor | undefined): WorkJobExecutor {
+  if (executor === "hermes_agent") return WorkJobExecutorValue.HermesAgent;
   return WorkJobExecutorValue.LiveAgentThread;
 }

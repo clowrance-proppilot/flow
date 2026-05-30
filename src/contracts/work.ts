@@ -29,6 +29,7 @@ export const WorkJobStatusValue = {
 
 export const WorkJobExecutorValue = {
   LiveAgentThread: "live_agent_thread",
+  HermesAgent: "hermes_agent",
 } as const;
 
 export const issueStateValues = [
@@ -66,6 +67,7 @@ export const terminalWorkJobStatusValues = [
 
 export const workJobExecutorValues = [
   WorkJobExecutorValue.LiveAgentThread,
+  WorkJobExecutorValue.HermesAgent,
 ] as const;
 
 export const issueStateSchema = z.enum(issueStateValues);
