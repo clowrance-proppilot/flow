@@ -91,12 +91,6 @@ export interface WorkRuntimeOptions {
   issueTracker?: IssueTrackerIntegration | IssueTrackerProvider;
   workTypes?: WorkTypeRegistry;
   executors?: ExecutorAdapter[];
-  /** @deprecated Use sourceControl. */
-  git?: GitInspector;
-  /** @deprecated Use collaboration. */
-  github?: GitHubInspector;
-  /** @deprecated Use issueTracker. */
-  jira?: JiraInspector;
   projectRoot?: string;
   defaultJiraProjectKey?: string;
   autoflowBlockedThreshold?: number;
@@ -346,9 +340,9 @@ export class FlowWorkRuntime {
     this.store = options.store;
     this.ledger = options.ledger;
     this.topology = options.topology ?? new DefaultProjectTopology();
-    this.sourceControl = normalizeSourceControlIntegration(options.sourceControl ?? options.git ?? new GitAdapter());
-    this.collaboration = normalizeCodeCollaborationIntegration(options.collaboration ?? options.github);
-    this.issueTracker = normalizeIssueTrackerIntegration(options.issueTracker ?? options.jira);
+    this.sourceControl = normalizeSourceControlIntegration(options.sourceControl ?? new GitAdapter());
+    this.collaboration = normalizeCodeCollaborationIntegration(options.collaboration);
+    this.issueTracker = normalizeIssueTrackerIntegration(options.issueTracker);
     this.workTypes = options.workTypes ?? createDefaultFlowWorkTypeRegistry();
     this.projectRoot = options.projectRoot ?? process.cwd();
     this.defaultJiraProjectKey = options.defaultJiraProjectKey;

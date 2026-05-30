@@ -2076,11 +2076,11 @@ test("Work Runtime prepares workspace before handoff confirmation", async () => 
     store: new FlowStore({ root }),
     ledger,
     projectRoot: "/repo",
-    git: {
+    sourceControl: {
       async inspect() {
         throw new Error("unused");
       },
-      async prepareWorktree(plan) {
+      async prepareWorktree(plan: any) {
         assert.equal(plan.repoPath, "/repo/app-api");
         assert.equal(plan.baseRef, "develop");
         return {
@@ -2124,11 +2124,11 @@ test("Work Runtime records actual existing worktree path returned by source cont
     store: new FlowStore({ root }),
     ledger,
     projectRoot: "/repo",
-    git: {
+    sourceControl: {
       async inspect() {
         throw new Error("unused");
       },
-      async prepareWorktree(plan) {
+      async prepareWorktree(plan: any) {
         return {
           branch: plan.branch,
           headSha: "existing-sha",
@@ -2164,7 +2164,7 @@ test("Work Runtime adopts an existing worktree into issue metadata", async () =>
     store: new FlowStore({ root }),
     ledger,
     projectRoot: "/repo",
-    git: {
+    sourceControl: {
       async inspect(repoPath) {
         assert.equal(repoPath, "/repo/app-api/.worktrees/feature-issue-3026");
         return {
@@ -2205,7 +2205,7 @@ test("Work Runtime adopts a branch as stealth-mode Flow work", async () => {
     store: new FlowStore({ root }),
     ledger,
     projectRoot: "/repo",
-    git: {
+    sourceControl: {
       async inspect(repoPath) {
         assert.equal(repoPath, "/repo/public-api");
         return {
@@ -2217,7 +2217,7 @@ test("Work Runtime adopts a branch as stealth-mode Flow work", async () => {
         };
       },
     },
-    jira: {
+    issueTracker: {
       async viewIssue() {
         throw new Error("external issue tracker should not be read for branch adoption");
       },
@@ -2411,7 +2411,7 @@ test("Work Runtime bootstraps an existing Jira issue into the workflow ledger", 
     store,
     ledger,
     projectRoot: root,
-    jira: {
+    issueTracker: {
       async viewIssue(key) {
         assert.equal(key, "ISSUE-15725");
         return {
@@ -2460,7 +2460,7 @@ test("Work Runtime creates Jira issues through Flow without generated labels", a
     store,
     ledger,
     projectRoot: root,
-    jira: {
+    issueTracker: {
       async viewIssue(key) {
         assert.equal(key, "ISSUE-15738");
         return {
@@ -2633,7 +2633,7 @@ test("Work Runtime moves issues into the active Jira sprint through Flow", async
   const workRuntime = testWorkRuntime({
     store,
     ledger,
-    jira: {
+    issueTracker: {
       async viewIssue(key) {
         return { key, summary: key, status: "Ready for Dev", labels: [] };
       },
@@ -2687,7 +2687,7 @@ test("Work Runtime inspects queue from current Jira sprint before ledger", async
     store: new FlowStore({ root }),
     ledger,
     projectRoot: root,
-    jira: {
+    issueTracker: {
       async viewIssue() {
         throw new Error("viewIssue should not be needed for Jira queue search");
       },
@@ -2724,7 +2724,7 @@ test("Work Runtime inspects current-user Jira backlog separately from sprint que
     store: new FlowStore({ root }),
     ledger: new MemoryWorkflowLedger(),
     projectRoot: root,
-    jira: {
+    issueTracker: {
       async viewIssue() {
         throw new Error("viewIssue should not be needed for Jira backlog search");
       },
@@ -2760,7 +2760,7 @@ test("Work Runtime excludes done Jira issues defensively", async () => {
     store: new FlowStore({ root }),
     ledger,
     projectRoot: root,
-    jira: {
+    issueTracker: {
       async viewIssue() {
         throw new Error("viewIssue should not be needed for Jira queue search");
       },
@@ -2811,7 +2811,7 @@ test("Work Runtime lets Jira review state override stale worker phase", async ()
     store: new FlowStore({ root }),
     ledger,
     projectRoot: root,
-    jira: {
+    issueTracker: {
       async viewIssue() {
         throw new Error("viewIssue should not be needed for Jira queue search");
       },
@@ -2855,7 +2855,7 @@ test("Work Runtime replaces invalid stale routed repo keys from Jira labels", as
     store: new FlowStore({ root }),
     ledger,
     projectRoot: root,
-    jira: {
+    issueTracker: {
       async viewIssue() {
         throw new Error("viewIssue should not be needed for Jira queue search");
       },
@@ -2888,7 +2888,7 @@ test("Work Runtime infers app_api routing from Jira summary keywords", async () 
     store: new FlowStore({ root }),
     ledger,
     projectRoot: root,
-    jira: {
+    issueTracker: {
       async viewIssue() {
         throw new Error("viewIssue should not be needed for Jira queue search");
       },
@@ -2952,11 +2952,11 @@ test("Work Runtime prepares bug-prefixed branches from agent-selected branch kin
     store: new FlowStore({ root }),
     ledger,
     projectRoot: root,
-    git: {
+    sourceControl: {
       async inspect() {
         return { branch: "bug/issue-15738-geoparquet-provider-etl-fails", headSha: "abc123", dirty: false, entries: [] };
       },
-      async prepareWorktree(plan) {
+      async prepareWorktree(plan: any) {
         preparedBranch = plan.branch;
         return { branch: plan.branch, headSha: "abc123", dirty: false, entries: [] };
       },
@@ -2985,7 +2985,7 @@ test("Work Runtime blocks generated branches when branch kind is missing", async
     store: new FlowStore({ root }),
     ledger,
     projectRoot: root,
-    git: {
+    sourceControl: {
       async inspect() {
         throw new Error("unused");
       },
@@ -3017,11 +3017,11 @@ test("Work Runtime infers generated branch kind from Jira issue type", async () 
     store: new FlowStore({ root }),
     ledger,
     projectRoot: root,
-    git: {
+    sourceControl: {
       async inspect() {
         throw new Error("unused");
       },
-      async prepareWorktree(plan) {
+      async prepareWorktree(plan: any) {
         preparedBranch = plan.branch;
         return { branch: plan.branch, headSha: "abc123", dirty: false, entries: [] };
       },
@@ -3051,7 +3051,7 @@ test("Work Runtime moves Ready for Dev issue to In Progress after workspace prep
     store: new FlowStore({ root }),
     ledger,
     projectRoot: root,
-    jira: {
+    issueTracker: {
       async viewIssue(key) {
         return {
           key,
@@ -3067,11 +3067,11 @@ test("Work Runtime moves Ready for Dev issue to In Progress after workspace prep
         jiraStatusCategory = "indeterminate";
       },
     },
-    git: {
+    sourceControl: {
       async inspect() {
         throw new Error("unused");
       },
-      async prepareWorktree(plan) {
+      async prepareWorktree(plan: any) {
         return { branch: plan.branch, headSha: "abc123", dirty: false, entries: [] };
       },
     },
@@ -4037,11 +4037,11 @@ test("Work Runtime routes and prepares main work in the project root", async () 
     store: new FlowStore({ root }),
     ledger: new MemoryWorkflowLedger(),
     projectRoot,
-    git: {
+    sourceControl: {
       async inspect() {
         throw new Error("unused");
       },
-      async prepareWorktree(plan) {
+      async prepareWorktree(plan: any) {
         assert.equal(plan.repoPath, projectRoot);
         assert.equal(plan.baseRef, "main");
         assert.match(plan.worktreePath, /\.worktrees\/feature-issue-31-flow-root-work$/);
@@ -4135,11 +4135,11 @@ test("Work Runtime autoflow prepares a missing workspace before execution handof
     store: new FlowStore({ root }),
     ledger,
     projectRoot: "/repo",
-    git: {
+    sourceControl: {
       async inspect() {
         throw new Error("unused");
       },
-      async prepareWorktree(plan) {
+      async prepareWorktree(plan: any) {
         assert.equal(plan.repoPath, "/repo/app-api");
         assert.equal(plan.baseRef, "develop");
         return {
@@ -4175,7 +4175,7 @@ test("Work Runtime autoflow marks draft pull requests ready before reassessing b
   const workRuntime = testWorkRuntime({
     store: new FlowStore({ root }),
     ledger,
-    github: {
+    collaboration: {
       async findPullRequests() {
         return [];
       },
@@ -4194,7 +4194,7 @@ test("Work Runtime autoflow marks draft pull requests ready before reassessing b
       },
       async markPullRequestReadyForReview(repo, number) {
         markedReady = { repo, number };
-        return this.getPullRequest?.(repo, number);
+        return (this as any).getPullRequest?.(repo, number);
       },
     },
   });
@@ -4264,7 +4264,7 @@ test("Work Runtime writes acceptance evidence back to Jira once", async () => {
   const workRuntime = testWorkRuntime({
     store: new FlowStore({ root }),
     ledger,
-    jira: {
+    issueTracker: {
       async viewIssue(key) {
         return { key, summary: "Accepted issue", labels: [] };
       },
@@ -4439,7 +4439,7 @@ test("Work Runtime closeout records evidence, merges approved PR, and verifies J
   const workRuntime = testWorkRuntime({
     store: new FlowStore({ root }),
     ledger,
-    github: {
+    collaboration: {
       async findPullRequests() {
         return [];
       },
@@ -4475,7 +4475,7 @@ test("Work Runtime closeout records evidence, merges approved PR, and verifies J
         };
       },
     },
-    jira: {
+    issueTracker: {
       async viewIssue(key) {
         jiraReads += 1;
         return {
@@ -4605,7 +4605,7 @@ test("Work Runtime records pull request metadata", async () => {
   const workRuntime = testWorkRuntime({
     store: new FlowStore({ root }),
     ledger,
-    git: {
+    sourceControl: {
       async inspect() {
         return {
           branch: "feature/issue-14-test",
@@ -4689,7 +4689,7 @@ test("Work Runtime reconciliation adopts matching pull request into Beads state"
   const workRuntime = testWorkRuntime({
     store: new FlowStore({ root }),
     ledger,
-    git: {
+    sourceControl: {
       async inspect() {
         return {
           branch: "feature/issue-17-test",
@@ -4699,7 +4699,7 @@ test("Work Runtime reconciliation adopts matching pull request into Beads state"
         };
       },
     },
-    github: {
+    collaboration: {
       async findPullRequests(repo, headRefName) {
         assert.equal(repo, "app-api");
         assert.equal(headRefName, "feature/issue-17-test");
@@ -4750,7 +4750,7 @@ test("Work Runtime reconciliation discovers routing from an unrouted matching pu
   const workRuntime = testWorkRuntime({
     store: new FlowStore({ root }),
     ledger,
-    github: {
+    collaboration: {
       async findPullRequests(repo) {
         if (repo !== "public-api") return [];
         return [
@@ -4796,7 +4796,7 @@ test("Work Runtime doctor reports visibility, blockers, and next action", async 
   const workRuntime = testWorkRuntime({
     store: new FlowStore({ root }),
     ledger,
-    github: {
+    collaboration: {
       async findPullRequests(repo) {
         if (repo !== "public-api") return [];
         return [
@@ -4975,7 +4975,7 @@ test("Work Runtime reconciliation adopts open issue PR when branch has changed",
   const workRuntime = testWorkRuntime({
     store: new FlowStore({ root }),
     ledger,
-    git: {
+    sourceControl: {
       async inspect() {
         return {
           branch: "feature/issue-15607-old",
@@ -4985,7 +4985,7 @@ test("Work Runtime reconciliation adopts open issue PR when branch has changed",
         };
       },
     },
-    github: {
+    collaboration: {
       async findPullRequests(repo, headRefName) {
         assert.equal(repo, "app-api");
         if (headRefName) {
@@ -5042,7 +5042,7 @@ test("Work Runtime reconciliation selects blocking pull request across routed re
   const workRuntime = testWorkRuntime({
     store: new FlowStore({ root }),
     ledger,
-    git: {
+    sourceControl: {
       async inspect() {
         return {
           branch: "feature/issue-15607-test",
@@ -5052,7 +5052,7 @@ test("Work Runtime reconciliation selects blocking pull request across routed re
         };
       },
     },
-    github: {
+    collaboration: {
       async findPullRequests(repo, headRefName) {
         assert.equal(headRefName, "feature/issue-15607-test");
         if (repo === "public-api") {
@@ -5193,7 +5193,7 @@ test("Work Runtime records review confirmation and posts it to GitHub", async ()
   const workRuntime = testWorkRuntime({
     store: new FlowStore({ root }),
     ledger,
-    github: {
+    collaboration: {
       async findPullRequests() {
         return [];
       },
@@ -5264,7 +5264,7 @@ test("Work Runtime review confirmation replaces stale top-level PR metadata", as
   const workRuntime = testWorkRuntime({
     store: new FlowStore({ root }),
     ledger,
-    github: {
+    collaboration: {
       async findPullRequests() {
         return [];
       },
@@ -5318,7 +5318,7 @@ test("Work Runtime reconciliation refreshes existing PR metadata when draft stat
   const workRuntime = testWorkRuntime({
     store: new FlowStore({ root }),
     ledger,
-    git: {
+    sourceControl: {
       async inspect() {
         return {
           branch: "feature/issue-18-test",
@@ -5328,7 +5328,7 @@ test("Work Runtime reconciliation refreshes existing PR metadata when draft stat
         };
       },
     },
-    github: {
+    collaboration: {
       async findPullRequests(repo, headRefName) {
         assert.equal(repo, "app-api");
         assert.equal(headRefName, "feature/issue-18-test");
@@ -5377,7 +5377,7 @@ test("Work Runtime reconciliation completes active undraft worker when GitHub sh
   const workRuntime = testWorkRuntime({
     store: new FlowStore({ root }),
     ledger,
-    git: {
+    sourceControl: {
       async inspect() {
         return {
           branch: "feature/issue-1407-test",
@@ -5387,7 +5387,7 @@ test("Work Runtime reconciliation completes active undraft worker when GitHub sh
         };
       },
     },
-    github: {
+    collaboration: {
       async findPullRequests(repo, headRefName) {
         assert.equal(repo, "app-api");
         assert.equal(headRefName, "feature/issue-1407-test");
@@ -5444,7 +5444,7 @@ test("Work Runtime reconciliation refreshes stale recorded PR merge fields from 
   const workRuntime = testWorkRuntime({
     store: new FlowStore({ root }),
     ledger,
-    github: {
+    collaboration: {
       async findPullRequests() {
         throw new Error("Recorded PR refresh should use getPullRequest");
       },
@@ -5535,7 +5535,7 @@ test("Work Runtime reconciliation keeps branch-matched PR authoritative over sta
   const workRuntime = testWorkRuntime({
     store: new FlowStore({ root }),
     ledger,
-    git: {
+    sourceControl: {
       async inspect() {
         return {
           branch: "feature/ISSUE-15272-test-coverage-ci",
@@ -5545,7 +5545,7 @@ test("Work Runtime reconciliation keeps branch-matched PR authoritative over sta
         };
       },
     },
-    github: {
+    collaboration: {
       async findPullRequests(repo, headRefName) {
         assert.equal(repo, "app-api");
         if (headRefName === "feature/ISSUE-15272-test-coverage-ci") {
