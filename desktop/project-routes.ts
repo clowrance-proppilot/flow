@@ -112,6 +112,16 @@ export function registerProjectRoutes(server: Express, context: RouteContext, js
     }
   });
 
+  server.post("/api/projects/:projectId/confirmations", jsonBody, async (req, res) => {
+    try {
+      const disabled = req.body?.disabled === true;
+      const project = await projectRegistry.setProjectConfirmations(String(req.params.projectId ?? ""), disabled);
+      res.json({ ok: true, project });
+    } catch (error) {
+      res.status(404).json({ ok: false, error: message(error) });
+    }
+  });
+
   server.get("/api/context", async (_req, res) => {
     try {
       const project = await requireActiveProject(projectRegistry);

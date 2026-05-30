@@ -14,6 +14,7 @@ export const desktopProjectRecordSchema = z.object({
   icon: z.string().min(1).optional(),
   error: z.string().optional(),
   autoflowEnabled: z.boolean().default(true),
+  confirmationsDisabled: z.boolean().default(false),
   addedAt: z.string().datetime(),
   lastOpenedAt: z.string().datetime(),
 });
@@ -103,6 +104,22 @@ export class DesktopProjectRegistry {
     const updated = desktopProjectRecordSchema.parse({
       ...project,
       autoflowEnabled: enabled,
+      lastOpenedAt: nowIso(),
+    });
+    await this.writeState({
+      activeProjectId: state.activeProjectId,
+      projects: upsertProject(state.projects, updated),
+    });
+    return updated;
+  }
+
+  async setProjectConfirmations(projectId: string, disabled: boolean): Promise<DesktopProjectRecord> {
+    const state = await this.readState();
+    const project = state.projects.find((candidate) => candidate.id === projectId);
+    if (!project) throw new Error(`Unknown Flow project ${projectId}.`);
+    const updated = desktopProjectRecordSchema.parse({
+      ...project,
+      confirmationsDisabled: disabled,
       lastOpenedAt: nowIso(),
     });
     await this.writeState({

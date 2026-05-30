@@ -20,6 +20,7 @@ export type ProjectRecord = {
   icon?: string;
   error?: string;
   autoflowEnabled?: boolean;
+  confirmationsDisabled?: boolean;
   attentionCount?: number;
   statusCounts?: ProjectStatusCounts;
 };
@@ -121,6 +122,13 @@ export type PendingConfirmationState = {
 };
 
 export type DesktopAction = "autoflow" | "approve_confirmation" | "record_evidence" | "record_result" | "record_documentation" | "run_doctor";
+
+export type ConfirmationDialogState = {
+  title: string;
+  message: string;
+  action: DesktopAction | "toggle_autoflow";
+  variant?: "warning" | "danger" | "info";
+};
 
 export type PiActivityState = {
   phase: "idle" | "starting" | "thinking" | "tool" | "responding" | "done" | "failed";

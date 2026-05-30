@@ -1,4 +1,5 @@
 import {
+  AlertTriangle,
   ArrowLeft,
   CircleCheck,
   ClipboardList,
@@ -8,6 +9,7 @@ import {
   RefreshCw,
   Search,
   Send,
+  Settings,
   Stethoscope,
   Waypoints,
 } from "lucide-react";
@@ -36,6 +38,7 @@ import {
 import type {
   ContextProjection,
   ConversationItem,
+  ConfirmationDialogState,
   CreatedIssue,
   DashboardIssue,
   DashboardPayload,
@@ -80,6 +83,8 @@ function App() {
   const [conversation, setConversation] = useState<ConversationItem[]>([]);
   const [systemNotice, setSystemNotice] = useState("");
   const [pendingConfirmation, setPendingConfirmation] = useState<PendingConfirmationState | null>(null);
+  const [confirmationDialog, setConfirmationDialog] = useState<ConfirmationDialogState | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState<StatusKind>("loading");
   const [sending, setSending] = useState(false);
@@ -249,6 +254,40 @@ function App() {
     } catch {
       setProjects((items) => items.map((project) => project.id === activeProject.id ? { ...project, autoflowEnabled: !enabled } : project));
       setError("Unable to update Autoflow for this project.");
+    }
+  }
+
+  function requestConfirmation(dialog: ConfirmationDialogState): void {
+    if (activeProject?.confirmationsDisabled) {
+      // If confirmations are disabled, execute immediately
+      void executeConfirmedAction(dialog.action);
+      return;
+    }
+    setConfirmationDialog(dialog);
+  }
+
+  async function executeConfirmedAction(action: DesktopAction | "toggle_autoflow"): Promise<void> {
+    setConfirmationDialog(null);
+    if (action === "toggle_autoflow") {
+      await toggleProjectAutoflow();
+    } else {
+      await invokeAction(action);
+    }
+  }
+
+  async function toggleConfirmations(): Promise<void> {
+    if (!activeProject) return;
+    const disabled = !activeProject.confirmationsDisabled;
+    setProjects((items) => items.map((project) => project.id === activeProject.id ? { ...project, confirmationsDisabled: disabled } : project));
+    try {
+      await fetchJson(`/api/projects/${encodeURIComponent(activeProject.id)}/confirmations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ disabled }),
+      });
+    } catch {
+      setProjects((items) => items.map((project) => project.id === activeProject.id ? { ...project, confirmationsDisabled: !disabled } : project));
+      setError("Unable to update confirmation settings.");
     }
   }
 
@@ -726,7 +765,14 @@ function App() {
             <button
               type="button"
               className={autoflowEnabled ? "autoflow-switch enabled" : "autoflow-switch"}
-              onClick={() => void toggleProjectAutoflow()}
+              onClick={() => void requestConfirmation({
+                title: autoflowEnabled ? "Disable Autoflow" : "Enable Autoflow",
+                message: autoflowEnabled
+                  ? "This will stop automatic workflow processing for this project. Continue?"
+                  : "This will enable automatic workflow processing. Autoflow may make changes to your code. Continue?",
+                action: "toggle_autoflow",
+                variant: autoflowEnabled ? "info" : "warning",
+              })}
               aria-pressed={autoflowEnabled}
               title="Toggle project Autoflow"
             >
@@ -741,6 +787,14 @@ function App() {
               disabled={status === "loading"}
             >
               <RefreshCw size={15} />
+            </button>
+            <button
+              type="button"
+              className="icon-button"
+              title="Settings"
+              onClick={() => setSettingsOpen(!settingsOpen)}
+            >
+              <Settings size={15} />
             </button>
           </div>
         </header>
@@ -866,15 +920,111 @@ function App() {
               onPromptChange={setPrompt}
               showDoctor={showManualActions}
               doctorBusy={actionBusy === "run_doctor"}
-              onDoctor={() => void invokeAction("run_doctor")}
+              onDoctor={() => void requestConfirmation({
+                title: "Run Doctor",
+                message: "This will analyze the issue and may suggest code changes. Continue?",
+                action: "run_doctor",
+                variant: "info",
+              })}
               autoflowBusy={actionBusy === "autoflow"}
-              onAutoflow={() => void invokeAction("autoflow")}
+              onAutoflow={() => void requestConfirmation({
+                title: "Run Autoflow",
+                message: "Autoflow will analyze and potentially make changes to your code. This action may modify files in your project. Continue?",
+                action: "autoflow",
+                variant: "warning",
+              })}
             />
 
             {error ? <div className="error-line">{error}</div> : null}
           </main>
         </div>
       ) : error ? <div className="error-line shell-error">{error}</div> : null}
+
+      {settingsOpen && activeProject ? (
+        <SettingsPanel
+          project={activeProject}
+          onToggleConfirmations={toggleConfirmations}
+          onClose={() => setSettingsOpen(false)}
+        />
+      ) : null}
+
+      {confirmationDialog ? (
+        <ConfirmationDialog
+          dialog={confirmationDialog}
+          onConfirm={() => void executeConfirmedAction(confirmationDialog.action)}
+          onCancel={() => setConfirmationDialog(null)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function ConfirmationDialog({
+  dialog,
+  onConfirm,
+  onCancel,
+}: {
+  dialog: ConfirmationDialogState;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const variantClass = dialog.variant === "danger" ? "danger" : dialog.variant === "warning" ? "warning" : "info";
+  return (
+    <div className="confirmation-overlay" onClick={onCancel}>
+      <div className="confirmation-dialog" onClick={(e) => e.stopPropagation()}>
+        <div className="confirmation-header">
+          <AlertTriangle size={20} className={`confirmation-icon ${variantClass}`} />
+          <h3>{dialog.title}</h3>
+        </div>
+        <p className="confirmation-message">{dialog.message}</p>
+        <div className="confirmation-actions">
+          <button type="button" className="confirmation-cancel" onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="button" className={`confirmation-confirm ${variantClass}`} onClick={onConfirm}>
+            Continue
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SettingsPanel({
+  project,
+  onToggleConfirmations,
+  onClose,
+}: {
+  project: ProjectRecord;
+  onToggleConfirmations: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="settings-overlay" onClick={onClose}>
+      <div className="settings-panel" onClick={(e) => e.stopPropagation()}>
+        <div className="settings-header">
+          <h3>Settings</h3>
+          <button type="button" className="icon-button" onClick={onClose}>
+            <span>×</span>
+          </button>
+        </div>
+        <div className="settings-content">
+          <div className="settings-section">
+            <div className="settings-label">Confirmation Dialogs</div>
+            <div className="settings-description">
+              Show confirmation dialogs before destructive actions like running Autoflow or toggling automation.
+            </div>
+            <button
+              type="button"
+              className={project.confirmationsDisabled ? "settings-toggle disabled" : "settings-toggle enabled"}
+              onClick={onToggleConfirmations}
+            >
+              <span>{project.confirmationsDisabled ? "Disabled" : "Enabled"}</span>
+              <span className="switch-track" aria-hidden="true"><span /></span>
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
