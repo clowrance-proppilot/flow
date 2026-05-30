@@ -643,7 +643,7 @@ function App() {
   } satisfies PiActivityState : null);
 
   return (
-    <div className={selectedIssue ? "desktop-shell issue-selected" : "desktop-shell"}>
+    <div className={selectedIssue ? "flow-desktop desktop-shell issue-selected" : "flow-desktop desktop-shell"}>
       <aside className="project-panel" aria-label="Projects">
         <header className="project-header">
           <span className="brand"><Waypoints size={16} /></span>
