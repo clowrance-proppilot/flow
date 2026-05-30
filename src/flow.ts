@@ -159,6 +159,14 @@ async function handleLedgerRequest(request: Record<string, unknown>): Promise<un
 async function handleIssueRequest(request: Record<string, unknown>): Promise<unknown> {
   const mode = requireString(request, "mode");
   if (mode === "view") return runtime.inspectIssue(requireId(request));
+  if (mode === "triage") {
+    return runtime.triageIssues({
+      dryRun: request.apply === true ? false : true,
+      apply: request.apply === true,
+      limit: typeof request.limit === "number" ? request.limit : undefined,
+      ids: asStringArray(request.ids),
+    });
+  }
   const activeSessionId = sessionId(request);
   await ensureSession(activeSessionId);
   switch (mode) {
@@ -195,7 +203,7 @@ async function handleIssueRequest(request: Record<string, unknown>): Promise<unk
         baseBranch: optionalString(request, "baseBranch"),
       });
     default:
-      throw badMode("issue", mode, ["view", "select", "create", "route", "adoptBranch", "adoptWorkspace"]);
+      throw badMode("issue", mode, ["view", "select", "create", "route", "adoptBranch", "adoptWorkspace", "triage"]);
   }
 }
 
@@ -339,15 +347,18 @@ function flowManifest(target?: string) {
         "Use queue/backlog for active configured-tracker work discovery.",
         "Use create only when the user asks to create new tracked work.",
         "Use adoptBranch/adoptWorkspace for local work that should stay Flow-local until published.",
+        "Use triage to analyze open issues and propose cleanup actions.",
       ],
-      modes: ["view", "select", "create", "route", "adoptBranch", "adoptWorkspace"],
+      modes: ["view", "select", "create", "route", "adoptBranch", "adoptWorkspace", "triage"],
       examples: [
         { op: "issue", mode: "view", id: issueRefExample() },
         { op: "issue", mode: "select", id: "FLOW-123" },
         { op: "issue", mode: "route", id: "FLOW-123", repoKeys: ["main"] },
         { op: "issue", mode: "adoptWorkspace", id: "FLOW-123", repoKey: "main", worktreePath: "/path/to/worktree" },
+        { op: "issue", mode: "triage", dryRun: true, limit: 50 },
+        { op: "issue", mode: "triage", apply: true, ids: ["GH-123", "GH-124"] },
       ],
-      id: "Required issue/work item id for existing work items; create/adoptBranch may omit id to allocate one.",
+      id: "Required issue/work item id for existing work items; create/adoptBranch may omit id to allocate one. Triage mode does not require id.",
     };
   }
   if (target === "runtime") {
@@ -400,7 +411,9 @@ function issueTrackerManifest() {
       create: Boolean(capabilities?.canCreateIssues && configuredIssueTracker.createIssue),
       transition: Boolean(capabilities?.canTransitionIssues && configuredIssueTracker.transitionIssue),
       comments: Boolean(capabilities?.canPostComments && configuredIssueTracker.postComment),
+      tagging: Boolean(capabilities?.canTagIssues && configuredIssueTracker.addIssueTags),
       planningLane: Boolean(capabilities?.canManageActivePlanningLane && configuredIssueTracker.moveIssuesToActivePlanningLane),
+      triage: true,
     },
   };
 }

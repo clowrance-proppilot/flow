@@ -22,6 +22,8 @@ export class LocalIssueTrackerAdapter implements IssueTrackerProvider {
     canTransitionIssues: true,
     canPostComments: true,
     canManageActivePlanningLane: false,
+    canFetchOpenIssues: true,
+    canTagIssues: true,
   };
 
   private readonly ledger: WorkflowLedger;
@@ -47,6 +49,13 @@ export class LocalIssueTrackerAdapter implements IssueTrackerProvider {
 
   async fetchBacklogQueue(limit = 10): Promise<UnifiedIssue[]> {
     return this.fetchActiveQueue(limit);
+  }
+
+  async fetchOpenIssues(limit = 100): Promise<UnifiedIssue[]> {
+    const issues = await this.ledger.listIssues(limit);
+    return issues
+      .filter((issue) => issue.state !== "done")
+      .map(unifiedIssueFromWorkItem);
   }
 
   async createIssue(input: CreateIssueInput): Promise<UnifiedIssue> {
@@ -93,6 +102,36 @@ export class LocalIssueTrackerAdapter implements IssueTrackerProvider {
       },
     });
     return { url: localIssueUrl(issue.ref), body };
+  }
+
+  async addIssueTags(ref: string, tags: string[]): Promise<UnifiedIssue> {
+    const issue = await this.ledger.readIssue(normalizeIssueRef(ref));
+    if (!issue) throw new Error(`Local issue ${ref} was not found in the Flow ledger.`);
+    const existing = arrayMetadata(issue, "issueLabels");
+    const merged = [...new Set([...existing, ...tags.map((tag) => tag.trim()).filter(Boolean)])];
+    const updated = await this.ledger.writeIssue({
+      ...issue,
+      metadata: {
+        ...issue.metadata,
+        issueLabels: merged,
+      },
+    });
+    return unifiedIssueFromWorkItem(updated);
+  }
+
+  async removeIssueTags(ref: string, tags: string[]): Promise<UnifiedIssue> {
+    const issue = await this.ledger.readIssue(normalizeIssueRef(ref));
+    if (!issue) throw new Error(`Local issue ${ref} was not found in the Flow ledger.`);
+    const removals = new Set(tags.map((tag) => tag.trim().toLowerCase()).filter(Boolean));
+    const updatedLabels = arrayMetadata(issue, "issueLabels").filter((tag) => !removals.has(tag.toLowerCase()));
+    const updated = await this.ledger.writeIssue({
+      ...issue,
+      metadata: {
+        ...issue.metadata,
+        issueLabels: updatedLabels,
+      },
+    });
+    return unifiedIssueFromWorkItem(updated);
   }
 
   private async nextIssueRef(): Promise<string> {

@@ -47,7 +47,10 @@ import type {
   UnifiedCodeReview,
   UnifiedIssue,
   UnifiedWorkspaceStatus,
+  TriageOptions,
+  TriageResult,
 } from "./adapters/provider-contracts.js";
+import { triageIssues } from "./triage.js";
 import { assessIssue } from "./readiness.js";
 import type { WorkflowLedger } from "./ledger.js";
 import { FlowStore } from "./store.js";
@@ -823,6 +826,63 @@ export class FlowWorkRuntime {
     const issue = await this.ledger.readIssue(issueRef);
     if (!issue) throw new Error(`Issue ${issueRef} was not found in the Flow ledger.`);
     return this.reconcileExternalStateSafely(issue, undefined, { persist: false });
+  }
+
+  async triageIssues(options: TriageOptions = {}): Promise<TriageResult> {
+    if (!this.issueTracker) {
+      throw new Error("Issue tracker is not configured. Cannot triage issues.");
+    }
+
+    // Fetch open issues from the issue tracker
+    let issues: UnifiedIssue[];
+    if (this.issueTracker.fetchOpenIssues) {
+      issues = await this.issueTracker.fetchOpenIssues(options.limit ?? 100);
+    } else if (this.issueTracker.searchCurrentUserOpenSprintIssues) {
+      const jiraIssues = await this.issueTracker.searchCurrentUserOpenSprintIssues(options.limit ?? 100);
+      issues = jiraIssues
+        .filter((jiraIssue) => !isJiraDone(jiraIssue))
+        .map((jiraIssue) => this.mergeJiraQueueIssue(jiraIssue))
+        .map((workItem) => ({
+          ref: workItem.ref,
+          title: workItem.title,
+          description: workItem.summary,
+          status: existingString(workItem.metadata.issueStatus) ?? "Open",
+          statusCategory: existingString(workItem.metadata.issueStatusCategory) ?? "To Do",
+          type: existingString(workItem.metadata.issueType) ?? "task",
+          url: existingString(workItem.metadata.issueUrl) ?? existingString(workItem.metadata.jiraUrl) ?? "",
+          updatedAt: workItem.updatedAt,
+          labels: metadataStringArray(workItem.metadata.issueLabels) ?? [],
+          assignee: existingString(workItem.metadata.assignee),
+        }));
+    } else {
+      // Fall back to local ledger
+      const localIssues = await this.ledger.listIssues(options.limit ?? 100);
+      issues = localIssues
+        .filter((issue) => issue.state !== "done")
+        .map((issue) => ({
+          ref: issue.ref,
+          title: issue.title,
+          description: issue.summary,
+          status: existingString(issue.metadata.localStatus) ?? "To Do",
+          statusCategory: existingString(issue.metadata.localStatusCategory) ?? "To Do",
+          type: existingString(issue.metadata.issueType) ?? "task",
+          url: existingString(issue.metadata.localUrl) ?? `flow://local/issues/${encodeURIComponent(issue.ref)}`,
+          updatedAt: issue.updatedAt,
+          labels: [],
+        }));
+    }
+
+    // Run triage analysis
+    const result = await triageIssues({
+      issues,
+      options,
+      postComment: this.issueTracker?.postComment ? (ref, body) => this.issueTracker!.postComment!(ref, body) : undefined,
+      transitionIssue: this.issueTracker?.transitionIssue ? (ref, status) => this.issueTracker!.transitionIssue!(ref, status) : undefined,
+      addTags: this.issueTracker?.addIssueTags ? (ref, tags) => this.issueTracker!.addIssueTags!(ref, tags) : undefined,
+      removeTags: this.issueTracker?.removeIssueTags ? (ref, tags) => this.issueTracker!.removeIssueTags!(ref, tags) : undefined,
+    });
+
+    return result;
   }
 
   async routeIssue(sessionId: string, issueRef: string, repoKeys: string[]): Promise<WorkItem> {
@@ -2709,6 +2769,18 @@ function normalizeIssueTrackerIntegration(
       : undefined,
     postIssueComment: issueProvider.postComment
       ? async (key: string, body: string): Promise<{ url?: string; body: string }> => issueProvider.postComment?.(key, body) ?? { body }
+      : undefined,
+    postComment: issueProvider.postComment
+      ? async (key: string, body: string): Promise<{ url?: string; body: string }> => issueProvider.postComment?.(key, body) ?? { body }
+      : undefined,
+    fetchOpenIssues: issueProvider.fetchOpenIssues
+      ? async (limit?: number): Promise<UnifiedIssue[]> => issueProvider.fetchOpenIssues?.(limit) ?? []
+      : undefined,
+    addIssueTags: issueProvider.addIssueTags
+      ? async (ref: string, tags: string[]): Promise<UnifiedIssue | void> => issueProvider.addIssueTags?.(ref, tags)
+      : undefined,
+    removeIssueTags: issueProvider.removeIssueTags
+      ? async (ref: string, tags: string[]): Promise<UnifiedIssue | void> => issueProvider.removeIssueTags?.(ref, tags)
       : undefined,
     moveIssuesToActiveSprint: issueProvider.moveIssuesToActivePlanningLane
       ? async (input): Promise<JiraSprintMoveResult> => {

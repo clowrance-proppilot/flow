@@ -41,6 +41,7 @@ import {
   NoopCodeCollaborationAdapter,
   ProviderAdapterError,
   classifyProviderCliError,
+  triageIssues as triageIssuesEngine,
 } from "../src/index.js";
 import type { ProjectTopology } from "../src/project-topology.js";
 import { normalizePullRequest, parseGitHubIssues, parsePullRequests } from "../src/adapters/github.js";
@@ -456,7 +457,7 @@ test("Flow CLI core works with only git available on PATH", async () => {
 
   const manifest = await callFlow({ op: "manifest", target: "issue" });
   const issueTrackerManifest = manifest.issueTracker as Record<string, unknown>;
-  assert.deepEqual(manifest.modes, ["view", "select", "create", "route", "adoptBranch", "adoptWorkspace"]);
+  assert.deepEqual(manifest.modes, ["view", "select", "create", "route", "adoptBranch", "adoptWorkspace", "triage"]);
   assert.equal(issueTrackerManifest.type, "local");
   assert.match(String(issueTrackerManifest.refHint), /^FLOW-GIT-ONLY-[A-Z0-9]+-123$/);
   assert.equal(issueTrackerManifest.sourceOfTruth, ".flow/config.yaml");
@@ -468,6 +469,7 @@ test("Flow CLI core works with only git available on PATH", async () => {
     transition: true,
     comments: true,
     planningLane: false,
+    triage: true,
   });
 
   const viewed = await callFlow({ op: "issue", mode: "view", id: issue.ref });
@@ -1180,6 +1182,69 @@ test("Local issue tracker creates issues through the Flow ledger surface", async
   assert.equal(issue.title, "Spike local surface");
   assert.equal((await ledger.readIssue("FLOW-1"))?.ref, "FLOW-1");
   assert.deepEqual(await new NoopCodeCollaborationAdapter().findCodeReviews("flow"), []);
+});
+
+test("Work Runtime triages local issues without mutating during dry-run", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-triage-dry-run-"));
+  const ledger = new MemoryWorkflowLedger();
+  const runtime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    issueTracker: new LocalIssueTrackerAdapter({ ledger, projectName: "Flow" }),
+  });
+  await ledger.writeIssue({
+    ref: "FLOW-1",
+    title: "Add SQL workflow ledger",
+    summary: "Needs implementation.",
+    repoKeys: ["main"],
+    state: "queued",
+    metadata: {},
+  });
+  await ledger.writeIssue({
+    ref: "FLOW-2",
+    title: "Add SQL workflow ledger",
+    summary: "Needs implementation.",
+    repoKeys: ["main"],
+    state: "queued",
+    metadata: {},
+  });
+
+  const result = await runtime.triageIssues({ dryRun: true, ids: ["FLOW-1", "FLOW-2"] });
+
+  assert.equal(result.dryRun, true);
+  assert.equal(result.issuesScanned, 2);
+  assert.equal(result.appliedActions, undefined);
+  assert.ok(result.proposedActions.some((action) => action.type === "add_tag" && action.target === "FLOW-1"));
+  assert.ok(result.issues[0].missingSections.some((section) => section.section === "Acceptance criteria"));
+  assert.ok(result.issues[0].duplicateCandidates.some((candidate) => candidate.ref === "FLOW-2"));
+  assert.deepEqual((await ledger.readIssue("FLOW-1"))?.metadata.issueLabels, undefined);
+});
+
+test("Work Runtime triage apply can tag and comment through provider capabilities", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-triage-apply-"));
+  const ledger = new MemoryWorkflowLedger();
+  const runtime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    issueTracker: new LocalIssueTrackerAdapter({ ledger, projectName: "Flow" }),
+  });
+  await ledger.writeIssue({
+    ref: "FLOW-1",
+    title: "Fix desktop runner timeout",
+    summary: "Short body.",
+    repoKeys: ["main"],
+    state: "queued",
+    metadata: {},
+  });
+
+  const result = await runtime.triageIssues({ apply: true, ids: ["FLOW-1"] });
+  const issue = await ledger.readIssue("FLOW-1");
+
+  assert.equal(result.dryRun, false);
+  assert.ok((result.appliedActions ?? []).some((action) => action.type === "add_tag"));
+  assert.ok((result.appliedActions ?? []).some((action) => action.type === "add_comment"));
+  assert.deepEqual(issue?.metadata.issueLabels, ["priority-p1", "lane-desktop-runner"]);
+  assert.equal(Array.isArray(issue?.metadata.localComments), true);
 });
 
 test("Flow config builds default and custom work type registries", () => {
@@ -6027,4 +6092,194 @@ test("Custom topology overrides repo names, paths, branch names, and PR URLs", a
 
   assert.equal(customTopology.isValidRepoKey("my_service"), true);
   assert.equal(customTopology.isValidRepoKey("unknown_repo"), false);
+});
+
+test("Triage engine detects missing sections and duplicate candidates", async () => {
+  const issues = [
+    {
+      ref: "GH-100",
+      title: "Fix backend crash",
+      description: "## Problem\nServer crashes on startup.\n\n## Scope\nOnly the auth module.\n\n## Acceptance criteria\n- Server starts without errors",
+      status: "Open",
+      type: "bug",
+      url: "https://github.com/example/repo/issues/100",
+      labels: ["bug"],
+    },
+    {
+      ref: "GH-101",
+      title: "Fix server crash on startup",
+      description: "Server crashes when starting up.",
+      status: "Open",
+      type: "bug",
+      url: "https://github.com/example/repo/issues/101",
+      labels: [],
+    },
+    {
+      ref: "GH-102",
+      title: "WIP",
+      description: "",
+      status: "Open",
+      type: "task",
+      url: "https://github.com/example/repo/issues/102",
+      labels: [],
+    },
+  ];
+
+  const result = await triageIssuesEngine({ issues, options: { dryRun: true } });
+
+  assert.equal(result.dryRun, true);
+  assert.equal(result.issuesScanned, 3);
+  assert.equal(result.issues.length, 3);
+
+  // GH-100 has Problem and Scope but missing other sections
+  const gh100 = result.issues.find((i: { ref: string }) => i.ref === "GH-100");
+  assert.ok(gh100);
+  assert.equal(gh100.missingSections.length > 0, true);
+  assert.equal(gh100.missingSections.some((s: { section: string }) => s.section === "Problem"), false);
+  assert.equal(gh100.missingSections.some((s: { section: string }) => s.section === "Verification commands"), true);
+
+  // GH-101 is a duplicate candidate for GH-100 (similar title)
+  const gh101 = result.issues.find((i: { ref: string }) => i.ref === "GH-101");
+  assert.ok(gh101);
+  assert.equal(gh101.duplicateCandidates.length > 0, true);
+  assert.equal(gh101.duplicateCandidates[0].ref, "GH-100");
+  assert.equal(gh101.duplicateCandidates[0].confidence > 0.5, true);
+
+  // GH-102 has vague title and empty body
+  const gh102 = result.issues.find((i: { ref: string }) => i.ref === "GH-102");
+  assert.ok(gh102);
+  assert.equal(gh102.missingSections.length, 8); // All sections missing
+  assert.equal(gh102.proposedActions.some((a: { type: string }) => a.type === "add_comment"), true);
+});
+
+test("Triage engine proposes priority and lane labels", async () => {
+  const issues = [
+    {
+      ref: "GH-200",
+      title: "Security vulnerability in auth",
+      description: "## Problem\nCritical security issue.",
+      status: "Open",
+      type: "bug",
+      url: "https://github.com/example/repo/issues/200",
+      labels: ["security"],
+    },
+    {
+      ref: "GH-201",
+      title: "Update documentation",
+      description: "Docs need updating.",
+      status: "Open",
+      type: "task",
+      url: "https://github.com/example/repo/issues/201",
+      labels: ["chore"],
+    },
+  ];
+
+  const result = await triageIssuesEngine({ issues, options: { dryRun: true } });
+
+  const gh200 = result.issues.find((i: { ref: string }) => i.ref === "GH-200");
+  assert.ok(gh200);
+  assert.equal(gh200.proposedPriority, "priority-p0");
+  assert.equal(gh200.proposedLane, undefined);
+  assert.equal(gh200.proposedLabels.includes("priority-p0"), true);
+
+  const gh201 = result.issues.find((i: { ref: string }) => i.ref === "GH-201");
+  assert.ok(gh201);
+  assert.equal(gh201.proposedPriority, "priority-p3");
+  assert.equal(gh201.proposedLane, "lane-docs");
+});
+
+test("Triage engine proposes close for high-confidence duplicates", async () => {
+  const issues = [
+    {
+      ref: "GH-300",
+      title: "Fix login button not working",
+      description: "The login button does nothing when clicked.",
+      status: "Open",
+      type: "bug",
+      url: "https://github.com/example/repo/issues/300",
+      labels: [],
+    },
+    {
+      ref: "GH-301",
+      title: "Fix login button not working",
+      description: "The login button does nothing when clicked.",
+      status: "Open",
+      type: "bug",
+      url: "https://github.com/example/repo/issues/301",
+      labels: [],
+    },
+  ];
+
+  const result = await triageIssuesEngine({ issues, options: { dryRun: true } });
+
+  const gh301 = result.issues.find((i: { ref: string }) => i.ref === "GH-301");
+  assert.ok(gh301);
+  assert.equal(gh301.proposedActions.some((a: { type: string }) => a.type === "close_duplicate"), true);
+  assert.equal(gh301.duplicateCandidates[0].ref, "GH-300");
+  assert.equal(gh301.duplicateCandidates[0].confidence >= 0.9, true);
+});
+
+test("Triage works through Flow CLI with dry-run mode", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-triage-cli-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  const flowCli = join(process.cwd(), ".tmp", "test", "src", "flow.js");
+
+  const callFlow = async (body: Record<string, unknown>) => {
+    const { stdout } = await execFileAsync(process.execPath, [flowCli, JSON.stringify(body)], {
+      cwd: root,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+    return JSON.parse(stdout) as { ok?: boolean; result?: unknown; error?: unknown };
+  };
+
+  await callFlow({ op: "bootstrap", storage: "repo-tracked" });
+
+  // Create some issues
+  await callFlow({ op: "issue", mode: "create", summary: "First issue", issueType: "Task" });
+  await callFlow({ op: "issue", mode: "create", summary: "Second issue", issueType: "Bug" });
+
+  // Run triage in dry-run mode
+  const triageResult = await callFlow({
+    op: "issue",
+    mode: "triage",
+    dryRun: true,
+    limit: 10,
+  });
+
+  assert.equal(triageResult.ok, true);
+  const result = triageResult.result as { dryRun: boolean; issuesScanned: number; issues: unknown[] };
+  assert.equal(result.dryRun, true);
+  assert.equal(result.issuesScanned >= 2, true);
+  assert.equal(result.issues.length >= 2, true);
+
+  const accidentalApply = await callFlow({
+    op: "issue",
+    mode: "triage",
+    dryRun: false,
+    limit: 10,
+  });
+  const accidentalApplyResult = accidentalApply.result as { dryRun: boolean };
+  assert.equal(accidentalApplyResult.dryRun, true);
+});
+
+test("Triage CLI manifest includes triage mode and capabilities", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-triage-manifest-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  const flowCli = join(process.cwd(), ".tmp", "test", "src", "flow.js");
+
+  const callFlow = async (body: Record<string, unknown>) => {
+    const { stdout } = await execFileAsync(process.execPath, [flowCli, JSON.stringify(body)], {
+      cwd: root,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+    return JSON.parse(stdout) as { ok?: boolean; result?: unknown; error?: unknown };
+  };
+
+  await callFlow({ op: "bootstrap", storage: "repo-tracked" });
+
+  const manifest = await callFlow({ op: "manifest", target: "issue" });
+  const result = manifest.result as { modes: string[]; issueTracker: { capabilities: { triage: boolean } } };
+
+  assert.equal(result.modes.includes("triage"), true);
+  assert.equal(result.issueTracker.capabilities.triage, true);
 });

@@ -277,6 +277,8 @@ export class GhGitHubIssueTrackerAdapter implements IssueTrackerProvider {
     canTransitionIssues: true,
     canPostComments: true,
     canManageActivePlanningLane: false,
+    canFetchOpenIssues: true,
+    canTagIssues: true,
   };
 
   private readonly cwd: string;
@@ -328,6 +330,14 @@ export class GhGitHubIssueTrackerAdapter implements IssueTrackerProvider {
       limit,
       labels: this.backlogLabels,
       assignee: this.backlogLabels.length ? undefined : this.assignee,
+    });
+  }
+
+  async fetchOpenIssues(limit = 100): Promise<UnifiedIssue[]> {
+    return this.listIssues({
+      limit,
+      labels: [],
+      assignee: undefined,
     });
   }
 
@@ -391,6 +401,28 @@ export class GhGitHubIssueTrackerAdapter implements IssueTrackerProvider {
       ], { cwd: this.cwd, maxBuffer: 10 * 1024 * 1024 })
     );
     return { url: stdout.trim() || undefined, body };
+  }
+
+  async addIssueTags(ref: string, tags: string[]): Promise<UnifiedIssue | void> {
+    const normalizedTags = tags.map((tag) => tag.trim()).filter(Boolean);
+    if (!normalizedTags.length) return this.getIssue(ref);
+    const args = ["issue", "edit", String(issueNumberFromRef(ref)), "--repo", this.repoSpecifier()];
+    for (const tag of normalizedTags) args.push("--add-label", tag);
+    await withPerfLog(`gh issue edit ${ref} add labels`, () =>
+      execFileAsync("gh", args, { cwd: this.cwd, maxBuffer: 10 * 1024 * 1024 }).then(() => undefined)
+    );
+    return this.getIssue(ref);
+  }
+
+  async removeIssueTags(ref: string, tags: string[]): Promise<UnifiedIssue | void> {
+    const normalizedTags = tags.map((tag) => tag.trim()).filter(Boolean);
+    if (!normalizedTags.length) return this.getIssue(ref);
+    const args = ["issue", "edit", String(issueNumberFromRef(ref)), "--repo", this.repoSpecifier()];
+    for (const tag of normalizedTags) args.push("--remove-label", tag);
+    await withPerfLog(`gh issue edit ${ref} remove labels`, () =>
+      execFileAsync("gh", args, { cwd: this.cwd, maxBuffer: 10 * 1024 * 1024 }).then(() => undefined)
+    );
+    return this.getIssue(ref);
   }
 
   private async listIssues(options: { limit: number; labels: string[]; assignee?: string }): Promise<UnifiedIssue[]> {

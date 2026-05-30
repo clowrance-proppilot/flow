@@ -51,11 +51,59 @@ export interface UnifiedWorkspaceStatus {
   worktreePath?: string;
 }
 
+export interface TriageMissingSection {
+  section: string;
+  severity: "required" | "recommended";
+  description: string;
+}
+
+export interface TriageDuplicateCandidate {
+  ref: string;
+  confidence: number;                  // 0.0 to 1.0
+  reason: string;
+}
+
+export interface TriageAction {
+  type: "add_tag" | "remove_tag" | "add_comment" | "update_body" | "close_duplicate" | "close_not_needed";
+  target: string;                      // Issue ref
+  payload: Record<string, unknown>;
+  reason: string;
+}
+
+export interface TriageIssueResult {
+  ref: string;
+  title: string;
+  url: string;
+  missingSections: TriageMissingSection[];
+  duplicateCandidates: TriageDuplicateCandidate[];
+  proposedLabels: string[];
+  proposedPriority?: string;
+  proposedLane?: string;
+  proposedActions: TriageAction[];
+}
+
+export interface TriageOptions {
+  dryRun?: boolean;
+  apply?: boolean;
+  limit?: number;
+  ids?: string[];
+}
+
+export interface TriageResult {
+  dryRun: boolean;
+  issuesScanned: number;
+  issues: TriageIssueResult[];
+  proposedActions: TriageAction[];
+  appliedActions?: TriageAction[];
+}
+
 export interface IssueTrackerCapabilities {
   canCreateIssues: boolean;
   canTransitionIssues: boolean;
   canPostComments: boolean;
   canManageActivePlanningLane: boolean;
+  canFetchOpenIssues?: boolean;
+  canTagIssues?: boolean;
 }
 
 export interface CollaborationCapabilities {
@@ -81,11 +129,14 @@ export interface IssueTrackerProvider {
   createIssue?(input: CreateIssueInput): Promise<UnifiedIssue>;
   transitionIssue?(ref: string, targetStatus: string): Promise<UnifiedIssue | void>;
   postComment?(ref: string, body: string): Promise<{ url?: string; body: string }>;
+  addIssueTags?(ref: string, tags: string[]): Promise<UnifiedIssue | void>;
+  removeIssueTags?(ref: string, tags: string[]): Promise<UnifiedIssue | void>;
   moveIssuesToActivePlanningLane?(input: {
     issueRefs: string[];
     laneId?: string;
     projectKey?: string;
   }): Promise<{ laneId: string; laneName?: string }>;
+  fetchOpenIssues?(limit?: number): Promise<UnifiedIssue[]>;
 }
 
 export interface CodeCollaborationProvider {
