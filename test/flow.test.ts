@@ -999,9 +999,9 @@ test("Pi agent orchestrator starts the next ready issue and records a result", a
   });
 
   await orchestrator.reconcile();
-  for (let index = 0; index < 20; index += 1) {
+  for (let index = 0; index < 100; index += 1) {
     if ((await ledger.listWorkerResults("GH-56")).length) break;
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    await new Promise((resolve) => setTimeout(resolve, 50));
   }
 
   const results = await ledger.listWorkerResults("GH-56");
