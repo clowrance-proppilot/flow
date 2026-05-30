@@ -835,6 +835,54 @@ test("Pi session driver appends user prompt and assistant response", async () =>
   assert.equal(updated.timeline.length >= 3, true);
 });
 
+test("Pi session driver queues follow-up prompts while a run is active", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-session-queue-"));
+  const ledger = new MemoryWorkflowLedger();
+  const runtime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  await ledger.writeIssue({
+    ref: "GH-168",
+    title: "Queue follow-up prompts",
+    repoKeys: [],
+    state: "queued",
+    metadata: {},
+  });
+  let releaseFirst: (() => void) | undefined;
+  const firstGate = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  const prompts: string[] = [];
+  const driver = new PiSessionDriver({
+    runtime,
+    repoRoot: root,
+    flowSessionId: "desktop",
+    agent: {
+      async prompt(input) {
+        prompts.push(input.prompt);
+        if (prompts.length === 1) await firstGate;
+        return {
+          sessionId: input.sessionId,
+          status: "active",
+          summary: `Handled ${prompts.length}.`,
+        };
+      },
+    },
+  });
+
+  const started = await driver.startSession("GH-168");
+  const first = await driver.sendUserMessage(started.id, { text: "First prompt" });
+  const second = await driver.sendUserMessage(started.id, { text: "Second prompt" });
+
+  assert.equal(first.status, "running");
+  assert.equal(second.timeline.filter((item) => item.role === "user").length, 2);
+  assert.equal(prompts.length, 1);
+  releaseFirst?.();
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  assert.equal(prompts.length, 2);
+  assert.match(prompts[0], /First prompt/);
+  assert.match(prompts[1], /Second prompt/);
+});
+
 test("Pi session driver persists issue-linked session state for reopen", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-session-reopen-"));
   const ledger = new MemoryWorkflowLedger();

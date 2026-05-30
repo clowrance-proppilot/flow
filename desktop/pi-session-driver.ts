@@ -89,6 +89,7 @@ export class PiSessionDriver {
   private readonly sessionIdByIssueRef = new Map<string, string>();
   private readonly linksByIssueRef = new Map<string, FlowSessionLink>();
   private readonly listenersBySessionId = new Map<string, Set<SessionEventListener>>();
+  private readonly promptQueueBySessionId = new Map<string, Promise<void>>();
   private linksLoaded = false;
 
   constructor(options: PiSessionDriverOptions) {
@@ -175,6 +176,54 @@ export class PiSessionDriver {
   }
 
   async postPrompt(sessionId: string, prompt: string): Promise<PiSessionSnapshot> {
+    const { session, contextualPrompt } = await this.appendUserPrompt(sessionId, prompt);
+    await this.runPrompt(session, contextualPrompt);
+    return session;
+  }
+
+  async sendUserMessage(sessionId: string, input: { text: string }): Promise<PiSessionSnapshot> {
+    const { session, contextualPrompt } = await this.appendUserPrompt(sessionId, input.text);
+    const previous = this.promptQueueBySessionId.get(session.id) ?? Promise.resolve();
+    const queued = previous
+      .catch(() => undefined)
+      .then(() => this.runPrompt(session, contextualPrompt));
+    this.promptQueueBySessionId.set(session.id, queued);
+    void queued.finally(() => {
+      if (this.promptQueueBySessionId.get(session.id) === queued) this.promptQueueBySessionId.delete(session.id);
+    });
+    return session;
+  }
+
+  async openOrCreateIssueSession(issueRef: string): Promise<PiSessionSnapshot> {
+    return this.startSession(issueRef);
+  }
+
+  private async resolveIssue(issueRef: string): Promise<WorkItem> {
+    const view = await this.runtime.inspectIssue(issueRef);
+    if (view) return view;
+
+    const key = issueRef.toUpperCase();
+    const queue = await this.runtime.inspectQueue(100);
+    const queueMatch = queue.find((item) => item.ref.toUpperCase() === key);
+    if (queueMatch) return queueMatch;
+
+    const backlog = await this.runtime.inspectBacklog(100);
+    const backlogMatch = backlog.find((item) => item.ref.toUpperCase() === key);
+    if (backlogMatch) return backlogMatch;
+
+    return {
+      ref: key,
+      title: key,
+      repoKeys: [],
+      state: IssueStateValue.Queued,
+      metadata: {},
+    };
+  }
+
+  private async appendUserPrompt(
+    sessionId: string,
+    prompt: string,
+  ): Promise<{ session: PiSessionSnapshot; contextualPrompt: string }> {
     const session = await this.getSession(sessionId);
     const text = prompt.trim();
     if (!text) throw new Error("Prompt is required.");
@@ -193,13 +242,17 @@ export class PiSessionDriver {
     });
     session.status = "running";
     session.updatedAt = nowIso();
+    await this.persistActiveSession(session);
     this.emit(session, {
       type: "sessionUpdated",
       sessionRef: this.sessionRef(session),
       timestamp: nowIso(),
       snapshot: this.driverSnapshot(session),
     });
+    return { session, contextualPrompt };
+  }
 
+  private async runPrompt(session: PiSessionSnapshot, contextualPrompt: string): Promise<void> {
     if (!this.agent) {
       const handoff = await this.runtime.summarizeHandoff(session.flowSessionId).catch(() => "");
       session.timeline.push({
@@ -267,17 +320,7 @@ export class PiSessionDriver {
     }
 
     session.updatedAt = nowIso();
-    const link = this.linksByIssueRef.get(session.issueRef);
-    if (link) {
-      link.piSessionId = session.id;
-      link.piSessionFile = session.sessionFile;
-      link.workspacePath = session.workspacePath;
-      link.provider = "pi";
-      link.status = session.status;
-      link.updatedAt = session.updatedAt;
-      await this.persistLinks();
-      await this.persistSessionState();
-    }
+    await this.persistActiveSession(session);
     if (session.status !== "failed") {
       this.emit(session, {
         type: "runCompleted",
@@ -292,37 +335,20 @@ export class PiSessionDriver {
       timestamp: nowIso(),
       snapshot: this.driverSnapshot(session),
     });
-    return session;
   }
 
-  async sendUserMessage(sessionId: string, input: { text: string }): Promise<PiSessionSnapshot> {
-    return this.postPrompt(sessionId, input.text);
-  }
-
-  async openOrCreateIssueSession(issueRef: string): Promise<PiSessionSnapshot> {
-    return this.startSession(issueRef);
-  }
-
-  private async resolveIssue(issueRef: string): Promise<WorkItem> {
-    const view = await this.runtime.inspectIssue(issueRef);
-    if (view) return view;
-
-    const key = issueRef.toUpperCase();
-    const queue = await this.runtime.inspectQueue(100);
-    const queueMatch = queue.find((item) => item.ref.toUpperCase() === key);
-    if (queueMatch) return queueMatch;
-
-    const backlog = await this.runtime.inspectBacklog(100);
-    const backlogMatch = backlog.find((item) => item.ref.toUpperCase() === key);
-    if (backlogMatch) return backlogMatch;
-
-    return {
-      ref: key,
-      title: key,
-      repoKeys: [],
-      state: IssueStateValue.Queued,
-      metadata: {},
-    };
+  private async persistActiveSession(session: PiSessionSnapshot): Promise<void> {
+    const link = this.linksByIssueRef.get(session.issueRef);
+    if (link) {
+      link.piSessionId = session.id;
+      link.piSessionFile = session.sessionFile;
+      link.workspacePath = session.workspacePath;
+      link.provider = "pi";
+      link.status = session.status;
+      link.updatedAt = session.updatedAt;
+      await this.persistLinks();
+    }
+    await this.persistSessionState();
   }
 
   private async ensureLoadedLinks(): Promise<void> {

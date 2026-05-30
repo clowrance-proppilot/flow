@@ -220,10 +220,6 @@ function App() {
   async function submitPrompt(textOverride?: string): Promise<void> {
     const text = (textOverride ?? prompt).trim();
     if (!text) return;
-    if (activeSessionStatus === "running") {
-      setError("Agent is still running. Wait for this turn to finish before sending another prompt.");
-      return;
-    }
     setSending(true);
     sendingRef.current = true;
     setError("");
@@ -235,7 +231,7 @@ function App() {
       createdAt: new Date().toISOString(),
     };
     setConversation((items) => [...items, userItem]);
-    if (!textOverride) setPrompt("");
+    setPrompt("");
     try {
       let sessionId = selectedIssueRef ? sessionIdByIssueRef[selectedIssueRef] || selectedSessionId : undefined;
       if (selectedIssueRef) {
@@ -653,7 +649,7 @@ function App() {
 
             <AssistantChatSurface
               conversation={conversation}
-              disabled={sending || activeSessionStatus === "running"}
+              disabled={sending}
               running={activeSessionStatus === "running"}
               notice={systemNotice ? (
                 <PendingActionNotice
