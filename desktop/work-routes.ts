@@ -25,7 +25,7 @@ export function registerWorkRoutes(
       } catch {
         await runtime.createSession(sessionId);
       }
-      const issue = await runtime.createIssue(sessionId, {
+      const issueInput = {
         issueType: typeof req.body?.issueType === "string" ? req.body.issueType : "Bug",
         title: typeof req.body?.title === "string" ? req.body.title : undefined,
         summary: typeof req.body?.summary === "string" ? req.body.summary : "",
@@ -33,7 +33,13 @@ export function registerWorkRoutes(
         repoKeys: Array.isArray(req.body?.repoKeys) ? req.body.repoKeys.map(String).filter(Boolean) : undefined,
         branchKind: typeof req.body?.branchKind === "string" ? req.body.branchKind : undefined,
         select: req.body?.select !== false,
-      });
+      };
+      if (req.body?.dryRun === true) {
+        const intake = await runtime.intakeIssue(sessionId, { ...issueInput, dryRun: true, review: req.body?.review === true });
+        res.json({ ok: true, project, intake });
+        return;
+      }
+      const issue = await runtime.createIssue(sessionId, issueInput);
       res.json({ ok: true, project, issue });
     } catch (error) {
       res.status(400).json({ ok: false, error: message(error) });

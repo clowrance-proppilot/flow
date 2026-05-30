@@ -6,6 +6,7 @@ import type {
   CodeCollaborationProvider,
   CollaborationCapabilities,
   IssueTrackerCapabilities,
+  IssueSearchParams,
   IssueTrackerProvider,
   UnifiedIssue,
   UnifiedCodeReview,
@@ -278,6 +279,7 @@ export class GhGitHubIssueTrackerAdapter implements IssueTrackerProvider {
     canPostComments: true,
     canManageActivePlanningLane: false,
     canFetchOpenIssues: true,
+    canSearchIssues: true,
     canTagIssues: true,
   };
 
@@ -339,6 +341,34 @@ export class GhGitHubIssueTrackerAdapter implements IssueTrackerProvider {
       labels: [],
       assignee: undefined,
     });
+  }
+
+  async searchIssues(params: IssueSearchParams): Promise<UnifiedIssue[]> {
+    const limit = params.limit ?? 10;
+    const args = [
+      "issue",
+      "list",
+      "--repo",
+      this.repoSpecifier(),
+      "--state",
+      params.state ?? "open",
+      "--limit",
+      String(limit),
+      "--json",
+      "number,title,url,state,body,updatedAt,labels,assignees",
+    ];
+    if (params.title || params.summary) {
+      const query = params.title || params.summary || "";
+      args.push("--search", query);
+    }
+    if (params.issueType) {
+      const label = labelForIssueType(params.issueType);
+      if (label) args.push("--label", label);
+    }
+    const { stdout } = await withPerfLog(`gh issue search ${this.repo}`, () =>
+      execFileAsync("gh", args, { cwd: this.cwd, maxBuffer: 10 * 1024 * 1024 })
+    );
+    return parseGitHubIssues(JSON.parse(stdout) as unknown).map(normalizeGitHubIssue);
   }
 
   async createIssue(input: { issueType: string; title?: string; summary: string; description?: string }): Promise<UnifiedIssue> {

@@ -109,16 +109,24 @@ export function createDefaultFlowWorkTypeRegistry(): WorkTypeRegistry {
         allowedExecutors: [WorkJobExecutorValue.LiveAgentThread],
         outputType: "evidence_result",
       },
+      {
+        workType: "flow.issue_intake",
+        category: "custom",
+        requiredCapabilities: ["issue.intake"],
+        allowedExecutors: [WorkJobExecutorValue.LiveAgentThread],
+        outputType: "worker_result",
+      },
     ],
     [
       {
         executor: WorkJobExecutorValue.LiveAgentThread,
-        capabilities: ["repo.worktree.prepare", "code.edit", "test.run", "review.remediate", "evidence.record"],
+        capabilities: ["repo.worktree.prepare", "code.edit", "test.run", "review.remediate", "evidence.record", "issue.intake"],
         canSubmit: [
           "flow.prepare_workspace",
           "flow.implement",
           "flow.remediate",
           "flow.verify",
+          "flow.issue_intake",
         ],
         outputs: ["workspace_result", "worker_result", "blocked_result", "evidence_result"],
       },

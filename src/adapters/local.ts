@@ -5,6 +5,7 @@ import type {
   CollaborationCapabilities,
   CreateIssueInput,
   IssueTrackerCapabilities,
+  IssueSearchParams,
   IssueTrackerProvider,
   UnifiedCodeReview,
   UnifiedIssue,
@@ -23,6 +24,7 @@ export class LocalIssueTrackerAdapter implements IssueTrackerProvider {
     canPostComments: true,
     canManageActivePlanningLane: false,
     canFetchOpenIssues: true,
+    canSearchIssues: true,
     canTagIssues: true,
   };
 
@@ -56,6 +58,35 @@ export class LocalIssueTrackerAdapter implements IssueTrackerProvider {
     return issues
       .filter((issue) => issue.state !== "done")
       .map(unifiedIssueFromWorkItem);
+  }
+
+  async searchIssues(params: IssueSearchParams): Promise<UnifiedIssue[]> {
+    const limit = params.limit ?? 10;
+    const allIssues = await this.ledger.listIssues(limit * 5);
+    const query = (params.title || params.summary || "").toLowerCase();
+    
+    const filtered = allIssues.filter((issue) => {
+      if (params.state) {
+        const normalizedState = params.state.toLowerCase();
+        if (normalizedState === "open" || normalizedState === "todo") {
+          if (issue.state === "done") return false;
+        } else if (normalizedState === "closed" || normalizedState === "done") {
+          if (issue.state !== "done") return false;
+        }
+      } else {
+        if (issue.state === "done") return false;
+      }
+      
+      if (query) {
+        const title = issue.title.toLowerCase();
+        const summary = (issue.summary || "").toLowerCase();
+        if (!title.includes(query) && !summary.includes(query)) return false;
+      }
+      
+      return true;
+    });
+    
+    return filtered.slice(0, limit).map(unifiedIssueFromWorkItem);
   }
 
   async createIssue(input: CreateIssueInput): Promise<UnifiedIssue> {

@@ -32,6 +32,7 @@ const rawWorkRuntimeMethods = [
   "inspectBacklog",
   "createSession",
   "selectIssue",
+  "intakeIssue",
   "createIssue",
   "adoptBranch",
   "bootstrapIssue",
@@ -174,6 +175,20 @@ async function handleIssueRequest(request: Record<string, unknown>): Promise<unk
       return runtime.selectIssue(activeSessionId, await queueIssue(requireId(request)));
     case "route":
       return runtime.routeIssue(activeSessionId, requireId(request), asStringArray(request.repoKeys) ?? []);
+    case "intake":
+      return runtime.intakeIssue(activeSessionId, {
+        projectKey: optionalString(request, "projectKey"),
+        issueType: parseJiraIssueType(optionalString(request, "issueType") ?? "Bug"),
+        branchKind: parseBranchKind(optionalString(request, "branchKind")),
+        title: optionalString(request, "title"),
+        summary: requireString(request, "summary"),
+        description: optionalString(request, "description"),
+        repoKeys: asStringArray(request.repoKeys),
+        select: typeof request.select === "boolean" ? request.select : true,
+        apply: request.apply === true,
+        dryRun: request.apply === true ? false : true,
+        review: request.review === true,
+      });
     case "create":
       return runtime.createIssue(activeSessionId, {
         projectKey: optionalString(request, "projectKey"),
@@ -203,7 +218,7 @@ async function handleIssueRequest(request: Record<string, unknown>): Promise<unk
         baseBranch: optionalString(request, "baseBranch"),
       });
     default:
-      throw badMode("issue", mode, ["view", "select", "create", "route", "adoptBranch", "adoptWorkspace", "triage"]);
+      throw badMode("issue", mode, ["view", "select", "intake", "create", "route", "adoptBranch", "adoptWorkspace", "triage"]);
   }
 }
 
@@ -345,20 +360,23 @@ function flowManifest(target?: string) {
       recommendedAgentFlow: [
         "If the user gives an issue id, call issue view first.",
         "Use queue/backlog for active configured-tracker work discovery.",
+        "Use intake with review:true before create when semantic dedupe is needed.",
         "Use create only when the user asks to create new tracked work.",
         "Use adoptBranch/adoptWorkspace for local work that should stay Flow-local until published.",
         "Use triage to analyze open issues and propose cleanup actions.",
       ],
-      modes: ["view", "select", "create", "route", "adoptBranch", "adoptWorkspace", "triage"],
+      modes: ["view", "select", "intake", "create", "route", "adoptBranch", "adoptWorkspace", "triage"],
       examples: [
         { op: "issue", mode: "view", id: issueRefExample() },
         { op: "issue", mode: "select", id: "FLOW-123" },
+        { op: "issue", mode: "intake", dryRun: true, review: true, summary: "Add SQL workflow ledger", issueType: "Task" },
+        { op: "issue", mode: "intake", apply: true, summary: "Add SQL workflow ledger", issueType: "Task" },
         { op: "issue", mode: "route", id: "FLOW-123", repoKeys: ["main"] },
         { op: "issue", mode: "adoptWorkspace", id: "FLOW-123", repoKey: "main", worktreePath: "/path/to/worktree" },
         { op: "issue", mode: "triage", dryRun: true, limit: 50 },
         { op: "issue", mode: "triage", apply: true, ids: ["GH-123", "GH-124"] },
       ],
-      id: "Required issue/work item id for existing work items; create/adoptBranch may omit id to allocate one. Triage mode does not require id.",
+      id: "Required issue/work item id for existing work items; create/intake/adoptBranch may omit id to allocate one. Triage mode does not require id.",
     };
   }
   if (target === "runtime") {
@@ -411,6 +429,7 @@ function issueTrackerManifest() {
       create: Boolean(capabilities?.canCreateIssues && configuredIssueTracker.createIssue),
       transition: Boolean(capabilities?.canTransitionIssues && configuredIssueTracker.transitionIssue),
       comments: Boolean(capabilities?.canPostComments && configuredIssueTracker.postComment),
+      search: Boolean(capabilities?.canSearchIssues && configuredIssueTracker.searchIssues),
       tagging: Boolean(capabilities?.canTagIssues && configuredIssueTracker.addIssueTags),
       planningLane: Boolean(capabilities?.canManageActivePlanningLane && configuredIssueTracker.moveIssuesToActivePlanningLane),
       triage: true,
@@ -507,6 +526,11 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
       return runtime.createSession(typeof params.id === "string" ? params.id : undefined);
     case "selectIssue":
       return runtime.selectIssue(String(params.sessionId ?? defaultSessionId), params.issue as WorkItem);
+    case "intakeIssue":
+      return runtime.intakeIssue(
+        String(params.sessionId ?? defaultSessionId),
+        params.options as CreateIssueOptions,
+      );
     case "bootstrapJiraIssue":
     case "bootstrapIssue":
       return runtime.bootstrapJiraIssue(

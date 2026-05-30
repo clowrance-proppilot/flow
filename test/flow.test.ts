@@ -457,7 +457,7 @@ test("Flow CLI core works with only git available on PATH", async () => {
 
   const manifest = await callFlow({ op: "manifest", target: "issue" });
   const issueTrackerManifest = manifest.issueTracker as Record<string, unknown>;
-  assert.deepEqual(manifest.modes, ["view", "select", "create", "route", "adoptBranch", "adoptWorkspace", "triage"]);
+  assert.deepEqual(manifest.modes, ["view", "select", "intake", "create", "route", "adoptBranch", "adoptWorkspace", "triage"]);
   assert.equal(issueTrackerManifest.type, "local");
   assert.match(String(issueTrackerManifest.refHint), /^FLOW-GIT-ONLY-[A-Z0-9]+-123$/);
   assert.equal(issueTrackerManifest.sourceOfTruth, ".flow/config.yaml");
@@ -468,6 +468,8 @@ test("Flow CLI core works with only git available on PATH", async () => {
     create: true,
     transition: true,
     comments: true,
+    search: true,
+    tagging: true,
     planningLane: false,
     triage: true,
   });
@@ -1245,6 +1247,162 @@ test("Work Runtime triage apply can tag and comment through provider capabilitie
   assert.ok((result.appliedActions ?? []).some((action) => action.type === "add_comment"));
   assert.deepEqual(issue?.metadata.issueLabels, ["priority-p1", "lane-desktop-runner"]);
   assert.equal(Array.isArray(issue?.metadata.localComments), true);
+});
+
+test("Issue creation dedupes existing issues with matching title", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-local-dedupe-"));
+  const ledger = new MemoryWorkflowLedger();
+  const runtime = new FlowWorkRuntime({
+    store: new FlowStore({ root: join(root, ".flow/runtime") }),
+    ledger,
+    issueTracker: new LocalIssueTrackerAdapter({ ledger, projectName: "Flow" }),
+    collaboration: new NoopCodeCollaborationAdapter(),
+    projectRoot: root,
+    readiness: { assess: assessIssue },
+  });
+
+  await runtime.createSession("dedupe-session");
+  
+  // Create first issue
+  const first = await runtime.createIssue("dedupe-session", {
+    issueType: "Task",
+    summary: "Fix authentication bug",
+    description: "Users cannot login.",
+  });
+  assert.equal(first.ref, "FLOW-1");
+  assert.equal(first.title, "Fix authentication bug");
+
+  // Try to create duplicate - should return existing issue
+  const duplicate = await runtime.createIssue("dedupe-session", {
+    issueType: "Task",
+    summary: "Fix authentication bug",
+    description: "Different description.",
+  });
+  assert.equal(duplicate.ref, "FLOW-1");
+  assert.equal(duplicate.title, "Fix authentication bug");
+
+  // Verify only one issue exists in ledger
+  const allIssues = await ledger.listIssues(100);
+  assert.equal(allIssues.length, 1);
+  assert.equal(allIssues[0].ref, "FLOW-1");
+});
+
+test("Issue intake dry-run proposes structured issue without creating", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-intake-dry-run-"));
+  const ledger = new MemoryWorkflowLedger();
+  const runtime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    issueTracker: new LocalIssueTrackerAdapter({ ledger, projectName: "Flow" }),
+  });
+  await runtime.createSession("intake-session");
+
+  const result = await runtime.intakeIssue("intake-session", {
+    issueType: "Task",
+    summary: "Add SQLite workflow ledger",
+    description: "Persist workflow state in SQLite before adding Postgres.",
+    repoKeys: ["main"],
+    dryRun: true,
+  });
+
+  assert.equal(result.dryRun, true);
+  assert.equal(result.status, "ready");
+  assert.equal(result.proposal.body.includes("## Problem"), true);
+  assert.equal(result.proposal.body.includes("## Acceptance criteria"), true);
+  assert.equal(result.proposal.tags.includes("lane-sql"), true);
+  assert.equal((await ledger.listIssues(10)).length, 0);
+});
+
+test("Issue intake blocks vague apply requests", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-intake-vague-"));
+  const ledger = new MemoryWorkflowLedger();
+  const runtime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    issueTracker: new LocalIssueTrackerAdapter({ ledger, projectName: "Flow" }),
+  });
+  await runtime.createSession("intake-session");
+
+  const dryRun = await runtime.intakeIssue("intake-session", {
+    issueType: "Task",
+    summary: "Fix",
+    dryRun: true,
+  });
+  assert.equal(dryRun.status, "needs_input");
+  assert.equal(dryRun.reasons.length > 0, true);
+
+  await assert.rejects(
+    runtime.intakeIssue("intake-session", {
+      issueType: "Task",
+      summary: "Fix",
+      apply: true,
+    }),
+    /Issue intake needs more detail/,
+  );
+});
+
+test("Issue intake can submit executor review job for semantic dedupe", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-intake-executor-"));
+  const ledger = new MemoryWorkflowLedger();
+  await ledger.writeIssue({
+    ref: "FLOW-99",
+    title: "Persist workflow state in SQLite",
+    summary: "Existing semantic duplicate.",
+    repoKeys: ["main"],
+    state: "queued",
+    metadata: {},
+  });
+  const runtime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    issueTracker: new LocalIssueTrackerAdapter({ ledger, projectName: "Flow" }),
+  });
+  await runtime.createSession("intake-session");
+
+  const result = await runtime.intakeIssue("intake-session", {
+    issueType: "Task",
+    summary: "Add a local database backed ledger",
+    description: "Use SQLite for durable workflow state.",
+    dryRun: true,
+    review: true,
+  });
+
+  assert.equal(result.status, "ready");
+  assert.equal(result.reviewJob?.workType, "flow.issue_intake");
+  assert.equal(result.reviewJob?.requiredCapabilities.includes("issue.intake"), true);
+  assert.equal(JSON.stringify(result.reviewJob?.input).includes("FLOW-99"), true);
+});
+
+test("Issue intake works through Flow CLI without creating during dry-run", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-intake-cli-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  const flowCli = join(process.cwd(), ".tmp", "test", "src", "flow.js");
+  const callFlow = async (body: Record<string, unknown>) => {
+    const { stdout } = await execFileAsync(process.execPath, [flowCli, JSON.stringify(body)], {
+      cwd: root,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+    return JSON.parse(stdout) as { ok?: boolean; result?: unknown; error?: unknown };
+  };
+
+  await callFlow({ op: "bootstrap", storage: "repo-tracked" });
+  const result = await callFlow({
+    op: "issue",
+    mode: "intake",
+    dryRun: true,
+    review: true,
+    issueType: "Task",
+    summary: "Add SQLite workflow ledger",
+    description: "Persist workflow state in SQLite before adding Postgres.",
+  });
+
+  assert.equal(result.ok, true);
+  const intake = result.result as { status: string; dryRun: boolean; reviewJob?: { workType: string }; proposal: { body: string; tags: string[] } };
+  assert.equal(intake.dryRun, true);
+  assert.equal(intake.status, "ready");
+  assert.equal(intake.reviewJob?.workType, "flow.issue_intake");
+  assert.equal(intake.proposal.body.includes("## Problem"), true);
+  assert.equal(intake.proposal.tags.includes("lane-sql"), true);
 });
 
 test("Flow config builds default and custom work type registries", () => {
@@ -2560,12 +2718,12 @@ test("Work Runtime creates Jira issues through Flow without generated labels", a
   });
   const selectedSession = await store.readSession(session.id);
 
-  assert.deepEqual(createdInput, {
-    projectKey: "ISSUE",
-    issueType: "Bug",
-    summary: "GeoParquet Provider ETL fails on GeoArrow WKB parquet schema",
-    description: "Follow-up from ISSUE-15461.",
-  });
+  const jiraCreatedInput = createdInput as { projectKey?: string; issueType?: string; summary?: string; description?: string; title?: string };
+  assert.equal(jiraCreatedInput.projectKey, "ISSUE");
+  assert.equal(jiraCreatedInput.issueType, "Bug");
+  assert.equal(jiraCreatedInput.summary, "GeoParquet Provider ETL fails on GeoArrow WKB parquet schema");
+  assert.equal(jiraCreatedInput.title, "GeoParquet Provider ETL fails on GeoArrow WKB parquet schema");
+  assert.equal(jiraCreatedInput.description?.includes("## Problem"), true);
   assert.equal(issue.ref, "ISSUE-15738");
   assert.equal(issue.metadata.jiraIssueType, "Bug");
   assert.deepEqual(issue.metadata.jiraLabels, []);
@@ -2624,12 +2782,12 @@ test("Work Runtime creates provider-neutral issues without requiring a Jira proj
     repoKeys: ["main"],
   });
 
-  assert.deepEqual(createdInput, {
-    projectKey: undefined,
-    issueType: "Task",
-    summary: "Harden Flow issue creation",
-    description: "Provider-neutral issue creation should not require Jira config.",
-  });
+  const neutralCreatedInput = createdInput as { projectKey?: string; issueType?: string; summary?: string; description?: string; title?: string };
+  assert.equal(neutralCreatedInput.projectKey, undefined);
+  assert.equal(neutralCreatedInput.issueType, "Task");
+  assert.equal(neutralCreatedInput.summary, "Harden Flow issue creation");
+  assert.equal(neutralCreatedInput.title, "Harden Flow issue creation");
+  assert.equal(neutralCreatedInput.description?.includes("## Problem"), true);
   assert.equal(issue.ref, "GH-15738");
   assert.equal(issue.metadata.issueType, "task");
   assert.equal(issue.metadata.jiraIssueType, undefined);

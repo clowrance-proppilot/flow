@@ -103,7 +103,25 @@ export interface IssueTrackerCapabilities {
   canPostComments: boolean;
   canManageActivePlanningLane: boolean;
   canFetchOpenIssues?: boolean;
+  canSearchIssues?: boolean;
   canTagIssues?: boolean;
+}
+
+export interface IssueSearchParams {
+  title?: string;
+  summary?: string;
+  projectKey?: string;
+  issueType?: string;
+  state?: string;
+  limit?: number;
+}
+
+export interface IssueIntakeCandidate {
+  ref: string;
+  title: string;
+  summary?: string;
+  url?: string;
+  labels?: string[];
 }
 
 export interface CollaborationCapabilities {
@@ -126,6 +144,7 @@ export interface IssueTrackerProvider {
   getIssue(ref: string): Promise<UnifiedIssue>;
   fetchActiveQueue?(limit?: number): Promise<UnifiedIssue[]>;
   fetchBacklogQueue?(limit?: number): Promise<UnifiedIssue[]>;
+  searchIssues?(params: IssueSearchParams): Promise<UnifiedIssue[]>;
   createIssue?(input: CreateIssueInput): Promise<UnifiedIssue>;
   transitionIssue?(ref: string, targetStatus: string): Promise<UnifiedIssue | void>;
   postComment?(ref: string, body: string): Promise<{ url?: string; body: string }>;

@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type {
   IssueTrackerCapabilities,
+  IssueSearchParams,
   IssueTrackerProvider,
   UnifiedIssue,
 } from "./provider-contracts.js";
@@ -71,6 +72,7 @@ export class AcliJiraAdapter implements IssueTrackerProvider {
     canTransitionIssues: true,
     canPostComments: true,
     canManageActivePlanningLane: true,
+    canSearchIssues: true,
   };
 
   private readonly cwd: string;
@@ -103,6 +105,61 @@ export class AcliJiraAdapter implements IssueTrackerProvider {
   async fetchBacklogQueue(limit?: number): Promise<UnifiedIssue[]> {
     const issues = await this.searchCurrentUserBacklogIssues(limit);
     return issues.map((issue) => normalizeJiraIssue(issue, this.siteUrl));
+  }
+
+  async searchIssues(params: IssueSearchParams): Promise<UnifiedIssue[]> {
+    const limit = params.limit ?? 10;
+    const jql = this.buildSearchJql(params);
+    const { stdout } = await withPerfLog(`acli jira workitem search dedupe`, () =>
+      execFileAsync(
+        "acli",
+        [
+          "jira",
+          "workitem",
+          "search",
+          "--jql",
+          jql,
+          "--fields",
+          "key,summary,issuetype,status,assignee,labels",
+          "--limit",
+          String(limit),
+          "--json",
+        ],
+        {
+          cwd: this.cwd,
+          maxBuffer: 10 * 1024 * 1024,
+        },
+      )
+    );
+    const issues = parseJiraSearch(JSON.parse(stdout) as unknown);
+    return issues.map((issue) => normalizeJiraIssue(issue, this.siteUrl));
+  }
+
+  private buildSearchJql(params: IssueSearchParams): string {
+    const clauses: string[] = [];
+    if (params.projectKey) {
+      clauses.push(`project = ${params.projectKey}`);
+    } else if (this.projectKey) {
+      clauses.push(`project = ${this.projectKey}`);
+    }
+    if (params.title || params.summary) {
+      const text = (params.title || params.summary || "").replace(/["\\]/g, "\\$&");
+      clauses.push(`summary ~ "${text}"`);
+    }
+    if (params.issueType) {
+      clauses.push(`issuetype = "${params.issueType}"`);
+    }
+    if (params.state) {
+      const normalizedState = params.state.toLowerCase();
+      if (normalizedState === "open" || normalizedState === "todo") {
+        clauses.push(`statusCategory != Done`);
+      } else if (normalizedState === "closed" || normalizedState === "done") {
+        clauses.push(`statusCategory = Done`);
+      }
+    } else {
+      clauses.push(`statusCategory != Done`);
+    }
+    return clauses.length ? clauses.join(" AND ") : "key is not EMPTY";
   }
 
   async transitionIssue(ref: string, targetStatus: string): Promise<UnifiedIssue | void> {

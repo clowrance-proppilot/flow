@@ -49,6 +49,7 @@ import type {
   UnifiedWorkspaceStatus,
   TriageOptions,
   TriageResult,
+  IssueIntakeCandidate,
 } from "./adapters/provider-contracts.js";
 import { triageIssues } from "./triage.js";
 import { assessIssue } from "./readiness.js";
@@ -255,6 +256,37 @@ export interface CreateJiraIssueOptions {
 }
 
 export type CreateIssueOptions = CreateJiraIssueOptions;
+
+export interface IssueIntakeOptions extends CreateIssueOptions {
+  apply?: boolean;
+  dryRun?: boolean;
+  review?: boolean;
+}
+
+export interface IssueIntakeProposal {
+  title: string;
+  summary: string;
+  body: string;
+  issueType: string;
+  repoKeys: string[];
+  tags: string[];
+  priority?: string;
+  lane?: string;
+  missingSections: string[];
+  dependencies: string[];
+  concurrencyNotes: string[];
+}
+
+export interface IssueIntakeResult {
+  dryRun: boolean;
+  apply: boolean;
+  status: "ready" | "needs_input" | "duplicate" | "created";
+  proposal: IssueIntakeProposal;
+  duplicateIssue?: WorkItem;
+  issue?: WorkItem;
+  reviewJob?: WorkJob;
+  reasons: string[];
+}
 
 export type PullRequestMergeMethod = "merge" | "squash" | "rebase";
 
@@ -587,12 +619,87 @@ export class FlowWorkRuntime {
     sessionId: string,
     options: CreateIssueOptions,
   ): Promise<WorkItem> {
-    const session = await this.requireSession(sessionId);
-    if (!this.issueTracker?.createIssue) {
-      throw new Error("Issue creation is not available in this runtime.");
-    }
+    const intake = await this.intakeIssue(sessionId, { ...options, apply: true });
+    if (intake.issue) return intake.issue;
+    if (intake.duplicateIssue) return intake.duplicateIssue;
+    throw new Error(intake.reasons[0] ?? "Issue intake did not produce an issue.");
+  }
+
+  async intakeIssue(
+    sessionId: string,
+    options: IssueIntakeOptions,
+  ): Promise<IssueIntakeResult> {
+    await this.requireSession(sessionId);
     if (!options.summary?.trim()) throw new Error("Issue summary is required.");
     const issueType = options.issueType ?? "Bug";
+    const createInput = this.issueCreateInput(options, issueType);
+    const candidates = await this.issueIntakeCandidates(createInput);
+    const proposal = this.issueIntakeProposal(options, createInput);
+    const reasons = issueIntakeProblems(createInput.summary, options.description);
+    const duplicateIssue = await this.findDuplicateIssue(createInput, candidates);
+    const reviewJob = !duplicateIssue && options.review === true
+      ? await this.submitIssueIntakeReviewJob(sessionId, createInput, proposal, candidates)
+      : undefined;
+    const apply = options.apply === true;
+    const dryRun = !apply;
+
+    if (duplicateIssue) {
+      await this.store.appendEvent({
+        sessionId,
+        type: "issue.deduped",
+        issueRef: duplicateIssue.ref,
+        message: `Issue already exists: ${duplicateIssue.ref} - ${duplicateIssue.title}`,
+        payload: { existing: duplicateIssue, requested: createInput, proposal },
+      });
+      if (apply && (options.select ?? true)) {
+        await this.selectIssue(sessionId, duplicateIssue);
+      }
+      return {
+        dryRun,
+        apply,
+        status: "duplicate",
+        proposal,
+        duplicateIssue,
+        reviewJob,
+        reasons: [`Likely duplicate of ${duplicateIssue.ref}.`],
+      };
+    }
+
+    if (reasons.length > 0) {
+      if (apply) throw new Error(`Issue intake needs more detail: ${reasons.join("; ")}`);
+      return { dryRun, apply, status: "needs_input", proposal, reviewJob, reasons };
+    }
+
+    if (!apply) {
+      return { dryRun, apply, status: "ready", proposal, reviewJob, reasons: [] };
+    }
+
+    let issue = await this.createIssueAfterIntake(sessionId, options, {
+      ...createInput,
+      title: proposal.title,
+      description: proposal.body,
+    });
+    if (proposal.tags.length > 0 && this.issueTracker?.addIssueTags) {
+      await this.issueTracker.addIssueTags(issue.ref, proposal.tags);
+      const labels = metadataStringArray(issue.metadata.issueLabels) ?? [];
+      issue = await this.ledger.writeIssue({
+        ...issue,
+        metadata: {
+          ...issue.metadata,
+          issueLabels: [...new Set([...labels, ...proposal.tags])],
+        },
+      });
+    }
+    return { dryRun, apply, status: "created", proposal, issue, reviewJob, reasons: [] };
+  }
+
+  private issueCreateInput(options: CreateIssueOptions, issueType: string): {
+    projectKey?: string;
+    issueType: string;
+    title?: string;
+    summary: string;
+    description?: string;
+  } {
     const createInput: {
       projectKey?: string;
       issueType: string;
@@ -606,6 +713,24 @@ export class FlowWorkRuntime {
       description: options.description?.trim(),
     };
     if (options.title?.trim()) createInput.title = options.title.trim();
+    return createInput;
+  }
+
+  private async createIssueAfterIntake(
+    sessionId: string,
+    options: CreateIssueOptions,
+    createInput: {
+      projectKey?: string;
+      issueType: string;
+      title?: string;
+      summary: string;
+      description?: string;
+    },
+  ): Promise<WorkItem> {
+    const session = await this.requireSession(sessionId);
+    if (!this.issueTracker?.createIssue) {
+      throw new Error("Issue creation is not available in this runtime.");
+    }
     const createdIssue = await this.issueTracker.createIssue(createInput);
     const queueIssue = this.mergeJiraQueueIssue(createdIssue);
     const repoKeys = options.repoKeys?.length
@@ -618,8 +743,8 @@ export class FlowWorkRuntime {
       state: shouldSelect ? "selected" : queueIssue.state,
       metadata: {
         ...queueIssue.metadata,
-        issueType: createdIssue.issueType ?? issueType,
-        ...(isJiraIssueTrackerIssue(createdIssue) ? { jiraIssueType: createdIssue.issueType ?? issueType } : {}),
+        issueType: createdIssue.issueType ?? createInput.issueType,
+        ...(isJiraIssueTrackerIssue(createdIssue) ? { jiraIssueType: createdIssue.issueType ?? createInput.issueType } : {}),
         ...(options.branchKind ? { branchKind: options.branchKind } : {}),
       },
     });
@@ -640,6 +765,152 @@ export class FlowWorkRuntime {
       payload: { issue: storedIssue, selected: shouldSelect },
     });
     return storedIssue;
+  }
+
+  private async issueIntakeCandidates(input: {
+    title?: string;
+    summary: string;
+    projectKey?: string;
+    issueType?: string;
+  }): Promise<IssueIntakeCandidate[]> {
+    const candidates = new Map<string, IssueIntakeCandidate>();
+    const ledgerIssues = await this.ledger.listIssues(1000);
+    for (const issue of ledgerIssues) {
+      if (issue.state === "done") continue;
+      candidates.set(issue.ref, {
+        ref: issue.ref,
+        title: issue.title,
+        summary: issue.summary,
+        labels: metadataStringArray(issue.metadata.issueLabels),
+      });
+    }
+    if (this.issueTracker?.searchIssues) {
+      try {
+        const searchResults = await this.issueTracker.searchIssues({
+          title: input.title,
+          summary: input.summary,
+          projectKey: input.projectKey,
+          issueType: input.issueType,
+          state: "open",
+          limit: 5,
+        });
+        for (const result of searchResults) {
+          candidates.set(result.ref, {
+            ref: result.ref,
+            title: result.title,
+            summary: result.description,
+            url: result.url,
+            labels: result.labels,
+          });
+        }
+      } catch {
+        // Search is best-effort. Intake can continue with ledger candidates.
+      }
+    }
+    return [...candidates.values()];
+  }
+
+  private async findDuplicateIssue(
+    input: {
+      title?: string;
+      summary: string;
+      projectKey?: string;
+      issueType?: string;
+    },
+    candidates: IssueIntakeCandidate[],
+  ): Promise<WorkItem | undefined> {
+    const query = (input.title || input.summary).toLowerCase().trim();
+    for (const candidate of candidates) {
+      const title = candidate.title.toLowerCase().trim();
+      const summary = (candidate.summary || "").toLowerCase().trim();
+      if (title === query || summary === query) {
+        const resolved = await this.resolveIntakeCandidate(candidate.ref, candidates);
+        if (resolved) return resolved;
+      }
+    }
+    return undefined;
+  }
+
+  private async submitIssueIntakeReviewJob(
+    sessionId: string,
+    input: {
+      title?: string;
+      summary: string;
+      description?: string;
+      issueType: string;
+    },
+    proposal: IssueIntakeProposal,
+    candidates: IssueIntakeCandidate[],
+  ): Promise<WorkJob | undefined> {
+    const session = await this.requireSession(sessionId);
+    const workType = this.workTypeForCategory("custom");
+    const repoKey = proposal.repoKeys[0] ?? session.selectedRepoKey ?? this.topology.validRepoKeys.values().next().value ?? "main";
+    const issueRef = `INTAKE-${createHash("sha256").update(`${proposal.title}\n${proposal.summary}`).digest("hex").slice(0, 8).toUpperCase()}`;
+    return this.submitWorkJob(sessionId, {
+      issueRef,
+      repoKey,
+      workType,
+      requiredCapabilities: ["issue.intake"],
+      idempotencyKey: `issue-intake:${proposal.title}:${proposal.summary}`,
+      input: {
+        request: input,
+        proposal,
+        candidates,
+        prompt: issueIntakeReviewPrompt(input, proposal, candidates),
+      },
+    });
+  }
+
+  private async resolveIntakeCandidate(ref: string, candidates: IssueIntakeCandidate[]): Promise<WorkItem | undefined> {
+    const existing = await this.ledger.readIssue(ref);
+    if (existing) return existing;
+    const candidate = candidates.find((item) => item.ref === ref);
+    if (!candidate) return undefined;
+    return this.ledger.ensureIssue({
+      ref: candidate.ref,
+      title: candidate.title,
+      summary: candidate.summary,
+      repoKeys: this.topology.inferRepoKeysFromIssue({
+        title: candidate.title,
+        description: candidate.summary,
+        labels: candidate.labels ?? [],
+      }),
+      state: "queued",
+      metadata: {
+        issueUrl: candidate.url,
+        issueLabels: candidate.labels,
+      },
+    });
+  }
+
+  private issueIntakeProposal(
+    options: CreateIssueOptions,
+    input: {
+      title?: string;
+      summary: string;
+      description?: string;
+      issueType: string;
+    },
+  ): IssueIntakeProposal {
+    const title = input.title?.trim() || input.summary;
+    const body = structuredIssueBody(input.description, input.summary, options.repoKeys);
+    const missingSections = missingIntakeSections(body);
+    const priority = proposeIssuePriority(title, body);
+    const lane = proposeIssueLane(title, body);
+    const tags = [priority, lane].filter((tag): tag is string => Boolean(tag));
+    return {
+      title,
+      summary: input.summary,
+      body,
+      issueType: input.issueType,
+      repoKeys: options.repoKeys ?? [],
+      tags,
+      priority,
+      lane,
+      missingSections,
+      dependencies: extractSectionLines(body, "Dependencies"),
+      concurrencyNotes: extractSectionLines(body, "Concurrency notes"),
+    };
   }
 
   async moveIssuesToActiveSprint(
@@ -2720,6 +2991,189 @@ export class FlowWorkRuntime {
   }
 }
 
+const INTAKE_SECTIONS = [
+  "Problem",
+  "Why now",
+  "Scope",
+  "Out of scope",
+  "Files to inspect first",
+  "Acceptance criteria",
+  "Verification commands",
+  "Dependencies",
+  "Concurrency notes",
+  "Priority",
+  "Lane",
+];
+
+function structuredIssueBody(description: string | undefined, summary: string, repoKeys: string[] | undefined): string {
+  const body = description?.trim() ?? "";
+  if (body && missingIntakeSections(body).length === 0) return body;
+  const problem = body || summary;
+  const files = repoKeys?.length ? repoKeys.map((repoKey) => `- ${repoKey}`).join("\n") : "- Not specified.";
+  const priority = proposeIssuePriority(summary, body) ?? "priority-p2";
+  const lane = proposeIssueLane(summary, body) ?? "Not specified.";
+  return [
+    "## Problem",
+    problem,
+    "",
+    "## Why now",
+    "Not specified.",
+    "",
+    "## Scope",
+    summary,
+    "",
+    "## Out of scope",
+    "Not specified.",
+    "",
+    "## Files to inspect first",
+    files,
+    "",
+    "## Acceptance criteria",
+    "- Requested behavior is implemented.",
+    "- Existing behavior is not regressed.",
+    "",
+    "## Verification commands",
+    "- npm run check",
+    "",
+    "## Dependencies",
+    "- None known.",
+    "",
+    "## Concurrency notes",
+    "- Check related open issues before editing shared files.",
+    "",
+    "## Priority",
+    priority,
+    "",
+    "## Lane",
+    lane,
+  ].join("\n");
+}
+
+function missingIntakeSections(body: string): string[] {
+  const headings = new Set(issueBodyHeadings(body).map((heading) => heading.toLowerCase()));
+  return INTAKE_SECTIONS.filter((section) => !headings.has(section.toLowerCase()));
+}
+
+function issueIntakeProblems(summary: string, description: string | undefined): string[] {
+  const reasons: string[] = [];
+  const normalized = summary.trim().toLowerCase();
+  if (summary.trim().length < 10) reasons.push("summary is too short");
+  if (["fix", "update", "change", "improve", "add", "remove", "todo", "wip", "misc", "stuff", "things"].includes(normalized)) {
+    reasons.push("summary is too vague");
+  }
+  if (!description?.trim() && summary.trim().length < 10) {
+    reasons.push("description is required when the summary is vague");
+  }
+  return reasons;
+}
+
+function extractSectionLines(body: string, section: string): string[] {
+  const lines = splitLines(body);
+  const values: string[] = [];
+  let inSection = false;
+  for (const line of lines) {
+    const heading = issueBodyHeading(line);
+    if (heading) {
+      if (inSection) break;
+      inSection = heading.toLowerCase() === section.toLowerCase();
+      continue;
+    }
+    if (inSection) values.push(stripListMarker(line));
+  }
+  return values
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function proposeIssuePriority(title: string, body: string): string | undefined {
+  const words = new Set(normalizeIssueWords(`${title}\n${body}`));
+  if (hasAny(words, ["security", "vulnerability", "cve", "critical", "blocker"]) || `${title}\n${body}`.toLowerCase().includes("data loss")) return "priority-p0";
+  if (hasAny(words, ["bug", "regression", "broken", "production", "timeout", "stuck", "runner", "autoflow", "agent"])) return "priority-p1";
+  if (hasAny(words, ["chore", "cleanup", "cosmetic", "minor", "doc", "docs", "documentation"])) return "priority-p3";
+  return "priority-p2";
+}
+
+function proposeIssueLane(title: string, body: string): string | undefined {
+  const words = new Set(normalizeIssueWords(`${title}\n${body}`));
+  if (hasAny(words, ["sql", "sqlite", "postgres", "ledger", "database", "migration"])) return "lane-sql";
+  if (hasAny(words, ["desktop", "pi", "agent", "autoflow", "runner", "prompt", "session"])) return "lane-desktop-runner";
+  if (hasAny(words, ["test", "coverage", "fixture", "harness", "ci"])) return "lane-test-infra";
+  if (hasAny(words, ["doc", "docs", "documentation", "example", "guide", "readme"])) return "lane-docs";
+  return undefined;
+}
+
+function normalizeIssueWords(text: string): string[] {
+  const words: string[] = [];
+  let current = "";
+  for (const char of text.toLowerCase()) {
+    if (isWordChar(char)) {
+      current += char;
+    } else if (current) {
+      if (current.length > 2) words.push(current);
+      current = "";
+    }
+  }
+  if (current.length > 2) words.push(current);
+  return words;
+}
+
+function issueIntakeReviewPrompt(
+  input: {
+    title?: string;
+    summary: string;
+    description?: string;
+    issueType: string;
+  },
+  proposal: IssueIntakeProposal,
+  candidates: IssueIntakeCandidate[],
+): string {
+  return [
+    "Review this issue intake request.",
+    "Decide whether it duplicates any candidate and whether the proposed issue body is detailed enough.",
+    "Return a worker result through Flow with the duplicate ref, confidence, and any improved title/body/tags in the summary or next pickup.",
+    "",
+    "Request:",
+    JSON.stringify(input, null, 2),
+    "",
+    "Proposal:",
+    JSON.stringify(proposal, null, 2),
+    "",
+    "Candidates:",
+    JSON.stringify(candidates.slice(0, 50), null, 2),
+  ].join("\n");
+}
+
+function splitLines(text: string): string[] {
+  return text.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n");
+}
+
+function issueBodyHeadings(body: string): string[] {
+  return splitLines(body).map(issueBodyHeading).filter((heading): heading is string => Boolean(heading));
+}
+
+function issueBodyHeading(line: string): string | undefined {
+  const trimmed = line.trimStart();
+  if (!trimmed.startsWith("##")) return undefined;
+  let index = 0;
+  while (trimmed[index] === "#") index++;
+  return trimmed.slice(index).trim();
+}
+
+function stripListMarker(line: string): string {
+  const trimmed = line.trimStart();
+  if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) return trimmed.slice(2);
+  return trimmed;
+}
+
+function hasAny(words: Set<string>, candidates: string[]): boolean {
+  return candidates.some((candidate) => words.has(candidate));
+}
+
+function isWordChar(char: string): boolean {
+  const code = char.charCodeAt(0);
+  return (code >= 48 && code <= 57) || (code >= 97 && code <= 122) || char === "_";
+}
+
 function investigationState(disposition: InvestigationDisposition): WorkItem["state"] {
   if (disposition === "needs_code_change") return "ready_to_run";
   return "blocked";
@@ -2775,6 +3229,9 @@ function normalizeIssueTrackerIntegration(
       : undefined,
     fetchOpenIssues: issueProvider.fetchOpenIssues
       ? async (limit?: number): Promise<UnifiedIssue[]> => issueProvider.fetchOpenIssues?.(limit) ?? []
+      : undefined,
+    searchIssues: issueProvider.searchIssues
+      ? async (params): Promise<UnifiedIssue[]> => issueProvider.searchIssues?.(params) ?? []
       : undefined,
     addIssueTags: issueProvider.addIssueTags
       ? async (ref: string, tags: string[]): Promise<UnifiedIssue | void> => issueProvider.addIssueTags?.(ref, tags)
