@@ -35,6 +35,7 @@ import {
   loadFlowConfig,
   migrateFlowConfig,
   validateFlowConfig,
+  createId,
   LocalThreadExecutor,
   LocalIssueTrackerAdapter,
   NoopCodeCollaborationAdapter,
@@ -150,6 +151,12 @@ test("Work type definitions include category metadata", () => {
   assert.equal(workTypes.workTypeForCategory("remediate"), "flow.remediate");
   assert.equal(workTypes.workTypeForCategory("prepare"), "flow.prepare_workspace");
   assert.equal(workTypes.workTypeForCategory("verify"), "flow.verify");
+});
+
+test("createId uses UUID-backed identifiers with the requested prefix", () => {
+  const id = createId("worker");
+
+  assert.match(id, /^worker-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
 });
 
 test("Flow config schema validates topology and adapter declarations", () => {
