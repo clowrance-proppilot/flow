@@ -1027,7 +1027,6 @@ h2 {
   color: var(--th-fg);
   font-size: 0.91rem;
   line-height: 1.65;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
@@ -1089,6 +1088,79 @@ h2 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.markdown-message {
+  display: grid;
+  gap: 0.68rem;
+}
+
+.markdown-message p,
+.markdown-message ul,
+.markdown-message ol,
+.markdown-message pre,
+.markdown-message h3,
+.markdown-message h4 {
+  margin: 0;
+}
+
+.markdown-message h3,
+.markdown-message h4 {
+  color: var(--th-fg);
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.markdown-message h3 {
+  font-size: 1rem;
+}
+
+.markdown-message h4 {
+  font-size: 0.94rem;
+}
+
+.markdown-message ul,
+.markdown-message ol {
+  display: grid;
+  gap: 0.34rem;
+  padding-left: 1.15rem;
+}
+
+.markdown-message li {
+  padding-left: 0.1rem;
+}
+
+.markdown-message code {
+  border: 1px solid rgb(148 163 184 / 0.22);
+  border-radius: 0.32rem;
+  background: rgb(3 8 20 / 0.66);
+  color: #dbeafe;
+  padding: 0.08rem 0.28rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.86em;
+}
+
+.markdown-message pre {
+  max-width: 100%;
+  overflow: auto;
+  border: 1px solid rgb(30 43 63 / 0.95);
+  border-radius: 0.55rem;
+  background: rgb(3 8 20 / 0.82);
+  padding: 0.72rem;
+}
+
+.markdown-message pre code {
+  display: block;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  white-space: pre;
+}
+
+.markdown-message a {
+  color: #93c5fd;
+  text-decoration: underline;
+  text-underline-offset: 0.14rem;
 }
 
 .composer-tool-button {
