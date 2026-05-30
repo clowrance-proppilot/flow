@@ -193,11 +193,13 @@ test("Flow config schema validates topology and adapter declarations", () => {
     },
     issueTracker: { type: "github", owner: "example", repo: "example" },
     collaboration: { type: "github", owner: "example" },
+    runtime: { store: { type: "sqlite" } },
   });
 
   assert.equal(config.project.name, "Example");
   assert.equal(config.project.icon, "./assets/example.svg");
   assert.equal(config.issueTracker?.type, "github");
+  assert.equal(config.runtime?.store?.type, "sqlite");
   assert.equal(config.topology.issueInference[0].repo, "main");
 
   const localConfig = flowConfigSchema.parse({
@@ -247,6 +249,17 @@ test("Flow config schema validates topology and adapter declarations", () => {
       issueTracker: { type: "github", owner: "example", repo: "example", activeLabels: ["ready", ""] },
     }),
     /activeLabels must be an array/,
+  );
+  assert.throws(() =>
+    flowConfigSchema.parse({
+      version: "1",
+      project: { name: "Bad store" },
+      topology: {
+        repos: { main: { name: "example" } },
+      },
+      runtime: { store: { type: "postgres" } },
+    }),
+    /Invalid option/,
   );
 });
 
@@ -401,6 +414,7 @@ test("Flow config bootstrap creates hidden user-state config by default", async 
     assert.equal(config.collaboration?.type, "none");
     assert.equal(config.sourceControl?.type, "git");
     assert.equal(config.ledger?.type, "flow");
+    assert.equal(config.runtime?.store?.type, "sqlite");
     assert.equal(config.runtime?.stateDir, flowUserRuntimePath(root));
 
     await assert.rejects(

@@ -5,7 +5,7 @@ import type { CodeCollaborationProvider, IssueTrackerProvider } from "./adapters
 import type { FlowConfig } from "./config/config-schema.js";
 import { configToProjectTopology, configToWorkTypeRegistry } from "./config/config-loader.js";
 import { assessIssue } from "./readiness.js";
-import { FlowStore } from "./store.js";
+import { createFlowStore, type FlowStoreBackend } from "./store.js";
 import { FlowWorkRuntime } from "./work-runtime.js";
 import { createWorkflowLedger, type WorkflowLedger } from "./ledger.js";
 import { flowRuntimePath, flowWorkflowLedgerPath, resolveFlowPath } from "./flow-layout.js";
@@ -37,7 +37,7 @@ export function createConfiguredWorkRuntime(options: ConfiguredWorkRuntimeOption
   const collaboration = createCollaboration(projectRoot, flowConfig);
   const runtimeStorePath = resolveRuntimeStorePath(projectRoot, flowConfig);
   const runtime = new FlowWorkRuntime({
-    store: new FlowStore({ root: runtimeStorePath }),
+    store: createFlowStore({ root: runtimeStorePath, backend: resolveRuntimeStoreBackend(flowConfig) }),
     ledger: workflowLedger,
     collaboration,
     issueTracker,
@@ -73,6 +73,11 @@ function resolveRuntimeStorePath(projectRoot: string, flowConfig: FlowConfig | u
 function resolveWorkflowLedgerPath(projectRoot: string, flowConfig: FlowConfig | undefined): string {
   const configured = configString(flowConfig?.runtime, "workflowLedgerPath");
   return configured ? resolveFlowPath(projectRoot, configured) : flowWorkflowLedgerPath(projectRoot);
+}
+
+function resolveRuntimeStoreBackend(flowConfig: FlowConfig | undefined): FlowStoreBackend {
+  const store = configRecord(flowConfig?.runtime, "store");
+  return configString(store, "type") === "file" ? "file" : "sqlite";
 }
 
 function createIssueTracker(projectRoot: string, flowConfig: FlowConfig | undefined, workflowLedger: WorkflowLedger): IssueTrackerProvider {
@@ -118,6 +123,12 @@ function createCollaboration(projectRoot: string, flowConfig: FlowConfig | undef
 function configString(config: Record<string, unknown> | undefined, key: string): string | undefined {
   const value = config?.[key];
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function configRecord(config: Record<string, unknown> | undefined, key: string): Record<string, unknown> | undefined {
+  const value = config?.[key];
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  return value as Record<string, unknown>;
 }
 
 function configStringArray(config: Record<string, unknown> | undefined, key: string): string[] {

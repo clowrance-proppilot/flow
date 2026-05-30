@@ -54,7 +54,7 @@ import type {
 import { triageIssues } from "./triage.js";
 import { assessIssue } from "./readiness.js";
 import type { WorkflowLedger } from "./ledger.js";
-import { FlowStore } from "./store.js";
+import type { FlowStoreInterface } from "./store.js";
 import { parseWorkEnvelope } from "./work-envelope.js";
 import { type WorkTypeRegistry, createDefaultFlowWorkTypeRegistry, workerExecutorToWorkExecutor } from "./work-registry.js";
 import { DefaultProjectTopology, type ProjectTopology } from "./project-topology.js";
@@ -87,7 +87,7 @@ import type { ProjectedWorkSubject } from "./core/work-projection.js";
 import type { ExecutorAdapter } from "./executors/executor-contracts.js";
 
 export interface WorkRuntimeOptions {
-  store: FlowStore;
+  store: FlowStoreInterface;
   ledger: WorkflowLedger;
   topology?: ProjectTopology;
   sourceControl?: SourceControlIntegration | SourceControlProvider;
@@ -356,7 +356,7 @@ export interface FlowDoctorResult {
 }
 
 export class FlowWorkRuntime {
-  private readonly store: FlowStore;
+  private readonly store: FlowStoreInterface;
   private readonly ledger: WorkflowLedger;
   readonly topology: ProjectTopology;
   private readonly sourceControl: SourceControlIntegration;
