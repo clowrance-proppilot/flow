@@ -1,0 +1,291 @@
+{
+  "description": "Flow CLI Protocol - Request/Response Examples",
+  "notes": [
+    "Flow accepts one JSON body per invocation",
+    "Flow writes one JSON document to stdout",
+    "Errors include ok:false and an error object",
+    "Success responses include ok:true and a result object"
+  ],
+  "examples": {
+    "manifest": {
+      "compact": {
+        "request": { "op": "manifest" },
+        "description": "Get the compact manifest showing all operations"
+      },
+      "workflow": {
+        "request": { "op": "manifest", "target": "workflow" },
+        "description": "Get targeted manifest for workflow operations"
+      },
+      "issue": {
+        "request": { "op": "manifest", "target": "issue" },
+        "description": "Get targeted manifest for issue operations"
+      }
+    },
+    "state": {
+      "default": {
+        "request": { "op": "state" },
+        "description": "Read current Flow state for default session"
+      },
+      "custom_session": {
+        "request": { "op": "state", "id": "my-session" },
+        "description": "Read state for a specific session"
+      }
+    },
+    "queue": {
+      "default": {
+        "request": { "op": "queue" },
+        "description": "Inspect active issue queue (default limit: 10)"
+      },
+      "custom_limit": {
+        "request": { "op": "queue", "limit": 25 },
+        "description": "Inspect queue with custom limit"
+      }
+    },
+    "backlog": {
+      "default": {
+        "request": { "op": "backlog" },
+        "description": "Inspect backlog items"
+      }
+    },
+    "config": {
+      "validate": {
+        "request": { "op": "config", "mode": "validate" },
+        "description": "Validate Flow config"
+      },
+      "explain": {
+        "request": { "op": "config", "mode": "explain" },
+        "description": "Explain parsed Flow config structure"
+      },
+      "migrate_dry_run": {
+        "request": { "op": "config", "mode": "migrate" },
+        "description": "Migrate config (dry run, no writes)"
+      },
+      "migrate_write": {
+        "request": { "op": "config", "mode": "migrate", "write": true },
+        "description": "Migrate config and write changes"
+      }
+    },
+    "bootstrap": {
+      "default": {
+        "request": { "op": "bootstrap" },
+        "description": "Bootstrap Flow config from repo metadata"
+      },
+      "repo_tracked": {
+        "request": { "op": "bootstrap", "storage": "repo-tracked" },
+        "description": "Bootstrap with repo-tracked storage"
+      },
+      "force": {
+        "request": { "op": "bootstrap", "force": true, "storage": "repo-tracked" },
+        "description": "Force overwrite existing config"
+      }
+    },
+    "ledger": {
+      "verify": {
+        "request": { "op": "ledger" },
+        "description": "Verify workflow ledger integrity"
+      },
+      "rebuild": {
+        "request": { "op": "ledger", "rebuildProjections": true },
+        "description": "Verify and rebuild projections"
+      }
+    },
+    "issue": {
+      "view": {
+        "request": { "op": "issue", "mode": "view", "id": "FLOW-123" },
+        "description": "View issue details"
+      },
+      "select": {
+        "request": { "op": "issue", "mode": "select", "id": "FLOW-123" },
+        "description": "Select an issue for work"
+      },
+      "route": {
+        "request": { "op": "issue", "mode": "route", "id": "FLOW-123", "repoKeys": ["main"] },
+        "description": "Route an issue to specific repos"
+      },
+      "create": {
+        "request": {
+          "op": "issue",
+          "mode": "create",
+          "summary": "Fix login bug",
+          "description": "Users cannot login with SSO"
+        },
+        "description": "Create a new issue"
+      },
+      "create_with_type": {
+        "request": {
+          "op": "issue",
+          "mode": "create",
+          "summary": "Add dark mode",
+          "issueType": "Task",
+          "branchKind": "feature"
+        },
+        "description": "Create issue with specific type and branch kind"
+      },
+      "adopt_branch": {
+        "request": {
+          "op": "issue",
+          "mode": "adoptBranch",
+          "id": "FLOW-123",
+          "repoKey": "main"
+        },
+        "description": "Adopt a branch for an issue"
+      },
+      "adopt_workspace": {
+        "request": {
+          "op": "issue",
+          "mode": "adoptWorkspace",
+          "id": "FLOW-123",
+          "repoKey": "main",
+          "worktreePath": "/path/to/worktree"
+        },
+        "description": "Adopt an existing workspace"
+      }
+    },
+    "workflow": {
+      "advance": {
+        "request": { "op": "workflow", "mode": "advance", "id": "FLOW-123" },
+        "description": "Advance issue to next state"
+      },
+      "audit": {
+        "request": { "op": "workflow", "mode": "audit", "id": "FLOW-123" },
+        "description": "Audit issue state and findings"
+      },
+      "autoflow": {
+        "request": { "op": "workflow", "mode": "autoflow", "id": "FLOW-123" },
+        "description": "Run automated workflow steps"
+      },
+      "autoflow_limited": {
+        "request": { "op": "workflow", "mode": "autoflow", "id": "FLOW-123", "limit": 10 },
+        "description": "Run autoflow with step limit"
+      },
+      "doctor": {
+        "request": { "op": "workflow", "mode": "doctor", "id": "FLOW-123" },
+        "description": "Diagnose issue health"
+      },
+      "handoff": {
+        "request": { "op": "workflow", "mode": "handoff", "id": "FLOW-123" },
+        "description": "Get handoff summary"
+      },
+      "record_result": {
+        "request": {
+          "op": "workflow",
+          "mode": "recordResult",
+          "id": "FLOW-123",
+          "repoKey": "main",
+          "summary": "Fixed the bug",
+          "testsRun": ["npm test"]
+        },
+        "description": "Record work result"
+      },
+      "record_result_detailed": {
+        "request": {
+          "op": "workflow",
+          "mode": "recordResult",
+          "id": "FLOW-123",
+          "repoKey": "main",
+          "summary": "Implemented feature",
+          "changedFiles": ["src/feature.ts", "test/feature.test.ts"],
+          "testsRun": ["npm test", "npm run lint"],
+          "blockers": [],
+          "nextPickup": "Ready for review"
+        },
+        "description": "Record detailed work result"
+      },
+      "record_pull_request": {
+        "request": {
+          "op": "workflow",
+          "mode": "recordPullRequest",
+          "id": "FLOW-123",
+          "repo": "org/repo",
+          "number": 42,
+          "url": "https://github.com/org/repo/pull/42"
+        },
+        "description": "Record pull request"
+      },
+      "record_evidence": {
+        "request": {
+          "op": "workflow",
+          "mode": "recordEvidence",
+          "id": "FLOW-123",
+          "summary": "npm test passed",
+          "criteria": ["tests"]
+        },
+        "description": "Record evidence"
+      },
+      "record_documentation": {
+        "request": {
+          "op": "workflow",
+          "mode": "recordDocumentation",
+          "id": "FLOW-123",
+          "disposition": "completed",
+          "summary": "Updated API docs"
+        },
+        "description": "Record documentation status"
+      },
+      "observe": {
+        "request": { "op": "workflow", "mode": "observe", "id": "FLOW-123" },
+        "description": "Observe a flow subject"
+      }
+    },
+    "runtime": {
+      "inspect_queue": {
+        "request": { "op": "runtime", "method": "inspectQueue", "params": { "limit": 5 } },
+        "description": "Call raw runtime method to inspect queue"
+      },
+      "inspect_backlog": {
+        "request": { "op": "runtime", "method": "inspectBacklog", "params": { "limit": 10 } },
+        "description": "Call raw runtime method to inspect backlog"
+      },
+      "create_session": {
+        "request": { "op": "runtime", "method": "createSession", "params": { "id": "my-session" } },
+        "description": "Create a new session"
+      },
+      "summarize_handoff": {
+        "request": { "op": "runtime", "method": "summarizeHandoff", "params": { "sessionId": "cli" } },
+        "description": "Summarize handoff for session"
+      }
+    }
+  },
+  "error_examples": {
+    "invalid_json": {
+      "request": "not valid json",
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_JSON",
+          "message": "Unexpected token 'n', \"not valid\"... is not valid JSON"
+        }
+      }
+    },
+    "missing_op": {
+      "request": { "foo": "bar" },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "BAD_REQUEST",
+          "message": "JSON body must include a non-empty string op."
+        }
+      }
+    },
+    "unsupported_op": {
+      "request": { "op": "nonexistent" },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "BAD_OP",
+          "message": "Unsupported Flow op: nonexistent"
+        }
+      }
+    },
+    "bad_mode": {
+      "request": { "op": "config", "mode": "invalid" },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "BAD_MODE",
+          "message": "Unsupported config mode: invalid"
+        }
+      }
+    }
+  }
+}
