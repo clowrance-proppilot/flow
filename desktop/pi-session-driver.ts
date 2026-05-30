@@ -26,6 +26,7 @@ export interface PiTimelineItem {
   content: string;
   createdAt: string;
   toolName?: string;
+  input?: Record<string, unknown>;
   diff?: {
     path: string;
     before?: string;
@@ -451,12 +452,16 @@ export class PiSessionDriver {
       }
     }
     if (event.type === "toolStarted") {
+      const filePath = extractFilePathFromToolInput(event.toolName, event.input);
+      const toolInput = typeof event.input === "object" && event.input !== null ? event.input as Record<string, unknown> : undefined;
       session.timeline.push({
         id: event.callId,
         role: "tool",
         toolName: event.toolName,
         content: `${event.toolName} started.`,
         createdAt: event.timestamp,
+        ...(toolInput ? { input: toolInput } : {}),
+        ...(filePath ? { diff: { path: filePath } } : {}),
       });
     }
     if (event.type === "toolFinished") {
@@ -572,4 +577,16 @@ function latestText(session: PiSessionSnapshot): string | undefined {
 function compactText(value: unknown): string {
   const raw = typeof value === "string" ? value : JSON.stringify(value);
   return raw.length > 240 ? `${raw.slice(0, 237)}...` : raw;
+}
+
+function extractFilePathFromToolInput(toolName: string, input: unknown): string | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const name = toolName.toLowerCase();
+  const isFileTool = name.includes("edit") || name.includes("write") || name.includes("create") || name.includes("notebookedit");
+  if (!isFileTool) return undefined;
+  const args = input as Record<string, unknown>;
+  for (const key of ["path", "file_path", "filePath", "filename", "file"]) {
+    if (typeof args[key] === "string" && args[key]) return args[key] as string;
+  }
+  return undefined;
 }

@@ -40,6 +40,7 @@ export interface PiAgentOrchestratorOptions {
   piSessionDriver: PiSessionDriver;
   enabled?: () => boolean;
   maxConcurrency?: number;
+  gitInspect?: (path: string) => Promise<{ dirty: boolean; entries: string[] }>;
 }
 
 interface ActiveRun {
@@ -57,6 +58,7 @@ export class PiAgentOrchestrator {
   private readonly piSessionDriver: PiSessionDriver;
   private readonly enabled: () => boolean;
   private readonly maxConcurrency: number;
+  private readonly gitInspect?: (path: string) => Promise<{ dirty: boolean; entries: string[] }>;
   private readonly activeRuns = new Map<string, ActiveRun>();
   private readonly issueStatuses = new Map<string, PiAgentOrchestratorIssueStatus>();
   private reconciling = false;
@@ -67,6 +69,7 @@ export class PiAgentOrchestrator {
     this.piSessionDriver = options.piSessionDriver;
     this.enabled = options.enabled ?? (() => true);
     this.maxConcurrency = options.maxConcurrency ?? 5;
+    this.gitInspect = options.gitInspect;
   }
 
   getStatus(): PiAgentOrchestratorStatus {
@@ -263,9 +266,9 @@ export class PiAgentOrchestrator {
     });
 
     const completed = await this.piSessionDriver.postPrompt(piSession.id, handoff.prompt);
-    await this.recordResult(flowSessionId, handoff, completed);
+    const resultStatus = await this.recordResult(flowSessionId, handoff, completed);
 
-    const finalPhase = completed.status === "failed" ? "failed" : "idle";
+    const finalPhase = completed.status === "failed" ? "failed" : resultStatus === "blocked" ? "needs_input" : "idle";
     const finalSummary = completed.error ?? latestAssistantText(completed) ?? `Autoflow finished ${issueRef}.`;
 
     const activeRun = this.activeRuns.get(issueRef);
@@ -289,18 +292,53 @@ export class PiAgentOrchestrator {
     });
   }
 
-  private async recordResult(flowSessionId: string, handoff: WorkerTaskRequest & { workJobId: string }, session: PiSessionSnapshot): Promise<void> {
+  private async recordResult(flowSessionId: string, handoff: WorkerTaskRequest & { workJobId: string }, session: PiSessionSnapshot): Promise<"succeeded" | "blocked" | "failed"> {
+    const changedFiles = extractChangedFilesFromTimeline(session.timeline);
+    const testsRun = extractTestsRunFromTimeline(session.timeline);
+    const hasCommitEvidence = checkCommitEvidence(session.timeline);
+
+    let status: "succeeded" | "blocked" | "failed";
+    const blockers: string[] = [];
+
+    if (session.status === "failed") {
+      status = "failed";
+      if (session.error) blockers.push(session.error);
+    } else if (changedFiles.length > 0 && !hasCommitEvidence && this.gitInspect) {
+      try {
+        const workspacePath = session.workspacePath ?? handoff.workspacePath;
+        if (workspacePath) {
+          const gitStatus = await this.gitInspect(workspacePath);
+          if (gitStatus.dirty) {
+            status = "blocked";
+            blockers.push("Changes not committed");
+          } else {
+            status = WorkerStatusValue.Succeeded;
+          }
+        } else {
+          status = WorkerStatusValue.Succeeded;
+        }
+      } catch {
+        status = WorkerStatusValue.Succeeded;
+      }
+    } else {
+      status = WorkerStatusValue.Succeeded;
+    }
+
     const result: LocalThreadResultInput = {
       issueRef: handoff.issueRef,
       repoKey: handoff.repoKey,
       taskId: handoff.id,
       workJobId: handoff.workJobId,
-      status: session.status === "failed" ? WorkerStatusValue.Failed : WorkerStatusValue.Succeeded,
+      status,
       summary: session.error ?? latestAssistantText(session) ?? `Pi session completed ${handoff.issueRef}.`,
-      blockers: session.status === "failed" && session.error ? [session.error] : [],
+      changedFiles,
+      testsRun,
+      blockers,
+      nextPickup: status === "blocked" ? "Commit and push the changes to the prepared branch." : undefined,
       handoffPrompt: handoff.prompt,
     };
     await this.runtime.recordLocalThreadResult(flowSessionId, result);
+    return status;
   }
 
   private async nextCandidates(limit: number): Promise<Array<{ ref: string; repoKeys: string[]; title: string; metadata: Record<string, unknown> }>> {
@@ -413,4 +451,41 @@ function doctorBlocksAutoflow(doctor: FlowDoctorResult): boolean {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function extractChangedFilesFromTimeline(timeline: PiSessionSnapshot["timeline"]): string[] {
+  const files = new Set<string>();
+  for (const item of timeline) {
+    if (item.role !== "tool") continue;
+    const name = (item.toolName ?? "").toLowerCase();
+    if (name.includes("edit") || name.includes("write") || name.includes("create") || name.includes("notebookedit")) {
+      const path = item.diff?.path;
+      if (path) files.add(path);
+    }
+  }
+  return [...files];
+}
+
+function extractTestsRunFromTimeline(timeline: PiSessionSnapshot["timeline"]): string[] {
+  const tests: string[] = [];
+  for (const item of timeline) {
+    if (item.role !== "tool") continue;
+    const name = (item.toolName ?? "").toLowerCase();
+    if (name.includes("test") || name.includes("check") || name.includes("lint") || name.includes("build")) {
+      tests.push(item.toolName ?? name);
+    }
+  }
+  return [...new Set(tests)];
+}
+
+function checkCommitEvidence(timeline: PiSessionSnapshot["timeline"]): boolean {
+  for (const item of timeline) {
+    if (item.role === "tool" && item.toolName && item.toolName.toLowerCase().includes("git")) {
+      if (item.content.toLowerCase().includes("commit")) return true;
+    }
+    if (item.role === "assistant" && item.content.toLowerCase().includes("commit")) {
+      return true;
+    }
+  }
+  return false;
 }

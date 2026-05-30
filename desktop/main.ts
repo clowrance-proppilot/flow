@@ -7,6 +7,7 @@ import type { Server } from "node:http";
 import { DashboardState } from "../src/dashboard-state.js";
 import { validateFlowConfig } from "../src/config/config-loader.js";
 import { createConfiguredWorkRuntime } from "../src/runtime-factory.js";
+import { GitAdapter } from "../src/adapters/git.js";
 import { DesktopActionRouter } from "./action-router.js";
 import { PiAgentOrchestrator } from "./pi-agent-orchestrator.js";
 import { PiSessionDriver } from "./pi-session-driver.js";
@@ -85,6 +86,7 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
       flowSessionId: `desktop-${project.id}`,
       agent: process.env.FLOW_DESKTOP_AGENT === "disabled" ? false : undefined,
     });
+    const git = new GitAdapter();
     const surface: DesktopProjectSurface = {
       project,
       configured,
@@ -95,6 +97,10 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
         runtime: configured.runtime,
         piSessionDriver,
         enabled: () => project.autoflowEnabled !== false,
+        gitInspect: async (path: string) => {
+          const status = await git.inspect(path);
+          return { dirty: status.dirty, entries: status.entries };
+        },
       }),
     };
     projectSurfaces.set(project.id, surface);
