@@ -33,6 +33,7 @@ import {
   workflowSteps,
   workStatusLabel,
 } from "./status";
+import { ToastContainer, ToastProvider, useToast } from "./toast";
 import type {
   ContextProjection,
   ConversationItem,
@@ -86,6 +87,7 @@ function App() {
   const [conversationLoading, setConversationLoading] = useState(false);
   const [actionBusy, setActionBusy] = useState("");
   const [error, setError] = useState("");
+  const { addToast } = useToast();
   const refreshInFlight = useRef(false);
   const localIssueByRefRef = useRef<Record<string, DashboardIssue>>({});
   const hasLoaded = useRef(false);
@@ -207,7 +209,11 @@ function App() {
       hasLoaded.current = true;
     } catch {
       setStatus("error");
-      if (!hasLoaded.current) setError("Unable to load Flow desktop context.");
+      if (!hasLoaded.current) {
+        const msg = "Unable to load Flow desktop context.";
+        setError(msg);
+        addToast(msg, "error");
+      }
     } finally {
       setLoading(false);
       refreshInFlight.current = false;
@@ -229,7 +235,9 @@ function App() {
       setAutoflowActivity(null);
       await refresh(true);
     } catch {
-      setError("Unable to switch project.");
+      const msg = "Unable to switch project.";
+      setError(msg);
+      addToast(msg, "error");
     }
   }
 
@@ -248,14 +256,18 @@ function App() {
       if (enabled) void fetchJson("/api/autoflow/tick", { method: "POST" }).then(() => refreshAutoflowStatus()).catch(() => undefined);
     } catch {
       setProjects((items) => items.map((project) => project.id === activeProject.id ? { ...project, autoflowEnabled: !enabled } : project));
-      setError("Unable to update Autoflow for this project.");
+      const msg = "Unable to update Autoflow for this project.";
+      setError(msg);
+      addToast(msg, "error");
     }
   }
 
   async function addProjectFromDesktop(): Promise<void> {
     const root = newProjectRoot.trim();
     if (!root) {
-      setError("Project root is required.");
+      const msg = "Project root is required.";
+      setError(msg);
+      addToast(msg, "warning");
       return;
     }
     setAddingProject(true);
@@ -280,9 +292,12 @@ function App() {
       setActiveSessionStatus("idle");
       setPiActivity(null);
       setAutoflowActivity(null);
+      addToast("Project added successfully.", "success");
       await refresh(true);
     } catch (caught) {
-      setError(errorMessage(caught, "Unable to add Flow project."));
+      const msg = errorMessage(caught, "Unable to add Flow project.");
+      setError(msg);
+      addToast(msg, "error");
     } finally {
       setAddingProject(false);
     }
@@ -302,7 +317,9 @@ function App() {
   async function createIssueFromDesktop(): Promise<void> {
     const title = newIssueTitle.trim();
     if (!title) {
-      setError("Issue title is required.");
+      const msg = "Issue title is required.";
+      setError(msg);
+      addToast(msg, "warning");
       return;
     }
     setCreatingIssue(true);
@@ -338,10 +355,13 @@ function App() {
         localIssueByRefRef.current = { ...localIssueByRefRef.current, [created.ref]: created };
         setIssues((current) => [created, ...current.filter((issue) => issue.ref !== created.ref)]);
         setActiveStatus("all");
+        addToast(`Issue ${created.ref} created successfully.`, "success");
         await selectIssueThread(created.ref);
       }
     } catch (caught) {
-      setError(errorMessage(caught, "Unable to create issue."));
+      const msg = errorMessage(caught, "Unable to create issue.");
+      setError(msg);
+      addToast(msg, "error");
     } finally {
       setCreatingIssue(false);
     }
@@ -414,7 +434,9 @@ function App() {
       });
       await refresh(false);
     } catch {
-      setError("Unable to route prompt.");
+      const msg = "Unable to route prompt.";
+      setError(msg);
+      addToast(msg, "error");
     } finally {
       setSending(false);
       sendingRef.current = false;
@@ -545,7 +567,9 @@ function App() {
 
   async function invokeAction(action: DesktopAction): Promise<void> {
     if (!selectedIssueRef) {
-      setError("Select an issue before running Autoflow.");
+      const msg = "Select an issue before running Autoflow.";
+      setError(msg);
+      addToast(msg, "warning");
       return;
     }
     setActionBusy(action);
@@ -609,7 +633,9 @@ function App() {
           updatedAt: new Date().toISOString(),
         });
       }
-      setError(errorMessage(caught, "Unable to run workflow action."));
+      const msg = errorMessage(caught, "Unable to run workflow action.");
+      setError(msg);
+      addToast(msg, "error");
     } finally {
       setActionBusy("");
     }
@@ -1290,4 +1316,9 @@ function WorkflowTrack({ status }: { status?: string }) {
   );
 }
 
-createRoot(document.getElementById("root") as HTMLElement).render(<App />);
+createRoot(document.getElementById("root") as HTMLElement).render(
+  <ToastProvider>
+    <App />
+    <ToastContainer />
+  </ToastProvider>
+);
