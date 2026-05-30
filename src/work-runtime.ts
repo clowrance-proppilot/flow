@@ -3506,6 +3506,8 @@ function buildWorkerPrompt(issue: WorkItem, repoKey: string): string {
     issue.summary ? `Context: ${issue.summary}` : undefined,
     workspacePath ? `Prepared workspace: ${workspacePath}` : undefined,
     branch ? `Branch: ${branch}` : undefined,
+    "",
+    "Instructions: Make the code changes, run tests, commit with a descriptive message, and push the branch.",
   ].filter(Boolean).join("\n");
 }
 

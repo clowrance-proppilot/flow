@@ -41,6 +41,11 @@ export type DashboardIssue = {
   handoffPrompt?: string;
 };
 
+export type CreatedIssue = {
+  ref: string;
+  title?: string;
+};
+
 export type DashboardPayload = {
   snapshot?: {
     freshnessLabel?: string;
@@ -123,4 +128,22 @@ export type PiActivityState = {
   detail?: string;
   toolName?: string;
   updatedAt?: string;
+};
+
+export type PiAgentOrchestratorIssueStatus = {
+  phase: "queued" | "starting" | "running" | "blocked" | "needs_input" | "failed" | "done";
+  sessionId?: string;
+  workspacePath?: string;
+  summary?: string;
+  reason?: string;
+  updatedAt: string;
+};
+
+export type PiAgentOrchestratorStatus = {
+  enabled: boolean;
+  maxConcurrency: number;
+  activeCount: number;
+  issues: Record<string, PiAgentOrchestratorIssueStatus>;
+  summary: string;
+  updatedAt: string;
 };

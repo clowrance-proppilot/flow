@@ -1,12 +1,12 @@
 import type { ContextProjection, ConversationItem, PiActivityState, PiSessionSnapshot, PiTimelineItem } from "./types";
 
 export function seedConversation(context?: ContextProjection, projectId?: string, issueRef?: string): ConversationItem[] {
-  const target = issueRef || context?.active?.issueRef;
-  const label = target ? `Selected ${target}.` : projectId ? "Project loaded." : "Flow desktop is ready.";
+  if (issueRef) return [];
+  const label = projectId ? "Project loaded." : "Flow desktop is ready.";
   return [{
     id: "system-empty",
     role: "system",
-    text: `${label} Use the composer for the current turn.`,
+    text: `${label} Select an issue to get started.`,
     createdAt: new Date().toISOString(),
   }];
 }
@@ -36,7 +36,7 @@ export function conversationFromPiSession(session: PiSessionSnapshot): Conversat
     }
   }
   flushAssistant();
-  return items.length ? items : seedConversation(undefined, undefined, session.issueRef);
+  return items.length ? items : [];
 }
 
 export function activityFromPiSession(session: PiSessionSnapshot): PiActivityState {

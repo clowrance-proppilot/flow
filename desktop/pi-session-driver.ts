@@ -26,6 +26,7 @@ export interface PiTimelineItem {
   content: string;
   createdAt: string;
   toolName?: string;
+  input?: Record<string, unknown>;
   diff?: {
     path: string;
     before?: string;
@@ -58,6 +59,7 @@ export interface PiAgentPromptInput {
   sessionFile?: string;
   issueRef: string;
   prompt: string;
+  mode?: PiAgentMessageMode;
   repoRoot: string;
   workspacePath?: string;
   onEvent?: SessionEventListener;
@@ -77,6 +79,7 @@ export interface PiAgentRunner {
 }
 
 export type PiSessionStatus = "active" | "running" | "paused" | "done" | "failed";
+export type PiAgentMessageMode = "prompt" | "followUp" | "steer";
 
 export class PiSessionDriver {
   private readonly runtime: RuntimeIssueSurface;
@@ -175,18 +178,18 @@ export class PiSessionDriver {
     };
   }
 
-  async postPrompt(sessionId: string, prompt: string): Promise<PiSessionSnapshot> {
+  async postPrompt(sessionId: string, prompt: string, mode: PiAgentMessageMode = "prompt"): Promise<PiSessionSnapshot> {
     const { session, contextualPrompt } = await this.appendUserPrompt(sessionId, prompt);
-    await this.runPrompt(session, contextualPrompt);
+    await this.runPrompt(session, contextualPrompt, mode);
     return session;
   }
 
-  async sendUserMessage(sessionId: string, input: { text: string }): Promise<PiSessionSnapshot> {
+  async sendUserMessage(sessionId: string, input: { text: string; mode?: PiAgentMessageMode }): Promise<PiSessionSnapshot> {
     const { session, contextualPrompt } = await this.appendUserPrompt(sessionId, input.text);
     const previous = this.promptQueueBySessionId.get(session.id) ?? Promise.resolve();
     const queued = previous
       .catch(() => undefined)
-      .then(() => this.runPrompt(session, contextualPrompt));
+      .then(() => this.runPrompt(session, contextualPrompt, input.mode ?? "followUp"));
     this.promptQueueBySessionId.set(session.id, queued);
     void queued.finally(() => {
       if (this.promptQueueBySessionId.get(session.id) === queued) this.promptQueueBySessionId.delete(session.id);
@@ -252,7 +255,7 @@ export class PiSessionDriver {
     return { session, contextualPrompt };
   }
 
-  private async runPrompt(session: PiSessionSnapshot, contextualPrompt: string): Promise<void> {
+  private async runPrompt(session: PiSessionSnapshot, contextualPrompt: string, mode: PiAgentMessageMode = "prompt"): Promise<void> {
     if (!this.agent) {
       const handoff = await this.runtime.summarizeHandoff(session.flowSessionId).catch(() => "");
       session.timeline.push({
@@ -271,6 +274,7 @@ export class PiSessionDriver {
           sessionFile: session.sessionFile,
           issueRef: session.issueRef,
           prompt: contextualPrompt,
+          mode,
           repoRoot: this.repoRoot,
           workspacePath: session.workspacePath,
           onEvent: (event) => this.applyDriverEvent(session, event),
@@ -448,12 +452,16 @@ export class PiSessionDriver {
       }
     }
     if (event.type === "toolStarted") {
+      const filePath = extractFilePathFromToolInput(event.toolName, event.input);
+      const toolInput = typeof event.input === "object" && event.input !== null ? event.input as Record<string, unknown> : undefined;
       session.timeline.push({
         id: event.callId,
         role: "tool",
         toolName: event.toolName,
         content: `${event.toolName} started.`,
         createdAt: event.timestamp,
+        ...(toolInput ? { input: toolInput } : {}),
+        ...(filePath ? { diff: { path: filePath } } : {}),
       });
     }
     if (event.type === "toolFinished") {
@@ -569,4 +577,16 @@ function latestText(session: PiSessionSnapshot): string | undefined {
 function compactText(value: unknown): string {
   const raw = typeof value === "string" ? value : JSON.stringify(value);
   return raw.length > 240 ? `${raw.slice(0, 237)}...` : raw;
+}
+
+function extractFilePathFromToolInput(toolName: string, input: unknown): string | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const name = toolName.toLowerCase();
+  const isFileTool = name.includes("edit") || name.includes("write") || name.includes("create") || name.includes("notebookedit");
+  if (!isFileTool) return undefined;
+  const args = input as Record<string, unknown>;
+  for (const key of ["path", "file_path", "filePath", "filename", "file"]) {
+    if (typeof args[key] === "string" && args[key]) return args[key] as string;
+  }
+  return undefined;
 }

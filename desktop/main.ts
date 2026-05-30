@@ -7,7 +7,9 @@ import type { Server } from "node:http";
 import { DashboardState } from "../src/dashboard-state.js";
 import { validateFlowConfig } from "../src/config/config-loader.js";
 import { createConfiguredWorkRuntime } from "../src/runtime-factory.js";
+import { GitAdapter } from "../src/adapters/git.js";
 import { DesktopActionRouter } from "./action-router.js";
+import { PiAgentOrchestrator } from "./pi-agent-orchestrator.js";
 import { PiSessionDriver } from "./pi-session-driver.js";
 import { DesktopProjectRegistry, type DesktopProjectRecord } from "./project-registry.js";
 import { DesktopPromptRouter, type DesktopAgentSessionAdapter } from "./prompt-router.js";
@@ -77,15 +79,28 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
       projectRoot: project.root,
       flowConfig: configValidation.config,
     });
+    const dashboardState = new DashboardState({ runtime: configured.runtime });
+    const piSessionDriver = new PiSessionDriver({
+      runtime: configured.runtime,
+      repoRoot: project.root,
+      flowSessionId: `desktop-${project.id}`,
+      agent: process.env.FLOW_DESKTOP_AGENT === "disabled" ? false : undefined,
+    });
+    const git = new GitAdapter();
     const surface: DesktopProjectSurface = {
       project,
       configured,
-      dashboardState: new DashboardState({ runtime: configured.runtime }),
-      piSessionDriver: new PiSessionDriver({
+      dashboardState,
+      piSessionDriver,
+      piAgentOrchestrator: new PiAgentOrchestrator({
+        projectId: project.id,
         runtime: configured.runtime,
-        repoRoot: project.root,
-        flowSessionId: `desktop-${project.id}`,
-        agent: process.env.FLOW_DESKTOP_AGENT === "disabled" ? false : undefined,
+        piSessionDriver,
+        enabled: () => project.autoflowEnabled !== false,
+        gitInspect: async (path: string) => {
+          const status = await git.inspect(path);
+          return { dirty: status.dirty, entries: status.entries };
+        },
       }),
     };
     projectSurfaces.set(project.id, surface);
@@ -98,23 +113,27 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
         return { summary: "Prompt recorded for project context." };
       }
       const surface = await projectSurface(input.project);
-      let session = input.sessionId
+      const session = input.sessionId
         ? await surface.piSessionDriver.getSession(input.sessionId).catch(() => undefined)
         : undefined;
-      session ??= await surface.piSessionDriver.openOrCreateIssueSession(input.issueRef);
-      const updated = await surface.piSessionDriver.sendUserMessage(session.id, { text: input.prompt });
-      const summary = latestAssistantText(updated) || `Prompt queued for ${updated.issueRef}.`;
+      void surface.piAgentOrchestrator.sendUserMessage({
+        issueRef: input.issueRef,
+        sessionId: session?.id,
+        text: input.prompt,
+      }).catch((error) => {
+        console.error("[flow-desktop] pi prompt failed:", error);
+      });
+      const target = session ?? await surface.piSessionDriver.openOrCreateIssueSession(input.issueRef);
+      const summary = `Prompt sent to ${target.issueRef}.`;
       return {
         session: {
-          id: updated.id,
+          id: target.id,
           provider: "pi",
-          workspacePath: updated.workspacePath,
-          status: updated.status,
+          workspacePath: target.workspacePath,
+          status: "active",
           summary,
         },
-        artifacts: [artifactFromPiSession(updated, summary)],
         summary,
-        error: updated.error,
       };
     },
   };
@@ -145,6 +164,11 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
   registerWorkRoutes(server, routeContext, { promptRouter, actionRouter }, jsonBody);
   registerStaticRoutes(server, { desktopFilePath, dashboardFilePath });
 
+  const autoflowInterval = setInterval(() => {
+    void runEnabledProjectAutoflowReconcile(projectRegistry, projectSurface);
+  }, 30000);
+  void runEnabledProjectAutoflowReconcile(projectRegistry, projectSurface);
+
   // Find a free port
   return new Promise((resolve, reject) => {
     const listener = server.listen(0, "127.0.0.1", () => {
@@ -156,8 +180,20 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
       }
     });
     listener.on("error", reject);
+    listener.on("close", () => clearInterval(autoflowInterval));
     dashboardServer = listener;
   });
+}
+
+export async function runEnabledProjectAutoflowReconcile(
+  projectRegistry: DesktopProjectRegistry,
+  projectSurface: (project: DesktopProjectRecord) => Promise<DesktopProjectSurface>,
+): Promise<void> {
+  const projects = await projectRegistry.listProjects();
+  await Promise.all(projects.filter((project) => project.valid && project.autoflowEnabled !== false).map(async (project) => {
+    const surface = await projectSurface(project);
+    await surface.piAgentOrchestrator.reconcile();
+  }));
 }
 
 function createWindow(port: number): BrowserWindow {
@@ -254,19 +290,3 @@ function enableRendererAutoReload(flowRoot: string): void {
   }
 }
 
-function latestAssistantText(session: { timeline: Array<{ role: string; content: string }> }): string {
-  return [...session.timeline].reverse().find((item) => item.role === "assistant")?.content.trim() ?? "";
-}
-
-function artifactFromPiSession(
-  session: { id: string; issueRef: string; status: string; sessionFile?: string; error?: string },
-  summary: string,
-) {
-  return {
-    id: `artifact-${session.id}`,
-    artifactType: session.status === "failed" ? "test_output" as const : "other" as const,
-    title: `Pi session ${session.issueRef}`,
-    path: session.sessionFile,
-    summary: session.error ? `Pi error: ${session.error}` : summary,
-  };
-}

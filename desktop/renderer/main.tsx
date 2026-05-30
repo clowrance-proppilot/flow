@@ -4,6 +4,7 @@ import {
   ClipboardList,
   FileText,
   Folder,
+  Plus,
   RefreshCw,
   Search,
   Send,
@@ -35,10 +36,12 @@ import {
 import type {
   ContextProjection,
   ConversationItem,
+  CreatedIssue,
   DashboardIssue,
   DashboardPayload,
   DesktopAction,
   PendingConfirmationState,
+  PiAgentOrchestratorStatus,
   PiActivityState,
   PiSessionEvent,
   PiSessionSnapshot,
@@ -63,18 +66,28 @@ function App() {
   const [activeSessionStatus, setActiveSessionStatus] = useState<"idle" | "running" | "failed">("idle");
   const [piActivity, setPiActivity] = useState<PiActivityState | null>(null);
   const [autoflowActivity, setAutoflowActivity] = useState<AutoflowActivityState | null>(null);
+  const [autoflowStatus, setAutoflowStatus] = useState<PiAgentOrchestratorStatus | null>(null);
   const [activeStatus, setActiveStatus] = useState<WorkStatusFilter>("active");
   const [query, setQuery] = useState("");
   const [prompt, setPrompt] = useState("");
+  const [newIssueOpen, setNewIssueOpen] = useState(false);
+  const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [newProjectRoot, setNewProjectRoot] = useState("");
+  const [newIssueTitle, setNewIssueTitle] = useState("");
+  const [newIssueDescription, setNewIssueDescription] = useState("");
+  const [creatingIssue, setCreatingIssue] = useState(false);
+  const [addingProject, setAddingProject] = useState(false);
   const [conversation, setConversation] = useState<ConversationItem[]>([]);
   const [systemNotice, setSystemNotice] = useState("");
   const [pendingConfirmation, setPendingConfirmation] = useState<PendingConfirmationState | null>(null);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState<StatusKind>("loading");
   const [sending, setSending] = useState(false);
+  const [conversationLoading, setConversationLoading] = useState(false);
   const [actionBusy, setActionBusy] = useState("");
   const [error, setError] = useState("");
   const refreshInFlight = useRef(false);
+  const localIssueByRefRef = useRef<Record<string, DashboardIssue>>({});
   const hasLoaded = useRef(false);
   const eventSourceRef = useRef<EventSource | null>(null);
   const subscribedSessionId = useRef("");
@@ -137,6 +150,24 @@ function App() {
     void loadIssueThread(selectedIssueRef);
   }, [selectedIssueRef, selectedSessionId]);
 
+  useEffect(() => {
+    if (!activeProjectId) return;
+    void refreshAutoflowStatus();
+    const interval = window.setInterval(() => void refreshAutoflowStatus(), 5000);
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [activeProjectId]);
+
+  useEffect(() => {
+    if (!selectedIssueRef) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") returnToMonitor();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedIssueRef]);
+
   async function refresh(initial = false): Promise<void> {
     if (refreshInFlight.current) return;
     refreshInFlight.current = true;
@@ -156,7 +187,9 @@ function App() {
       ]);
       const nextProjects = projectsPayload.projects ?? [];
       const nextProjectId = projectsPayload.activeProjectId || contextPayload.project?.id || nextProjects[0]?.id || "";
-      const nextIssues = contextPayload.dashboard?.issues ?? [];
+      const dashboardIssues = contextPayload.dashboard?.issues ?? [];
+      const stickyIssues = Object.values(localIssueByRefRef.current).filter((issue) => !dashboardIssues.some((candidate) => candidate.ref === issue.ref));
+      const nextIssues = [...stickyIssues, ...dashboardIssues];
       setProjects(nextProjects);
       setActiveProjectId(nextProjectId);
       setIssues(nextIssues);
@@ -212,9 +245,105 @@ function App() {
         body: JSON.stringify({ enabled }),
       });
       setProjects((items) => items.map((project) => project.id === result.project.id ? { ...project, ...result.project } : project));
+      if (enabled) void fetchJson("/api/autoflow/tick", { method: "POST" }).then(() => refreshAutoflowStatus()).catch(() => undefined);
     } catch {
       setProjects((items) => items.map((project) => project.id === activeProject.id ? { ...project, autoflowEnabled: !enabled } : project));
       setError("Unable to update Autoflow for this project.");
+    }
+  }
+
+  async function addProjectFromDesktop(): Promise<void> {
+    const root = newProjectRoot.trim();
+    if (!root) {
+      setError("Project root is required.");
+      return;
+    }
+    setAddingProject(true);
+    setError("");
+    try {
+      const result = await fetchJson<{ ok?: boolean; activeProjectId?: string; project: ProjectRecord; projects: ProjectRecord[] }>("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ root }),
+      });
+      localIssueByRefRef.current = {};
+      setProjects(result.projects ?? [result.project]);
+      setActiveProjectId(result.activeProjectId || result.project.id);
+      setNewProjectRoot("");
+      setNewProjectOpen(false);
+      setSelectedIssueRef("");
+      setSelectedSessionId("");
+      setSessionIdByIssueRef({});
+      setExpandedIssueRef("");
+      setSystemNotice("");
+      setPendingConfirmation(null);
+      setActiveSessionStatus("idle");
+      setPiActivity(null);
+      setAutoflowActivity(null);
+      await refresh(true);
+    } catch (caught) {
+      setError(errorMessage(caught, "Unable to add Flow project."));
+    } finally {
+      setAddingProject(false);
+    }
+  }
+
+  async function refreshAutoflowStatus(): Promise<void> {
+    try {
+      const result = await fetchJson<{ ok?: boolean; status: PiAgentOrchestratorStatus }>("/api/autoflow/status");
+      setAutoflowStatus(result.status);
+      setAutoflowActivity(activityFromAutoflowStatus(result.status));
+    } catch {
+      setAutoflowStatus(null);
+      setAutoflowActivity(null);
+    }
+  }
+
+  async function createIssueFromDesktop(): Promise<void> {
+    const title = newIssueTitle.trim();
+    if (!title) {
+      setError("Issue title is required.");
+      return;
+    }
+    setCreatingIssue(true);
+    setError("");
+    try {
+      const result = await fetchJson<{ ok?: boolean; issue: CreatedIssue }>("/api/issues", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          issueType: "Bug",
+          title,
+          summary: title,
+          description: newIssueDescription.trim() || undefined,
+          repoKeys: ["flow"],
+          branchKind: "bug",
+          select: true,
+        }),
+      });
+      setNewIssueTitle("");
+      setNewIssueDescription("");
+      setNewIssueOpen(false);
+      if (result.issue?.ref) {
+        const created: DashboardIssue = {
+          ref: result.issue.ref,
+          title: result.issue.title || title,
+          workStatus: "Queued",
+          statusLabel: "Open",
+          repositories: ["flow"],
+          evidenceStatus: "Needed",
+          documentationStatus: "Needed",
+          updatedLabel: "now",
+        };
+        localIssueByRefRef.current = { ...localIssueByRefRef.current, [created.ref]: created };
+        setIssues((current) => [created, ...current.filter((issue) => issue.ref !== created.ref)]);
+        setActiveStatus("all");
+        await selectIssueThread(created.ref);
+      }
+    } catch (caught) {
+      setError(errorMessage(caught, "Unable to create issue."));
+    } finally {
+      setCreatingIssue(false);
     }
   }
 
@@ -360,7 +489,8 @@ function App() {
     setExpandedIssueRef((current) => current === issueRef ? "" : issueRef);
     setActiveSessionStatus("idle");
     setPiActivity(null);
-    setConversation(seedConversation(context, activeProjectId, issueRef));
+    setConversation([]);
+    setConversationLoading(true);
     setSystemNotice("");
     setPendingConfirmation(null);
     setError("");
@@ -377,13 +507,15 @@ function App() {
     setExpandedIssueRef("");
     setActiveSessionStatus("idle");
     setPiActivity(null);
-    setConversation(seedConversation(context, activeProjectId));
+    setConversation([]);
+    setConversationLoading(false);
     setSystemNotice("");
     setPendingConfirmation(null);
     setError("");
   }
 
   async function loadIssueThread(issueRef: string, requestId = issueSelectionRequest.current): Promise<void> {
+    setConversationLoading(true);
     try {
       const started = await fetchIssueSession(issueRef);
       if (issueSelectionRequest.current !== requestId) return;
@@ -391,6 +523,8 @@ function App() {
       setConversation(conversationFromPiSession(started));
     } catch {
       if (issueSelectionRequest.current === requestId) setError("Unable to open issue thread.");
+    } finally {
+      if (issueSelectionRequest.current === requestId) setConversationLoading(false);
     }
   }
 
@@ -519,8 +653,34 @@ function App() {
             <span className="project-chevron" aria-hidden="true">v</span>
           </button>
         </div>
+        <button type="button" className="project-add-button" onClick={() => setNewProjectOpen((open) => !open)}>
+          <Plus size={14} />
+          <span>Add project</span>
+        </button>
+        {newProjectOpen ? (
+          <form
+            className="project-add-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void addProjectFromDesktop();
+            }}
+          >
+            <input
+              value={newProjectRoot}
+              onChange={(event) => setNewProjectRoot(event.target.value)}
+              placeholder="Project root path"
+              disabled={addingProject}
+            />
+            <div className="project-add-actions">
+              <button type="button" onClick={() => setNewProjectOpen(false)} disabled={addingProject}>Cancel</button>
+              <button type="submit" disabled={addingProject || !newProjectRoot.trim()}>
+                {addingProject ? "Adding..." : "Add"}
+              </button>
+            </div>
+          </form>
+        ) : null}
         <div className="project-list">
-          {projects.filter((project) => project.id !== activeProjectId).map((project) => {
+          {projects.map((project) => {
             const theme = projectThemeFor(project);
             return (
               <button
@@ -551,9 +711,18 @@ function App() {
           <div>
             <div className="eyebrow">Issues</div>
             <div className="issue-updated-label">{snapshotStatusLabel}</div>
-            <AutoflowHealth enabled={autoflowEnabled} activity={autoflowActivity} />
+            <AutoflowHealth enabled={autoflowEnabled} activity={autoflowActivity} autoflowStatus={autoflowStatus} />
           </div>
           <div className="issue-header-actions">
+            <button
+              type="button"
+              className="new-issue-button"
+              title="Create issue"
+              onClick={() => setNewIssueOpen(true)}
+            >
+              <Plus size={15} />
+              <span>New</span>
+            </button>
             <button
               type="button"
               className={autoflowEnabled ? "autoflow-switch enabled" : "autoflow-switch"}
@@ -575,6 +744,37 @@ function App() {
             </button>
           </div>
         </header>
+
+        {newIssueOpen ? (
+          <form
+            className="new-issue-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void createIssueFromDesktop();
+            }}
+          >
+            <input
+              value={newIssueTitle}
+              onChange={(event) => setNewIssueTitle(event.target.value)}
+              placeholder="Issue title"
+              disabled={creatingIssue}
+              autoFocus
+            />
+            <textarea
+              value={newIssueDescription}
+              onChange={(event) => setNewIssueDescription(event.target.value)}
+              placeholder="Details"
+              rows={3}
+              disabled={creatingIssue}
+            />
+            <div className="new-issue-actions">
+              <button type="button" onClick={() => setNewIssueOpen(false)} disabled={creatingIssue}>Cancel</button>
+              <button type="submit" disabled={creatingIssue || !newIssueTitle.trim()}>
+                {creatingIssue ? "Creating..." : "Create issue"}
+              </button>
+            </div>
+          </form>
+        ) : null}
 
         <label className="search-box">
           <Search size={14} />
@@ -649,8 +849,10 @@ function App() {
             <AssistantChatSurface
               conversation={conversation}
               disabled={sending}
+              loading={conversationLoading}
               running={activeSessionStatus === "running"}
               activity={headerActivity}
+              issueRef={selectedIssueRef}
               notice={systemNotice ? (
                 <PendingActionNotice
                   text={systemNotice}
@@ -665,6 +867,8 @@ function App() {
               showDoctor={showManualActions}
               doctorBusy={actionBusy === "run_doctor"}
               onDoctor={() => void invokeAction("run_doctor")}
+              autoflowBusy={actionBusy === "autoflow"}
+              onAutoflow={() => void invokeAction("autoflow")}
             />
 
             {error ? <div className="error-line">{error}</div> : null}
@@ -678,27 +882,35 @@ function App() {
 function AssistantChatSurface({
   conversation,
   disabled,
+  loading,
   running,
   activity,
   notice,
   onSubmit,
   prompt,
   onPromptChange,
+  issueRef,
   showDoctor,
   doctorBusy,
   onDoctor,
+  autoflowBusy,
+  onAutoflow,
 }: {
   conversation: ConversationItem[];
   disabled: boolean;
+  loading: boolean;
   running: boolean;
   activity: PiActivityState | null;
   notice?: React.ReactNode;
   onSubmit: (text: string) => Promise<void>;
   prompt: string;
   onPromptChange: (value: string) => void;
+  issueRef?: string;
   showDoctor: boolean;
   doctorBusy: boolean;
   onDoctor: () => void;
+  autoflowBusy: boolean;
+  onAutoflow: () => void;
 }) {
   const visibleMessages = useMemo(
     () => conversation.filter((item) => item.role === "user" || item.role === "assistant"),
@@ -713,7 +925,12 @@ function AssistantChatSurface({
   return (
     <section className="assistant-thread" aria-label="Issue conversation">
       <div className="timeline assistant-viewport">
-        {visibleMessages.length ? visibleMessages.map((item) => (
+        {loading && !visibleMessages.length ? (
+          <div className="assistant-loading">
+            <div className="accent-spinner" />
+            <span>Loading conversation...</span>
+          </div>
+        ) : visibleMessages.length ? visibleMessages.map((item) => (
           <article key={item.id} className={`message ${item.role}`}>
             <div className="message-role">{item.role}</div>
             <MessageMarkdown text={item.text} />
@@ -745,7 +962,7 @@ function AssistantChatSurface({
               void handleSubmit();
             }
           }}
-          placeholder="Work with Flow on this issue..."
+          placeholder={issueRef ? `Work on ${issueRef}...` : "Work with Flow..."}
           rows={1}
           disabled={disabled}
         />
@@ -754,6 +971,9 @@ function AssistantChatSurface({
             <Stethoscope size={17} />
           </button>
         ) : null}
+        <button type="button" title="Run Autoflow" className="composer-tool-button" onClick={onAutoflow} disabled={disabled || autoflowBusy}>
+          <Waypoints size={17} />
+        </button>
         <button type="button" title="Send prompt" className="assistant-send-button" onClick={() => void handleSubmit()} disabled={!canSubmit}>
           <Send size={17} />
         </button>
@@ -912,21 +1132,77 @@ function StatusSummary({
   );
 }
 
+function activityFromAutoflowStatus(status: PiAgentOrchestratorStatus): AutoflowActivityState {
+  if (!status.enabled) {
+    return { phase: "idle", label: "Autoflow paused", detail: "Project automation is off.", updatedAt: status.updatedAt };
+  }
+
+  const issues = status.issues ?? {};
+  const entries = Object.entries(issues);
+  const running = entries.filter(([, s]) => s.phase === "running");
+  const starting = entries.filter(([, s]) => s.phase === "starting");
+  const needsInput = entries.filter(([, s]) => s.phase === "needs_input");
+  const failed = entries.filter(([, s]) => s.phase === "failed");
+
+  if (running.length > 0) {
+    const refs = running.map(([ref]) => ref).slice(0, 3).join(", ");
+    return {
+      phase: "thinking",
+      label: `Working ${running.length} issue${running.length === 1 ? "" : "s"}`,
+      detail: running.length <= 3 ? refs : `${refs} +${running.length - 3} more`,
+      updatedAt: status.updatedAt,
+    };
+  }
+  if (starting.length > 0) {
+    return {
+      phase: "starting",
+      label: `Starting ${starting.length} issue${starting.length === 1 ? "" : "s"}`,
+      updatedAt: status.updatedAt,
+    };
+  }
+  if (needsInput.length > 0) {
+    const refs = needsInput.map(([ref]) => ref).slice(0, 2).join(", ");
+    return {
+      phase: "failed",
+      label: `${needsInput.length} need${needsInput.length === 1 ? "s" : ""} input`,
+      detail: needsInput.length <= 2 ? refs : `${refs} +${needsInput.length - 2} more`,
+      updatedAt: status.updatedAt,
+    };
+  }
+  if (failed.length > 0) {
+    return {
+      phase: "failed",
+      label: `${failed.length} failed`,
+      detail: failed.map(([ref]) => ref).slice(0, 2).join(", "),
+      updatedAt: status.updatedAt,
+    };
+  }
+  return {
+    phase: "idle",
+    label: "Autoflow watching",
+    detail: status.activeCount > 0 ? `${status.activeCount} active` : "No active runs",
+    updatedAt: status.updatedAt,
+  };
+}
+
 function AutoflowHealth({
   enabled,
   activity,
+  autoflowStatus,
 }: {
   enabled: boolean;
   activity: AutoflowActivityState | null;
+  autoflowStatus?: PiAgentOrchestratorStatus | null;
 }) {
   const stateClass = enabled ? activity?.phase ?? "idle" : "paused";
   const label = activity?.label ?? (enabled ? "Autoflow watching" : "Autoflow paused");
-  const detail = activity?.detail ?? (enabled ? "No active run" : "Project automation is off");
+  const detail = activity?.detail ?? (enabled ? "No active runs" : "Project automation is off");
+  const concurrency = autoflowStatus?.maxConcurrency;
   return (
     <div className={`autoflow-health ${stateClass}`} aria-label="Autoflow health">
       <span className="autoflow-health-dot" aria-hidden="true" />
       <span className="autoflow-health-label">{label}</span>
-      {activity?.issueRef ? <span className="autoflow-health-issue">{activity.issueRef}</span> : null}
+      {concurrency ? <span className="autoflow-health-concurrency">/{concurrency}</span> : null}
       <span className="autoflow-health-detail">{detail}</span>
     </div>
   );

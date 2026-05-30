@@ -86,7 +86,7 @@ export function registerProjectRoutes(server: Express, context: RouteContext, js
       }
       const project = await projectRegistry.addProject(root);
       invalidateProjectSurface?.(project.id);
-      res.json({ ok: true, project, projects: await projectRegistry.listProjects() });
+      res.json({ ok: true, activeProjectId: project.id, project, projects: await projectRegistry.listProjects() });
     } catch (error) {
       res.status(400).json({ ok: false, error: message(error) });
     }

@@ -45,6 +45,7 @@ import type { ProjectTopology } from "../src/project-topology.js";
 import { parseGitHubIssues, parsePullRequests } from "../src/adapters/github.js";
 import { currentUserBacklogJql, currentUserOpenSprintJql, parseJiraCommentUrl, parseJiraIssue, parseJiraSearch } from "../src/adapters/jira.js";
 import { DesktopActionRouter } from "../desktop/action-router.js";
+import { PiAgentOrchestrator } from "../desktop/pi-agent-orchestrator.js";
 import { PiSessionDriver } from "../desktop/pi-session-driver.js";
 import { PiSdkSessionRunner } from "../desktop/pi-sdk-runner.js";
 import { DesktopProjectRegistry } from "../desktop/project-registry.js";
@@ -540,20 +541,27 @@ test("Flow config bootstrap can keep repo-local config in local git exclude", as
 
 test("Desktop project registry tracks active Flow projects from config roots", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-desktop-project-"));
+  const secondRoot = await mkdtemp(join(tmpdir(), "flow-desktop-project-two-"));
   await execFileAsync("git", ["init"], { cwd: root });
+  await execFileAsync("git", ["init"], { cwd: secondRoot });
   await bootstrapFlowConfig({ projectRoot: root, storage: "repo-tracked" });
+  await bootstrapFlowConfig({ projectRoot: secondRoot, storage: "repo-tracked" });
   const stateRoot = await mkdtemp(join(tmpdir(), "flow-desktop-state-"));
   const registry = new DesktopProjectRegistry({ statePath: join(stateRoot, "projects.json") });
 
   const project = await registry.addProject(root);
+  const secondProject = await registry.addProject(secondRoot);
   const projects = await registry.listProjects();
   const active = await registry.activeProject();
+  const reactivated = await registry.setActiveProject(project.id);
 
   assert.equal(project.valid, true);
   assert.equal(project.root, root);
   assert.equal(project.configPath, flowConfigPath(root));
-  assert.equal(projects.length, 1);
-  assert.equal(active?.id, project.id);
+  assert.equal(projects.length, 2);
+  assert.equal(active?.id, secondProject.id);
+  assert.equal(reactivated.id, project.id);
+  assert.equal((await registry.activeProject())?.id, project.id);
 });
 
 test("Project theme generates stable colors and initials", () => {
@@ -797,7 +805,7 @@ test("Pi session driver starts issue-linked sessions and records FlowSessionLink
   assert.equal(session.issueRef, "GH-34");
   assert.equal(session.flowSessionId, "desktop");
   assert.equal(session.timeline.length, 1);
-  assert.match(session.timeline[0].content, /Pi session started/);
+  assert.match(session.timeline[0].content, /Agent session started/);
 
   const linksRaw = await readFile(join(root, ".flow", "runtime", "pi-session-links.json"), "utf8");
   const linksPayload = JSON.parse(linksRaw) as { links: Array<{ issueRef: string; flowSessionId: string; piSessionId: string }> };
@@ -948,6 +956,143 @@ test("Pi session driver records clear failure when pi runtime fails", async () =
   assert.match(updated.error ?? "", /No pi auth configured/);
   assert.match(assistantMessage?.content ?? "", /Pi session failed: No pi auth configured/);
   assert.equal(linksPayload.links[0].status, "failed");
+});
+
+test("Pi agent orchestrator starts the next ready issue and records a result", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-orchestrator-"));
+  const ledger = new MemoryWorkflowLedger();
+  const runtime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  await ledger.writeIssue({
+    ref: "GH-56",
+    title: "Run through orchestrator",
+    repoKeys: ["app_api"],
+    state: "queued",
+    metadata: {
+      "workflow.repos.app_api.worktree_path": root,
+    },
+  });
+  const driver = new PiSessionDriver({
+    runtime,
+    repoRoot: root,
+    flowSessionId: "desktop-project",
+    agent: {
+      async prompt() {
+        return {
+          sessionId: "pi-gh-56",
+          workspacePath: root,
+          status: "active",
+          summary: "Implemented by Pi.",
+          timeline: [{
+            id: "assistant-1",
+            role: "assistant",
+            content: "Implemented by Pi.",
+            createdAt: nowIso(),
+          }],
+        };
+      },
+    },
+  });
+  const orchestrator = new PiAgentOrchestrator({
+    projectId: "project",
+    runtime,
+    piSessionDriver: driver,
+  });
+
+  await orchestrator.reconcile();
+  for (let index = 0; index < 100; index += 1) {
+    if ((await ledger.listWorkerResults("GH-56")).length) break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+
+  const results = await ledger.listWorkerResults("GH-56");
+  assert.equal(results.length, 1);
+  assert.equal(results[0].status, "succeeded");
+  assert.match(results[0].summary, /Implemented by Pi/);
+});
+
+test("Pi agent orchestrator sends follow-up messages to running sessions", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-orchestrator-followup-"));
+  const ledger = new MemoryWorkflowLedger();
+  const runtime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  await ledger.writeIssue({
+    ref: "GH-57",
+    title: "Follow up while running",
+    repoKeys: [],
+    state: "queued",
+    metadata: {},
+  });
+  const modes: Array<string | undefined> = [];
+  const driver = new PiSessionDriver({
+    runtime,
+    repoRoot: root,
+    flowSessionId: "desktop-project",
+    agent: {
+      async prompt(input) {
+        modes.push(input.mode);
+        return {
+          sessionId: input.sessionId,
+          status: "active",
+          summary: "ok",
+          timeline: [],
+        };
+      },
+    },
+  });
+  const started = await driver.startSession("GH-57");
+  started.status = "running";
+  const orchestrator = new PiAgentOrchestrator({
+    projectId: "project",
+    runtime,
+    piSessionDriver: driver,
+  });
+
+  await orchestrator.sendUserMessage({ issueRef: "GH-57", sessionId: started.id, text: "More detail." });
+  assert.deepEqual(modes, ["followUp"]);
+});
+
+test("Pi agent orchestrator doctors stale external issues instead of starting Pi", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-orchestrator-stale-"));
+  const ledger = new MemoryWorkflowLedger();
+  const runtime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  await ledger.writeIssue({
+    ref: "GH-58",
+    title: "Missing external issue",
+    repoKeys: ["app_api"],
+    state: "queued",
+    metadata: {},
+  });
+  const driver = new PiSessionDriver({
+    runtime,
+    repoRoot: root,
+    flowSessionId: "desktop-project",
+    agent: {
+      async prompt() {
+        throw new Error("Pi should not start for stale issues.");
+      },
+    },
+  });
+  const doctorRuntime = Object.create(runtime) as typeof runtime;
+  doctorRuntime.diagnoseIssue = async () => {
+    throw new Error("GraphQL: Could not resolve to an issue or pull request with the number of 58. (repository.issue)");
+  };
+  const orchestrator = new PiAgentOrchestrator({
+    projectId: "project",
+    runtime: doctorRuntime,
+    piSessionDriver: driver,
+  });
+
+  await orchestrator.reconcile();
+  for (let index = 0; index < 20; index += 1) {
+    const issueStatus = orchestrator.getStatus().issues["GH-58"];
+    if (issueStatus?.phase === "needs_input") break;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+
+  const status = orchestrator.getStatus();
+  const issueStatus = status.issues["GH-58"];
+  assert.equal(issueStatus?.phase, "needs_input");
+  assert.match(issueStatus?.summary ?? "", /External issue GH-58 is missing or stale/);
+  assert.equal((await ledger.listWorkerResults("GH-58")).length, 0);
 });
 
 test("Pi SDK session runner maps real SDK events into desktop timeline", async () => {

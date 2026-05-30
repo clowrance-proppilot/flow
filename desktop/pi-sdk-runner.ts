@@ -19,6 +19,8 @@ type PiSdkSession = {
   sessionId: string;
   sessionFile?: string;
   prompt: (text: string, options?: Record<string, unknown>) => Promise<void>;
+  followUp?: (text: string, options?: Record<string, unknown>) => Promise<void>;
+  steer?: (text: string, options?: Record<string, unknown>) => Promise<void>;
   subscribe?: (listener: (event: Record<string, unknown>) => void) => () => void;
   dispose?: () => void | Promise<void>;
 };
@@ -69,7 +71,7 @@ export class PiSdkSessionRunner implements PiAgentRunner {
     });
 
     try {
-      await session.prompt(input.prompt);
+      await sendPiMessage(session, input.prompt, input.mode);
     } finally {
       unsubscribe?.();
       await session.dispose?.();
@@ -92,6 +94,12 @@ export class PiSdkSessionRunner implements PiAgentRunner {
       timeline,
     };
   }
+}
+
+async function sendPiMessage(session: PiSdkSession, prompt: string, mode: PiAgentPromptInput["mode"]): Promise<void> {
+  if (mode === "followUp" && session.followUp) return await session.followUp(prompt);
+  if (mode === "steer" && session.steer) return await session.steer(prompt);
+  return await session.prompt(prompt);
 }
 
 async function loadPiSdkModule(): Promise<PiSdkModule> {
@@ -180,7 +188,7 @@ try {
     }
   });
   try {
-    await session.prompt(input.prompt);
+    await sendPiMessage(session, input.prompt, input.mode);
   } finally {
     unsubscribe?.();
     await session.dispose?.();
@@ -216,6 +224,12 @@ function readStdin() {
 
 function writeResult(value) {
   console.log("__FLOW_PI_RESULT__" + JSON.stringify(value));
+}
+
+async function sendPiMessage(session, prompt, mode) {
+  if (mode === "followUp" && typeof session.followUp === "function") return await session.followUp(prompt);
+  if (mode === "steer" && typeof session.steer === "function") return await session.steer(prompt);
+  return await session.prompt(prompt);
 }
 
 function timelineItemFromPiEvent(event) {
