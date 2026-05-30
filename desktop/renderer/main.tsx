@@ -66,6 +66,7 @@ function App() {
   const [activeSessionStatus, setActiveSessionStatus] = useState<"idle" | "running" | "failed">("idle");
   const [piActivity, setPiActivity] = useState<PiActivityState | null>(null);
   const [autoflowActivity, setAutoflowActivity] = useState<AutoflowActivityState | null>(null);
+  const [autoflowStatus, setAutoflowStatus] = useState<PiAgentOrchestratorStatus | null>(null);
   const [activeStatus, setActiveStatus] = useState<WorkStatusFilter>("active");
   const [query, setQuery] = useState("");
   const [prompt, setPrompt] = useState("");
@@ -82,6 +83,7 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState<StatusKind>("loading");
   const [sending, setSending] = useState(false);
+  const [conversationLoading, setConversationLoading] = useState(false);
   const [actionBusy, setActionBusy] = useState("");
   const [error, setError] = useState("");
   const refreshInFlight = useRef(false);
@@ -156,6 +158,15 @@ function App() {
       window.clearInterval(interval);
     };
   }, [activeProjectId]);
+
+  useEffect(() => {
+    if (!selectedIssueRef) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") returnToMonitor();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedIssueRef]);
 
   async function refresh(initial = false): Promise<void> {
     if (refreshInFlight.current) return;
@@ -280,8 +291,10 @@ function App() {
   async function refreshAutoflowStatus(): Promise<void> {
     try {
       const result = await fetchJson<{ ok?: boolean; status: PiAgentOrchestratorStatus }>("/api/autoflow/status");
+      setAutoflowStatus(result.status);
       setAutoflowActivity(activityFromAutoflowStatus(result.status));
     } catch {
+      setAutoflowStatus(null);
       setAutoflowActivity(null);
     }
   }
@@ -476,7 +489,8 @@ function App() {
     setExpandedIssueRef((current) => current === issueRef ? "" : issueRef);
     setActiveSessionStatus("idle");
     setPiActivity(null);
-    setConversation(seedConversation(context, activeProjectId, issueRef));
+    setConversation([]);
+    setConversationLoading(true);
     setSystemNotice("");
     setPendingConfirmation(null);
     setError("");
@@ -493,13 +507,15 @@ function App() {
     setExpandedIssueRef("");
     setActiveSessionStatus("idle");
     setPiActivity(null);
-    setConversation(seedConversation(context, activeProjectId));
+    setConversation([]);
+    setConversationLoading(false);
     setSystemNotice("");
     setPendingConfirmation(null);
     setError("");
   }
 
   async function loadIssueThread(issueRef: string, requestId = issueSelectionRequest.current): Promise<void> {
+    setConversationLoading(true);
     try {
       const started = await fetchIssueSession(issueRef);
       if (issueSelectionRequest.current !== requestId) return;
@@ -507,6 +523,8 @@ function App() {
       setConversation(conversationFromPiSession(started));
     } catch {
       if (issueSelectionRequest.current === requestId) setError("Unable to open issue thread.");
+    } finally {
+      if (issueSelectionRequest.current === requestId) setConversationLoading(false);
     }
   }
 
@@ -693,7 +711,7 @@ function App() {
           <div>
             <div className="eyebrow">Issues</div>
             <div className="issue-updated-label">{snapshotStatusLabel}</div>
-            <AutoflowHealth enabled={autoflowEnabled} activity={autoflowActivity} />
+            <AutoflowHealth enabled={autoflowEnabled} activity={autoflowActivity} autoflowStatus={autoflowStatus} />
           </div>
           <div className="issue-header-actions">
             <button
@@ -831,8 +849,10 @@ function App() {
             <AssistantChatSurface
               conversation={conversation}
               disabled={sending}
+              loading={conversationLoading}
               running={activeSessionStatus === "running"}
               activity={headerActivity}
+              issueRef={selectedIssueRef}
               notice={systemNotice ? (
                 <PendingActionNotice
                   text={systemNotice}
@@ -862,12 +882,14 @@ function App() {
 function AssistantChatSurface({
   conversation,
   disabled,
+  loading,
   running,
   activity,
   notice,
   onSubmit,
   prompt,
   onPromptChange,
+  issueRef,
   showDoctor,
   doctorBusy,
   onDoctor,
@@ -876,12 +898,14 @@ function AssistantChatSurface({
 }: {
   conversation: ConversationItem[];
   disabled: boolean;
+  loading: boolean;
   running: boolean;
   activity: PiActivityState | null;
   notice?: React.ReactNode;
   onSubmit: (text: string) => Promise<void>;
   prompt: string;
   onPromptChange: (value: string) => void;
+  issueRef?: string;
   showDoctor: boolean;
   doctorBusy: boolean;
   onDoctor: () => void;
@@ -901,7 +925,12 @@ function AssistantChatSurface({
   return (
     <section className="assistant-thread" aria-label="Issue conversation">
       <div className="timeline assistant-viewport">
-        {visibleMessages.length ? visibleMessages.map((item) => (
+        {loading && !visibleMessages.length ? (
+          <div className="assistant-loading">
+            <div className="accent-spinner" />
+            <span>Loading conversation...</span>
+          </div>
+        ) : visibleMessages.length ? visibleMessages.map((item) => (
           <article key={item.id} className={`message ${item.role}`}>
             <div className="message-role">{item.role}</div>
             <MessageMarkdown text={item.text} />
@@ -933,7 +962,7 @@ function AssistantChatSurface({
               void handleSubmit();
             }
           }}
-          placeholder="Work with Flow on this issue..."
+          placeholder={issueRef ? `Work on ${issueRef}...` : "Work with Flow..."}
           rows={1}
           disabled={disabled}
         />
@@ -1104,27 +1133,54 @@ function StatusSummary({
 }
 
 function activityFromAutoflowStatus(status: PiAgentOrchestratorStatus): AutoflowActivityState {
-  const phaseMap: Record<PiAgentOrchestratorStatus["phase"], AutoflowActivityState["phase"]> = {
-    paused: "idle",
-    idle: "idle",
-    starting: "starting",
-    running: "thinking",
-    needs_input: "failed",
-    failed: "failed",
-  };
-  const labelMap: Record<PiAgentOrchestratorStatus["phase"], string> = {
-    paused: "Autoflow paused",
-    idle: "Autoflow idle",
-    starting: "Autoflow starting",
-    running: "Autoflow working",
-    needs_input: "Autoflow needs input",
-    failed: "Autoflow failed",
-  };
+  if (!status.enabled) {
+    return { phase: "idle", label: "Autoflow paused", detail: "Project automation is off.", updatedAt: status.updatedAt };
+  }
+
+  const issues = status.issues ?? {};
+  const entries = Object.entries(issues);
+  const running = entries.filter(([, s]) => s.phase === "running");
+  const starting = entries.filter(([, s]) => s.phase === "starting");
+  const needsInput = entries.filter(([, s]) => s.phase === "needs_input");
+  const failed = entries.filter(([, s]) => s.phase === "failed");
+
+  if (running.length > 0) {
+    const refs = running.map(([ref]) => ref).slice(0, 3).join(", ");
+    return {
+      phase: "thinking",
+      label: `Working ${running.length} issue${running.length === 1 ? "" : "s"}`,
+      detail: running.length <= 3 ? refs : `${refs} +${running.length - 3} more`,
+      updatedAt: status.updatedAt,
+    };
+  }
+  if (starting.length > 0) {
+    return {
+      phase: "starting",
+      label: `Starting ${starting.length} issue${starting.length === 1 ? "" : "s"}`,
+      updatedAt: status.updatedAt,
+    };
+  }
+  if (needsInput.length > 0) {
+    const refs = needsInput.map(([ref]) => ref).slice(0, 2).join(", ");
+    return {
+      phase: "failed",
+      label: `${needsInput.length} need${needsInput.length === 1 ? "s" : ""} input`,
+      detail: needsInput.length <= 2 ? refs : `${refs} +${needsInput.length - 2} more`,
+      updatedAt: status.updatedAt,
+    };
+  }
+  if (failed.length > 0) {
+    return {
+      phase: "failed",
+      label: `${failed.length} failed`,
+      detail: failed.map(([ref]) => ref).slice(0, 2).join(", "),
+      updatedAt: status.updatedAt,
+    };
+  }
   return {
-    phase: phaseMap[status.phase],
-    label: labelMap[status.phase],
-    detail: status.summary,
-    issueRef: status.issueRef,
+    phase: "idle",
+    label: "Autoflow watching",
+    detail: status.activeCount > 0 ? `${status.activeCount} active` : "No active runs",
     updatedAt: status.updatedAt,
   };
 }
@@ -1132,18 +1188,21 @@ function activityFromAutoflowStatus(status: PiAgentOrchestratorStatus): Autoflow
 function AutoflowHealth({
   enabled,
   activity,
+  autoflowStatus,
 }: {
   enabled: boolean;
   activity: AutoflowActivityState | null;
+  autoflowStatus?: PiAgentOrchestratorStatus | null;
 }) {
   const stateClass = enabled ? activity?.phase ?? "idle" : "paused";
   const label = activity?.label ?? (enabled ? "Autoflow watching" : "Autoflow paused");
-  const detail = activity?.detail ?? (enabled ? "No active run" : "Project automation is off");
+  const detail = activity?.detail ?? (enabled ? "No active runs" : "Project automation is off");
+  const concurrency = autoflowStatus?.maxConcurrency;
   return (
     <div className={`autoflow-health ${stateClass}`} aria-label="Autoflow health">
       <span className="autoflow-health-dot" aria-hidden="true" />
       <span className="autoflow-health-label">{label}</span>
-      {activity?.issueRef ? <span className="autoflow-health-issue">{activity.issueRef}</span> : null}
+      {concurrency ? <span className="autoflow-health-concurrency">/{concurrency}</span> : null}
       <span className="autoflow-health-detail">{detail}</span>
     </div>
   );

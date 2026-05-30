@@ -93,7 +93,6 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
       piAgentOrchestrator: new PiAgentOrchestrator({
         projectId: project.id,
         runtime: configured.runtime,
-        dashboardState,
         piSessionDriver,
         enabled: () => project.autoflowEnabled !== false,
       }),
@@ -160,9 +159,9 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
   registerStaticRoutes(server, { desktopFilePath, dashboardFilePath });
 
   const autoflowInterval = setInterval(() => {
-    void runEnabledProjectAutoflowTicks(projectRegistry, projectSurface);
-  }, 15000);
-  void runEnabledProjectAutoflowTicks(projectRegistry, projectSurface);
+    void runEnabledProjectAutoflowReconcile(projectRegistry, projectSurface);
+  }, 30000);
+  void runEnabledProjectAutoflowReconcile(projectRegistry, projectSurface);
 
   // Find a free port
   return new Promise((resolve, reject) => {
@@ -180,14 +179,14 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
   });
 }
 
-export async function runEnabledProjectAutoflowTicks(
+export async function runEnabledProjectAutoflowReconcile(
   projectRegistry: DesktopProjectRegistry,
   projectSurface: (project: DesktopProjectRecord) => Promise<DesktopProjectSurface>,
 ): Promise<void> {
   const projects = await projectRegistry.listProjects();
   await Promise.all(projects.filter((project) => project.valid && project.autoflowEnabled !== false).map(async (project) => {
     const surface = await projectSurface(project);
-    await surface.piAgentOrchestrator.tick();
+    await surface.piAgentOrchestrator.reconcile();
   }));
 }
 

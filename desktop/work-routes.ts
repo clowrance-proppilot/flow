@@ -123,7 +123,7 @@ export function registerWorkRoutes(
     try {
       const project = await requireActiveProject(projectRegistry);
       const surface = await projectSurface(project);
-      const status = await surface.piAgentOrchestrator.tick();
+      const status = await surface.piAgentOrchestrator.reconcile();
       res.json({ ok: true, status });
     } catch (error) {
       res.status(400).json({ ok: false, error: message(error) });

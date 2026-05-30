@@ -992,23 +992,13 @@ test("Pi agent orchestrator starts the next ready issue and records a result", a
       },
     },
   });
-  const dashboardState = {
-    async payload() {
-      return {
-        ok: true,
-        issues: [{ ref: "GH-56", workStatus: "Ready", title: "Run through orchestrator" }],
-      };
-    },
-  };
   const orchestrator = new PiAgentOrchestrator({
     projectId: "project",
     runtime,
-    dashboardState: dashboardState as never,
     piSessionDriver: driver,
   });
 
-  const status = await orchestrator.tick();
-  assert.equal(status.phase, "starting");
+  await orchestrator.reconcile();
   for (let index = 0; index < 20; index += 1) {
     if ((await ledger.listWorkerResults("GH-56")).length) break;
     await new Promise((resolve) => setTimeout(resolve, 25));
@@ -1053,7 +1043,6 @@ test("Pi agent orchestrator sends follow-up messages to running sessions", async
   const orchestrator = new PiAgentOrchestrator({
     projectId: "project",
     runtime,
-    dashboardState: { async payload() { return { ok: true, issues: [] }; } } as never,
     piSessionDriver: driver,
   });
 
@@ -1089,26 +1078,20 @@ test("Pi agent orchestrator doctors stale external issues instead of starting Pi
   const orchestrator = new PiAgentOrchestrator({
     projectId: "project",
     runtime: doctorRuntime,
-    dashboardState: {
-      async payload() {
-        return {
-          ok: true,
-          issues: [{ ref: "GH-58", workStatus: "Ready", title: "Missing external issue" }],
-        };
-      },
-    } as never,
     piSessionDriver: driver,
   });
 
-  await orchestrator.tick();
+  await orchestrator.reconcile();
   for (let index = 0; index < 20; index += 1) {
-    if (orchestrator.getStatus().phase === "needs_input") break;
+    const issueStatus = orchestrator.getStatus().issues["GH-58"];
+    if (issueStatus?.phase === "needs_input") break;
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
 
   const status = orchestrator.getStatus();
-  assert.equal(status.phase, "needs_input");
-  assert.match(status.summary ?? "", /External issue GH-58 is missing or stale/);
+  const issueStatus = status.issues["GH-58"];
+  assert.equal(issueStatus?.phase, "needs_input");
+  assert.match(issueStatus?.summary ?? "", /External issue GH-58 is missing or stale/);
   assert.equal((await ledger.listWorkerResults("GH-58")).length, 0);
 });
 

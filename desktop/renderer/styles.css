@@ -1119,6 +1119,27 @@ h2 {
   display: none;
 }
 
+.assistant-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 2rem;
+  color: var(--th-fg-muted);
+  font-size: 0.8rem;
+}
+
+.assistant-loading .accent-spinner {
+  width: 1rem;
+  height: 1rem;
+  border-width: 1.5px;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 .message {
   min-width: 0;
   max-width: min(38rem, 74%);

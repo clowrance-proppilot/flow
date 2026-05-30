@@ -130,12 +130,20 @@ export type PiActivityState = {
   updatedAt?: string;
 };
 
-export type PiAgentOrchestratorStatus = {
-  enabled: boolean;
-  phase: "paused" | "idle" | "starting" | "running" | "needs_input" | "failed";
-  issueRef?: string;
+export type PiAgentOrchestratorIssueStatus = {
+  phase: "queued" | "starting" | "running" | "blocked" | "needs_input" | "failed" | "done";
   sessionId?: string;
   workspacePath?: string;
   summary?: string;
+  reason?: string;
+  updatedAt: string;
+};
+
+export type PiAgentOrchestratorStatus = {
+  enabled: boolean;
+  maxConcurrency: number;
+  activeCount: number;
+  issues: Record<string, PiAgentOrchestratorIssueStatus>;
+  summary: string;
   updatedAt: string;
 };

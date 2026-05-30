@@ -1,6 +1,5 @@
 import { nowIso, WorkerStatusValue, type WorkerTaskRequest } from "../src/contracts.js";
 import type { AutoFlowIssueResult, FlowDoctorResult, FlowWorkRuntime, LocalThreadResultInput } from "../src/work-runtime.js";
-import type { DashboardState } from "../src/dashboard-state.js";
 import type { PiSessionDriver, PiSessionSnapshot } from "./pi-session-driver.js";
 
 type OrchestratorRuntime = Pick<
@@ -8,6 +7,7 @@ type OrchestratorRuntime = Pick<
   | "createSession"
   | "summarizeHandoff"
   | "inspectIssue"
+  | "inspectQueue"
   | "selectIssue"
   | "autoFlowIssue"
   | "adoptPendingLiveWorker"
@@ -17,79 +17,151 @@ type OrchestratorRuntime = Pick<
 
 export type PiAgentOrchestratorPhase = "paused" | "idle" | "starting" | "running" | "needs_input" | "failed";
 
-export interface PiAgentOrchestratorStatus {
-  enabled: boolean;
+export interface PiAgentOrchestratorIssueStatus {
   phase: PiAgentOrchestratorPhase;
-  issueRef?: string;
   sessionId?: string;
   workspacePath?: string;
   summary?: string;
   updatedAt: string;
 }
 
+export interface PiAgentOrchestratorStatus {
+  enabled: boolean;
+  maxConcurrency: number;
+  activeCount: number;
+  issues: Record<string, PiAgentOrchestratorIssueStatus>;
+  summary: string;
+  updatedAt: string;
+}
+
 export interface PiAgentOrchestratorOptions {
   projectId: string;
   runtime: OrchestratorRuntime;
-  dashboardState: DashboardState;
   piSessionDriver: PiSessionDriver;
   enabled?: () => boolean;
+  maxConcurrency?: number;
+}
+
+interface ActiveRun {
+  promise: Promise<void>;
+  status: PiAgentOrchestratorPhase;
+  sessionId?: string;
+  workspacePath?: string;
+  summary?: string;
+  updatedAt: string;
 }
 
 export class PiAgentOrchestrator {
   private readonly projectId: string;
   private readonly runtime: OrchestratorRuntime;
-  private readonly dashboardState: DashboardState;
   private readonly piSessionDriver: PiSessionDriver;
   private readonly enabled: () => boolean;
-  private activeRun: Promise<void> | undefined;
-  private status: PiAgentOrchestratorStatus;
+  private readonly maxConcurrency: number;
+  private readonly activeRuns = new Map<string, ActiveRun>();
+  private readonly issueStatuses = new Map<string, PiAgentOrchestratorIssueStatus>();
+  private reconciling = false;
 
   constructor(options: PiAgentOrchestratorOptions) {
     this.projectId = options.projectId;
     this.runtime = options.runtime;
-    this.dashboardState = options.dashboardState;
     this.piSessionDriver = options.piSessionDriver;
     this.enabled = options.enabled ?? (() => true);
-    this.status = {
-      enabled: this.enabled(),
-      phase: this.enabled() ? "idle" : "paused",
-      summary: this.enabled() ? "Autoflow idle." : "Autoflow is paused.",
-      updatedAt: nowIso(),
-    };
+    this.maxConcurrency = options.maxConcurrency ?? 5;
   }
 
   getStatus(): PiAgentOrchestratorStatus {
     const enabled = this.enabled();
-    if (!enabled && this.status.phase !== "running" && this.status.phase !== "starting") {
-      return { ...this.status, enabled, phase: "paused", summary: "Autoflow is paused." };
+    if (!enabled) {
+      return {
+        enabled: false,
+        maxConcurrency: this.maxConcurrency,
+        activeCount: 0,
+        issues: {},
+        summary: "Autoflow is paused.",
+        updatedAt: nowIso(),
+      };
     }
-    return { ...this.status, enabled };
+
+    const issues: Record<string, PiAgentOrchestratorIssueStatus> = {};
+    for (const [ref, status] of this.issueStatuses) {
+      issues[ref] = { ...status };
+    }
+    // Merge in active runs that might not have explicit statuses yet
+    for (const [ref, run] of this.activeRuns) {
+      if (!issues[ref]) {
+        issues[ref] = {
+          phase: run.status,
+          sessionId: run.sessionId,
+          workspacePath: run.workspacePath,
+          summary: run.summary,
+          updatedAt: run.updatedAt,
+        };
+      }
+    }
+
+    const activeCount = this.activeRuns.size;
+    const blockedCount = [...this.issueStatuses.values()].filter((s) => s.phase === "needs_input").length;
+    let summary: string;
+    if (activeCount === 0 && blockedCount === 0) {
+      summary = "Autoflow idle.";
+    } else if (activeCount === 0 && blockedCount > 0) {
+      summary = `${blockedCount} issue${blockedCount === 1 ? "" : "s"} need${blockedCount === 1 ? "" : ""} input.`;
+    } else {
+      summary = `Working ${activeCount} issue${activeCount === 1 ? "" : "s"}.`;
+      if (blockedCount > 0) summary += ` ${blockedCount} need${blockedCount === 1 ? "" : ""} input.`;
+    }
+
+    return {
+      enabled: true,
+      maxConcurrency: this.maxConcurrency,
+      activeCount,
+      issues,
+      summary,
+      updatedAt: nowIso(),
+    };
   }
 
-  async tick(): Promise<PiAgentOrchestratorStatus> {
-    if (!this.enabled()) return this.setStatus({ phase: "paused", summary: "Autoflow is paused." });
-    if (this.activeRun) return this.getStatus();
+  getStatusForIssue(issueRef: string): PiAgentOrchestratorIssueStatus | undefined {
+    const normalized = issueRef.toUpperCase();
+    const explicit = this.issueStatuses.get(normalized);
+    if (explicit) return explicit;
+    const run = this.activeRuns.get(normalized);
+    if (run) {
+      return {
+        phase: run.status,
+        sessionId: run.sessionId,
+        workspacePath: run.workspacePath,
+        summary: run.summary,
+        updatedAt: run.updatedAt,
+      };
+    }
+    return undefined;
+  }
 
-    const candidate = await this.nextCandidate();
-    if (!candidate) return this.setStatus({ phase: "idle", summary: "No Autoflow-ready issues." });
+  async reconcile(): Promise<PiAgentOrchestratorStatus> {
+    if (!this.enabled()) return this.getStatus();
+    if (this.reconciling) return this.getStatus();
+    this.reconciling = true;
 
-    this.setStatus({
-      phase: "starting",
-      issueRef: candidate.ref,
-      summary: `Autoflow starting ${candidate.ref}.`,
-    });
-    this.activeRun = this.runCandidate(candidate.ref)
-      .catch((error) => {
-        const summary = errorMessage(error);
-        this.setStatus({
-          phase: "failed",
-          issueRef: candidate.ref,
-          summary,
-        });
-      })
-      .finally(() => {
-        this.activeRun = undefined;
-      });
+    try {
+      // Clean up completed runs
+      for (const [ref, run] of this.activeRuns) {
+        if (run.status !== "running" && run.status !== "starting") {
+          this.activeRuns.delete(ref);
+        }
+      }
+
+      const availableSlots = this.maxConcurrency - this.activeRuns.size;
+      if (availableSlots <= 0) return this.getStatus();
+
+      const candidates = await this.nextCandidates(availableSlots);
+      for (const candidate of candidates) {
+        this.spawnRun(candidate.ref, candidate.repoKeys, candidate.title, candidate.metadata);
+      }
+    } finally {
+      this.reconciling = false;
+    }
+
     return this.getStatus();
   }
 
@@ -102,27 +174,70 @@ export class PiAgentOrchestrator {
     return this.piSessionDriver.sendUserMessage(target.id, { text: input.text, mode });
   }
 
-  private async runCandidate(issueRef: string): Promise<void> {
-    const flowSessionId = `desktop-${this.projectId}`;
+  private spawnRun(issueRef: string, repoKeys: string[] = [], title?: string, metadata: Record<string, unknown> = {}): void {
+    const run: ActiveRun = {
+      promise: Promise.resolve(),
+      status: "starting",
+      updatedAt: nowIso(),
+    };
+    this.activeRuns.set(issueRef, run);
+    this.issueStatuses.set(issueRef, {
+      phase: "starting",
+      summary: `Autoflow starting ${issueRef}.`,
+      updatedAt: nowIso(),
+    });
+
+    run.promise = this.runCandidate(issueRef, repoKeys, title, metadata)
+      .catch((error) => {
+        const summary = errorMessage(error);
+        run.status = "failed";
+        run.summary = summary;
+        run.updatedAt = nowIso();
+        this.issueStatuses.set(issueRef, {
+          phase: "failed",
+          summary,
+          updatedAt: nowIso(),
+        });
+      })
+      .finally(() => {
+        // Don't remove from activeRuns here — let reconcile() clean up
+        // This prevents reconcile from immediately re-spawning the same issue
+        run.status = run.status === "starting" ? "idle" : run.status;
+        // Trigger reconcile to fill the slot
+        void this.reconcile();
+      });
+  }
+
+  private async runCandidate(issueRef: string, repoKeys: string[] = [], title?: string, metadata: Record<string, unknown> = {}): Promise<void> {
+    // Each issue gets its own session to avoid Windows EPERM on concurrent session file writes
+    const flowSessionId = `desktop-${this.projectId}-${issueRef.toLowerCase()}`;
     await this.ensureFlowSession(flowSessionId);
+    // selectIssue writes the issue to the ledger — must happen before doctor/autoflow
+    // which call reconcileIssue (reads from ledger)
+    await this.runtime.selectIssue(flowSessionId, {
+      ref: issueRef,
+      title: title ?? issueRef,
+      repoKeys,
+      state: "selected",
+      metadata: metadata as Record<string, string>,
+    });
     const doctor = await this.runDoctor(flowSessionId, issueRef);
     if (doctorBlocksAutoflow(doctor)) {
-      this.setStatus({
+      this.updateIssueStatus(issueRef, {
         phase: "needs_input",
-        issueRef,
         summary: doctorSummary(doctor),
       });
+      // Remove from activeRuns so it doesn't block a slot
+      this.activeRuns.delete(issueRef);
       return;
     }
-    const issue = await this.runtime.inspectIssue(issueRef);
-    await this.runtime.selectIssue(flowSessionId, issue);
     const autoflow = await this.runtime.autoFlowIssue(flowSessionId, { autoPrepareWorkspace: true, maxSteps: 20 });
     if (!isExecutionReady(autoflow)) {
-      this.setStatus({
+      this.updateIssueStatus(issueRef, {
         phase: autoflow.status === "needs_confirmation" ? "needs_input" : "idle",
-        issueRef,
         summary: autoflow.message,
       });
+      this.activeRuns.delete(issueRef);
       return;
     }
 
@@ -131,9 +246,17 @@ export class PiAgentOrchestrator {
       summary: `Flow Desktop Autoflow started ${issueRef}.`,
     });
     const piSession = await this.piSessionDriver.openOrCreateIssueSession(issueRef);
-    this.setStatus({
+
+    const run = this.activeRuns.get(issueRef);
+    if (run) {
+      run.status = "running";
+      run.sessionId = piSession.id;
+      run.workspacePath = handoff.workspacePath;
+      run.summary = `Autoflow working ${issueRef}.`;
+      run.updatedAt = nowIso();
+    }
+    this.updateIssueStatus(issueRef, {
       phase: "running",
-      issueRef,
       sessionId: piSession.id,
       workspacePath: handoff.workspacePath,
       summary: `Autoflow working ${issueRef}.`,
@@ -141,12 +264,28 @@ export class PiAgentOrchestrator {
 
     const completed = await this.piSessionDriver.postPrompt(piSession.id, handoff.prompt);
     await this.recordResult(flowSessionId, handoff, completed);
-    this.setStatus({
-      phase: completed.status === "failed" ? "failed" : "idle",
-      issueRef,
+
+    const finalPhase = completed.status === "failed" ? "failed" : "idle";
+    const finalSummary = completed.error ?? latestAssistantText(completed) ?? `Autoflow finished ${issueRef}.`;
+
+    const activeRun = this.activeRuns.get(issueRef);
+    if (activeRun) {
+      activeRun.status = finalPhase;
+      activeRun.summary = finalSummary;
+      activeRun.updatedAt = nowIso();
+    }
+    this.updateIssueStatus(issueRef, {
+      phase: finalPhase,
       sessionId: completed.id,
       workspacePath: completed.workspacePath,
-      summary: completed.error ?? latestAssistantText(completed) ?? `Autoflow finished ${issueRef}.`,
+      summary: finalSummary,
+    });
+  }
+
+  private updateIssueStatus(issueRef: string, input: Partial<PiAgentOrchestratorIssueStatus> & { phase: PiAgentOrchestratorPhase }): void {
+    this.issueStatuses.set(issueRef, {
+      ...input,
+      updatedAt: nowIso(),
     });
   }
 
@@ -164,20 +303,26 @@ export class PiAgentOrchestrator {
     await this.runtime.recordLocalThreadResult(flowSessionId, result);
   }
 
-  private async nextCandidate(): Promise<{ ref: string } | undefined> {
-    const payload = await this.dashboardState.payload({ limit: 50 });
-    const issues = Array.isArray(payload.issues) ? payload.issues : [];
-    for (const status of ["Ready", "Queued"]) {
-      const match = issues.find((issue) => {
-        if (!issue || typeof issue !== "object") return false;
-        const record = issue as Record<string, unknown>;
-        return typeof record.ref === "string"
-          && record.workStatus === status
-          && !isKnownStaleIssue(record);
-      }) as { ref?: unknown } | undefined;
-      if (typeof match?.ref === "string") return { ref: match.ref };
+  private async nextCandidates(limit: number): Promise<Array<{ ref: string; repoKeys: string[]; title: string; metadata: Record<string, unknown> }>> {
+    const queue = await this.runtime.inspectQueue(50);
+    const candidates: Array<{ ref: string; repoKeys: string[]; title: string; metadata: Record<string, unknown> }> = [];
+
+    for (const issue of queue) {
+      if (candidates.length >= limit) break;
+      // Only pick up queued or selected issues (not done, blocked, awaiting_review, etc.)
+      if (issue.state !== "queued" && issue.state !== "selected") continue;
+      if (this.activeRuns.has(issue.ref)) continue;
+      // Skip issues that have been flagged as needing input
+      const issueStatus = this.issueStatuses.get(issue.ref);
+      if (issueStatus?.phase === "needs_input") continue;
+      candidates.push({
+        ref: issue.ref,
+        repoKeys: issue.repoKeys.length ? issue.repoKeys : ["flow"],
+        title: issue.title,
+        metadata: issue.metadata,
+      });
     }
-    return undefined;
+    return candidates;
   }
 
   private async ensureFlowSession(sessionId: string): Promise<void> {
@@ -227,15 +372,6 @@ export class PiAgentOrchestrator {
       }
       throw error;
     }
-  }
-
-  private setStatus(input: Omit<Partial<PiAgentOrchestratorStatus>, "enabled" | "updatedAt"> & { phase: PiAgentOrchestratorPhase }): PiAgentOrchestratorStatus {
-    this.status = {
-      enabled: this.enabled(),
-      updatedAt: nowIso(),
-      ...input,
-    };
-    return this.getStatus();
   }
 }
 
