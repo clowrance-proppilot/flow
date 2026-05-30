@@ -417,14 +417,6 @@ function isExecutionReady(result: AutoFlowIssueResult): boolean {
   return result.status === "needs_confirmation" || result.status === "execution_handoff";
 }
 
-function isKnownStaleIssue(issue: Record<string, unknown>): boolean {
-  const detail = [issue.workStatusDetail, issue.nextPickup, ...(Array.isArray(issue.blockerLabels) ? issue.blockerLabels : [])]
-    .map(String)
-    .join(" ")
-    .toLowerCase();
-  return detail.includes("stale external issue") || detail.includes("external issue") && detail.includes("missing");
-}
-
 function isMissingExternalIssueText(value: string): boolean {
   const lower = value.toLowerCase();
   return lower.includes("could not resolve to an issue") || lower.includes("repository.issue");
