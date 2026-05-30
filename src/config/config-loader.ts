@@ -318,6 +318,9 @@ async function inferBootstrapFlowConfig(projectRoot: string, storage: FlowConfig
       type: "flow",
     },
     runtime: {
+      store: {
+        type: "sqlite",
+      },
       ...(storage === "user"
         ? {
           stateDir: flowUserRuntimePath(projectRoot),

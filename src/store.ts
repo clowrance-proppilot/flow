@@ -9,20 +9,34 @@ import {
   createId,
   nowIso,
 } from "./contracts.js";
+import { SqlFlowStore } from "./sql-store.js";
 
 export interface StorePaths {
   root: string;
 }
 
 /**
- * Session-local runtime scratch store.
+ * Common interface for Flow session stores.
+ * Both file-based and SQL-backed stores implement this interface.
+ */
+export interface FlowStoreInterface {
+  readonly root: string;
+  ensure(): Promise<void>;
+  createSession(id?: string): Promise<WorkRuntimeSession>;
+  readSession(id: string): Promise<WorkRuntimeSession | undefined>;
+  writeSession(session: WorkRuntimeSession): Promise<WorkRuntimeSession>;
+  appendEvent(event: Omit<WorkRuntimeEvent, "id" | "createdAt">): Promise<WorkRuntimeEvent>;
+}
+
+/**
+ * Session-local runtime scratch store using file-based storage.
  *
  * This store is intentionally separate from Flow's durable workflow ledger.
  * Use the workflow ledger for authoritative issue, worker, job, and evidence
  * state; use FlowStore for CLI/session selection state and transient runtime
  * traces that can be rebuilt from the ledger and provider state.
  */
-export class FlowStore {
+export class FlowStore implements FlowStoreInterface {
   readonly root: string;
 
   constructor(paths: StorePaths) {
@@ -103,4 +117,23 @@ function safeName(value: string): string {
 
 function isMissingFile(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+
+export type FlowStoreBackend = "file" | "sqlite";
+
+export interface FlowStoreFactoryOptions {
+  root: string;
+  backend?: FlowStoreBackend;
+}
+
+/**
+ * Factory function to create a FlowStore instance.
+ * Defaults to the SQLite-backed store for better concurrent access.
+ */
+export function createFlowStore(options: FlowStoreFactoryOptions): FlowStoreInterface {
+  const backend = options.backend ?? "sqlite";
+  if (backend === "sqlite") {
+    return new SqlFlowStore({ root: options.root });
+  }
+  return new FlowStore({ root: options.root });
 }

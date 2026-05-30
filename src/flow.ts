@@ -140,6 +140,7 @@ async function handleConfigRequest(request: Record<string, unknown>): Promise<un
       : undefined,
     runtime: config?.runtime
       ? {
+        store: config.runtime.store,
         defaultSessionId: config.runtime.defaultSessionId,
         dashboard: config.runtime.dashboard
           ? {
