@@ -42,6 +42,7 @@ import {
   ProviderAdapterError,
   classifyProviderCliError,
   triageIssues as triageIssuesEngine,
+  type CreateIssueOptions,
 } from "../src/index.js";
 import type { ProjectTopology } from "../src/project-topology.js";
 import { normalizePullRequest, parseGitHubIssues, parsePullRequests } from "../src/adapters/github.js";
@@ -89,6 +90,26 @@ function testWorkRuntime(options: ConstructorParameters<typeof FlowWorkRuntime>[
     topology: legacyHostTopology,
     defaultJiraProjectKey: configString(legacyHostConfig.issueTracker, "projectKey"),
     ...options,
+  });
+}
+
+async function approveIssueIntake(
+  runtime: FlowWorkRuntime,
+  sessionId: string,
+  options: CreateIssueOptions,
+): Promise<void> {
+  const intake = await runtime.intakeIssue(sessionId, { ...options, dryRun: true });
+  const reviewJob = intake.reviewJob;
+  if (!reviewJob) assert.fail("expected issue intake review job");
+  await runtime.recordWorkJobResult(sessionId, {
+    jobId: reviewJob.id,
+    issueRef: reviewJob.issueRef,
+    repoKey: reviewJob.repoKey,
+    workType: reviewJob.workType,
+    status: "succeeded",
+    summary: "Executor approved issue intake.",
+    evidence: ["Executor reviewed duplicate candidates."],
+    completedAt: nowIso(),
   });
 }
 
@@ -447,12 +468,31 @@ test("Flow CLI core works with only git available on PATH", async () => {
   assert.equal(config?.sourceControl?.type, "git");
   assert.equal(config?.runtime && "worker" in config.runtime, false);
 
-  const issue = await callFlow({
+  const issueRequest = {
     op: "issue",
     mode: "create",
     summary: "Git-only Flow core",
     issueType: "Task",
+  };
+  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true });
+  const reviewJob = intake.reviewJob as { id: string; issueRef: string; repoKey: string; workType: string };
+  await callFlow({
+    op: "runtime",
+    method: "recordWorkJobResult",
+    params: {
+      result: {
+        jobId: reviewJob.id,
+        issueRef: reviewJob.issueRef,
+        repoKey: reviewJob.repoKey,
+        workType: reviewJob.workType,
+        status: "succeeded",
+        summary: "Executor approved issue intake.",
+        evidence: ["CLI test executor review."],
+        completedAt: nowIso(),
+      },
+    },
   });
+  const issue = await callFlow(issueRequest);
   assert.equal(issue.title, "Git-only Flow core");
 
   const manifest = await callFlow({ op: "manifest", target: "issue" });
@@ -505,12 +545,32 @@ test("Flow workflow doctor strict mode exits nonzero when readiness is not ok", 
   assert.equal(bootstrap.exitCode, 0);
   assert.equal(bootstrap.payload.ok, true);
 
-  const created = await callFlow({
+  const issueRequest = {
     op: "issue",
     mode: "create",
     summary: "Strict doctor check",
     issueType: "Task",
+  };
+  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true });
+  const reviewJob = (intake.payload.result as { reviewJob?: { id: string; issueRef: string; repoKey: string; workType: string } }).reviewJob;
+  assert.ok(reviewJob);
+  await callFlow({
+    op: "runtime",
+    method: "recordWorkJobResult",
+    params: {
+      result: {
+        jobId: reviewJob.id,
+        issueRef: reviewJob.issueRef,
+        repoKey: reviewJob.repoKey,
+        workType: reviewJob.workType,
+        status: "succeeded",
+        summary: "Executor approved issue intake.",
+        evidence: ["CLI test executor review."],
+        completedAt: nowIso(),
+      },
+    },
   });
+  const created = await callFlow(issueRequest);
   assert.equal(created.exitCode, 0);
   assert.equal(created.payload.ok, true);
   const issue = created.payload.result as { ref: string };
@@ -1174,11 +1234,13 @@ test("Local issue tracker creates issues through the Flow ledger surface", async
   });
 
   await runtime.createSession("local-session");
-  const issue = await runtime.createIssue("local-session", {
+  const options = {
     issueType: "Task",
     summary: "Spike local surface",
     description: "Keep Flow usable without GitHub.",
-  });
+  } satisfies CreateIssueOptions;
+  await approveIssueIntake(runtime, "local-session", options);
+  const issue = await runtime.createIssue("local-session", options);
 
   assert.equal(issue.ref, "FLOW-1");
   assert.equal(issue.title, "Spike local surface");
@@ -1264,11 +1326,13 @@ test("Issue creation dedupes existing issues with matching title", async () => {
   await runtime.createSession("dedupe-session");
   
   // Create first issue
-  const first = await runtime.createIssue("dedupe-session", {
+  const firstOptions = {
     issueType: "Task",
     summary: "Fix authentication bug",
     description: "Users cannot login.",
-  });
+  } satisfies CreateIssueOptions;
+  await approveIssueIntake(runtime, "dedupe-session", firstOptions);
+  const first = await runtime.createIssue("dedupe-session", firstOptions);
   assert.equal(first.ref, "FLOW-1");
   assert.equal(first.title, "Fix authentication bug");
 
@@ -1371,6 +1435,59 @@ test("Issue intake can submit executor review job for semantic dedupe", async ()
   assert.equal(result.reviewJob?.workType, "flow.issue_intake");
   assert.equal(result.reviewJob?.requiredCapabilities.includes("issue.intake"), true);
   assert.equal(JSON.stringify(result.reviewJob?.input).includes("FLOW-99"), true);
+});
+
+test("Issue creation requires completed executor intake review", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-intake-review-required-"));
+  const ledger = new MemoryWorkflowLedger();
+  const runtime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    issueTracker: new LocalIssueTrackerAdapter({ ledger, projectName: "Flow" }),
+  });
+  await runtime.createSession("intake-session");
+
+  try {
+    await runtime.createIssue("intake-session", {
+      issueType: "Task",
+      summary: "Add SQLite workflow ledger",
+      description: "Persist workflow state in SQLite before adding Postgres.",
+      repoKeys: ["main"],
+    });
+    assert.fail("issue creation should require executor review");
+  } catch (error) {
+    assert.equal(error instanceof Error, true);
+    assert.equal((error as Error).message.includes("completed executor review"), true);
+  }
+
+  assert.equal((await ledger.listIssues(10)).length, 0);
+  const intake = await runtime.intakeIssue("intake-session", {
+    issueType: "Task",
+    summary: "Add SQLite workflow ledger",
+    description: "Persist workflow state in SQLite before adding Postgres.",
+    repoKeys: ["main"],
+    dryRun: true,
+  });
+  assert.equal(intake.reviewJob?.workType, "flow.issue_intake");
+
+  await runtime.recordWorkJobResult("intake-session", {
+    jobId: intake.reviewJob?.id ?? assert.fail("expected review job"),
+    issueRef: intake.reviewJob?.issueRef ?? assert.fail("expected review issue ref"),
+    repoKey: "main",
+    workType: "flow.issue_intake",
+    status: "succeeded",
+    summary: "Executor approved issue intake.",
+    evidence: ["Live executor reviewed duplicate candidates."],
+    completedAt: nowIso(),
+  });
+
+  const created = await runtime.createIssue("intake-session", {
+    issueType: "Task",
+    summary: "Add SQLite workflow ledger",
+    description: "Persist workflow state in SQLite before adding Postgres.",
+    repoKeys: ["main"],
+  });
+  assert.equal(created.title, "Add SQLite workflow ledger");
 });
 
 test("Issue intake works through Flow CLI without creating during dry-run", async () => {
@@ -2710,12 +2827,14 @@ test("Work Runtime creates Jira issues through Flow without generated labels", a
   });
   const session = await workRuntime.createSession("session-create-jira");
 
-  const issue = await workRuntime.createJiraIssue(session.id, {
+  const options = {
     issueType: "Bug",
     summary: "GeoParquet Provider ETL fails on GeoArrow WKB parquet schema",
     description: "Follow-up from ISSUE-15461.",
     repoKeys: ["app_api"],
-  });
+  } satisfies CreateIssueOptions;
+  await approveIssueIntake(workRuntime, session.id, options);
+  const issue = await workRuntime.createJiraIssue(session.id, options);
   const selectedSession = await store.readSession(session.id);
 
   const jiraCreatedInput = createdInput as { projectKey?: string; issueType?: string; summary?: string; description?: string; title?: string };
@@ -2775,12 +2894,14 @@ test("Work Runtime creates provider-neutral issues without requiring a Jira proj
   });
   const session = await workRuntime.createSession("session-create-provider-neutral");
 
-  const issue = await workRuntime.createIssue(session.id, {
+  const options = {
     issueType: "Task",
     summary: "Harden Flow issue creation",
     description: "Provider-neutral issue creation should not require Jira config.",
     repoKeys: ["main"],
-  });
+  } satisfies CreateIssueOptions;
+  await approveIssueIntake(workRuntime, session.id, options);
+  const issue = await workRuntime.createIssue(session.id, options);
 
   const neutralCreatedInput = createdInput as { projectKey?: string; issueType?: string; summary?: string; description?: string; title?: string };
   assert.equal(neutralCreatedInput.projectKey, undefined);
@@ -2805,10 +2926,12 @@ test("Work Runtime keeps local provider issue metadata provider-neutral", async 
   });
   const session = await workRuntime.createSession("session-create-local");
 
-  const issue = await workRuntime.createIssue(session.id, {
+  const options = {
     issueType: "Task",
     summary: "Local provider metadata",
-  });
+  } satisfies CreateIssueOptions;
+  await approveIssueIntake(workRuntime, session.id, options);
+  const issue = await workRuntime.createIssue(session.id, options);
 
   assert.equal(issue.ref, "FLOW-1");
   assert.equal(issue.metadata.issueStatus, "To Do");
@@ -6392,9 +6515,34 @@ test("Triage works through Flow CLI with dry-run mode", async () => {
 
   await callFlow({ op: "bootstrap", storage: "repo-tracked" });
 
+  const createReviewedIssue = async (summary: string, issueType: string) => {
+    const request = { op: "issue", mode: "create", summary, issueType };
+    const intake = await callFlow({ ...request, mode: "intake", dryRun: true });
+    assert.equal(intake.ok, true);
+    const reviewJob = (intake.result as { reviewJob?: { id: string; issueRef: string; repoKey: string; workType: string } }).reviewJob;
+    assert.ok(reviewJob);
+    await callFlow({
+      op: "runtime",
+      method: "recordWorkJobResult",
+      params: {
+        result: {
+          jobId: reviewJob.id,
+          issueRef: reviewJob.issueRef,
+          repoKey: reviewJob.repoKey,
+          workType: reviewJob.workType,
+          status: "succeeded",
+          summary: "Executor approved issue intake.",
+          evidence: ["CLI test executor review."],
+          completedAt: nowIso(),
+        },
+      },
+    });
+    return callFlow(request);
+  };
+
   // Create some issues
-  await callFlow({ op: "issue", mode: "create", summary: "First issue", issueType: "Task" });
-  await callFlow({ op: "issue", mode: "create", summary: "Second issue", issueType: "Bug" });
+  await createReviewedIssue("First issue", "Task");
+  await createReviewedIssue("Second issue", "Bug");
 
   // Run triage in dry-run mode
   const triageResult = await callFlow({

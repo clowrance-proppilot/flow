@@ -637,7 +637,7 @@ export class FlowWorkRuntime {
     const proposal = this.issueIntakeProposal(options, createInput);
     const reasons = issueIntakeProblems(createInput.summary, options.description);
     const duplicateIssue = await this.findDuplicateIssue(createInput, candidates);
-    const reviewJob = !duplicateIssue && options.review === true
+    const reviewJob = !duplicateIssue && reasons.length === 0
       ? await this.submitIssueIntakeReviewJob(sessionId, createInput, proposal, candidates)
       : undefined;
     const apply = options.apply === true;
@@ -672,6 +672,11 @@ export class FlowWorkRuntime {
 
     if (!apply) {
       return { dryRun, apply, status: "ready", proposal, reviewJob, reasons: [] };
+    }
+
+    if (!await this.issueIntakeReviewSucceeded(reviewJob)) {
+      const reviewRef = reviewJob ? ` job ${reviewJob.id}` : "";
+      throw new Error(`Issue intake requires a completed executor review before creation${reviewRef}.`);
     }
 
     let issue = await this.createIssueAfterIntake(sessionId, options, {
@@ -859,6 +864,12 @@ export class FlowWorkRuntime {
         prompt: issueIntakeReviewPrompt(input, proposal, candidates),
       },
     });
+  }
+
+  private async issueIntakeReviewSucceeded(reviewJob?: WorkJob): Promise<boolean> {
+    if (!reviewJob) return false;
+    const results = await this.ledger.listWorkJobResults(reviewJob.issueRef);
+    return results.some((result) => result.jobId === reviewJob.id && result.status === "succeeded");
   }
 
   private async resolveIntakeCandidate(ref: string, candidates: IssueIntakeCandidate[]): Promise<WorkItem | undefined> {

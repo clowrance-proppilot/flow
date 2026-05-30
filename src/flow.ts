@@ -13,6 +13,8 @@ import {
   type CreateIssueOptions,
   type WorkerExecutor,
   type WorkerStatus,
+  type WorkJobExecutor,
+  type WorkJobResult,
   type WorkItem,
   workerExecutorValues,
 } from "./index.js";
@@ -34,6 +36,9 @@ const rawWorkRuntimeMethods = [
   "selectIssue",
   "intakeIssue",
   "createIssue",
+  "claimWorkJob",
+  "listWorkJobs",
+  "recordWorkJobResult",
   "adoptBranch",
   "bootstrapIssue",
   "bootstrapJiraIssue",
@@ -542,6 +547,22 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
       return runtime.createIssue(
         String(params.sessionId ?? defaultSessionId),
         params.options as CreateIssueOptions,
+      );
+    case "listWorkJobs":
+      return runtime.listWorkJobs(
+        String(params.sessionId ?? defaultSessionId),
+        typeof params.issueRef === "string" ? params.issueRef : undefined,
+      );
+    case "claimWorkJob":
+      return runtime.claimWorkJob(
+        String(params.sessionId ?? defaultSessionId),
+        String(params.jobId),
+        params.executor as WorkJobExecutor,
+      );
+    case "recordWorkJobResult":
+      return runtime.recordWorkJobResult(
+        String(params.sessionId ?? defaultSessionId),
+        params.result as WorkJobResult,
       );
     case "adoptBranch":
       return runtime.adoptBranch(String(params.sessionId ?? defaultSessionId), {
