@@ -41,3 +41,17 @@ ledger:
 Provider-backed config should swap `issueTracker`, `collaboration`, and
 `sourceControl` to adapters. Secrets may come from environment variables when an
 adapter requires them.
+
+## Custom Adapters
+
+Flow supports custom adapters for integrating with any issue tracker, code
+collaboration platform, or source control system.
+
+Adapter interfaces:
+
+- `IssueTrackerProvider` - Manages issues (GitHub Issues, Jira, Linear, etc.)
+- `CodeCollaborationProvider` - Handles code reviews (GitHub PRs, GitLab MRs, etc.)
+- `SourceControlProvider` - Manages workspace operations (Git, Mercurial, etc.)
+
+See the [custom adapter example](../examples/custom-adapter/README.md) for a
+complete implementation guide with Linear and GitLab examples.

@@ -1,0 +1,59 @@
+# Flow Configuration with Custom Adapters
+#
+# This example shows how to configure Flow with custom adapters
+# for Linear (issue tracking) and GitLab (code collaboration).
+
+version: "1"
+
+project:
+  name: "my-project"
+  icon: "🚀"
+
+topology:
+  repos:
+    main:
+      name: "my-project"
+      baseBranch: "main"
+  branchPattern: "{kind}/{issueRef}-{slug}"
+  pullRequestUrlPattern: "https://gitlab.com/{repoName}/-/merge_requests/{number}"
+
+# Custom issue tracker adapter
+issueTracker:
+  type: "linear"
+  apiKey: "${LINEAR_API_KEY}"
+  teamId: "${LINEAR_TEAM_ID}"
+  workspaceUrl: "https://api.linear.app"
+
+# Custom collaboration adapter
+collaboration:
+  type: "gitlab"
+  baseUrl: "https://gitlab.com"
+  token: "${GITLAB_TOKEN}"
+
+# Source control (built-in git adapter)
+sourceControl:
+  type: "git"
+
+# Ledger configuration
+ledger:
+  type: "flow"
+
+# Optional: Custom work types
+workTypes:
+  - name: "feature"
+    category: "feature"
+    requiredCapabilities: ["code_review"]
+  - name: "bugfix"
+    category: "bug"
+    requiredCapabilities: ["code_review"]
+  - name: "hotfix"
+    category: "bug"
+    requiredCapabilities: ["code_review"]
+    allowedExecutors: ["live_agent_thread"]
+
+# Optional: Custom executors
+executors:
+  - name: "live_agent_thread"
+    executionMode: "local_thread"
+    capabilities: ["code_review"]
+    outputs: ["worker_result"]
