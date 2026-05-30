@@ -56,7 +56,8 @@ export function assessIssue(input: ReadinessAssessmentInput): ReadinessAssessmen
     : latestWorker && shouldAutoRetryWorker(latestWorker) && latestSuccessfulWorker
     ? latestSuccessfulWorker
     : latestWorker;
-  const hasSuccessfulWorker = workerForReadiness?.status === "succeeded";
+  const hasSuccessfulWorker = workerForReadiness?.status === "succeeded" &&
+    (workerHasCompletionOutput(workerForReadiness) || Boolean(input.review?.prUrl));
   const externalProviderEscalation = input.issue.metadata.externalProviderEscalation;
   const codeReviewRequired = input.codeReviewRequired ?? true;
 
@@ -99,6 +100,15 @@ export function assessIssue(input: ReadinessAssessmentInput): ReadinessAssessmen
 
   if (input.issue.state === "running" && !latestWorker) {
     findings.push(finding(input.issue.ref, "warning", "Issue is marked running but has no execution result."));
+  }
+
+  if (latestWorker?.status === "succeeded" && !workerHasCompletionOutput(latestWorker) && !input.review?.prUrl) {
+    findings.push(finding(
+      input.issue.ref,
+      "warning",
+      "Successful worker result has no changed files or tests.",
+      "Retry execution before applying closeout gates.",
+    ));
   }
 
   const pullRequestMerged = isPullRequestMerged(input.review);
@@ -243,6 +253,10 @@ function latestSuccessfulWorkerResult(workerResults: WorkerTaskResult[]): Worker
     if (result?.status === "succeeded") return result;
   }
   return undefined;
+}
+
+function workerHasCompletionOutput(result: WorkerTaskResult): boolean {
+  return result.changedFiles.length > 0 || result.testsRun.length > 0;
 }
 
 function blockedAssessment(issueRef: string, findings: ReadinessFinding[]): ReadinessAssessment {
