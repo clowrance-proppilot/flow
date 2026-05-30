@@ -60,6 +60,7 @@
     "build:flow": "tsc -p tsconfig.json",
     "build:dashboard": "vite build --config vite.dashboard.config.ts",
     "build": "npm run build:flow && npm run build:dashboard",
+    "prepare": "husky",
     "prepack": "npm run build",
     "smoke:flow": "node scripts/smoke-flow.mjs",
     "smoke:dashboard": "node scripts/smoke-dashboard.mjs",
@@ -124,6 +125,7 @@
     "electron": "^42.3.0",
     "electron-builder": "^26.0.12",
     "esbuild": "^0.28.0",
+    "husky": "^9.1.7",
     "tsx": "^4.22.3",
     "typescript": "^6.0.3"
   }
