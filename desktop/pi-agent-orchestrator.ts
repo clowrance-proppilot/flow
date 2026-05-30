@@ -108,10 +108,10 @@ export class PiAgentOrchestrator {
     if (activeCount === 0 && blockedCount === 0) {
       summary = "Autoflow idle.";
     } else if (activeCount === 0 && blockedCount > 0) {
-      summary = `${blockedCount} issue${blockedCount === 1 ? "" : "s"} need${blockedCount === 1 ? "" : ""} input.`;
+      summary = `${blockedCount} issue${blockedCount === 1 ? "" : "s"} need${blockedCount === 1 ? "s" : ""} input.`;
     } else {
       summary = `Working ${activeCount} issue${activeCount === 1 ? "" : "s"}.`;
-      if (blockedCount > 0) summary += ` ${blockedCount} need${blockedCount === 1 ? "" : ""} input.`;
+      if (blockedCount > 0) summary += ` ${blockedCount} need${blockedCount === 1 ? "s" : ""} input.`;
     }
 
     return {

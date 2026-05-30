@@ -1097,6 +1097,7 @@ test("Pi agent orchestrator doctors stale external issues instead of starting Pi
 
   const status = orchestrator.getStatus();
   const issueStatus = status.issues["GH-58"];
+  assert.equal(status.summary, "1 issue needs input.");
   assert.equal(issueStatus?.phase, "needs_input");
   assert.match(issueStatus?.summary ?? "", /External issue GH-58 is missing or stale/);
   assert.equal((await ledger.listWorkerResults("GH-58")).length, 0);
