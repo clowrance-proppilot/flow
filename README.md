@@ -72,4 +72,5 @@ More:
 
 - [Runtime and dashboard](docs/runtime-and-dashboard.md)
 - [Host integration](docs/host-integration.md)
+- [Troubleshooting](docs/troubleshooting.md)
 - [Why Flow](docs/why-flow.md)
