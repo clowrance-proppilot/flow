@@ -1952,6 +1952,801 @@ test("Readiness blocks worker spawn when repo routing is missing", () => {
   assert.equal(assessment.findings[0].summary, "Repo routing is missing.");
 });
 
+test("Readiness blocks when prepared worktree is missing and no worker exists", () => {
+  const assessment = assessIssue({
+    issue: {
+      ref: "ISSUE-24",
+      title: "Missing worktree",
+      repoKeys: ["app_api"],
+      state: "selected",
+      metadata: {},
+    },
+  });
+
+  assert.equal(assessment.readyToAdvance, false);
+  assert.equal(assessment.findings.some((f) => f.summary === "Prepared worktree is missing."), true);
+});
+
+test("Readiness blocks when worker is running or queued", () => {
+  const running = assessIssue({
+    issue: {
+      ref: "ISSUE-25",
+      title: "Active worker",
+      repoKeys: ["app_api"],
+      state: "running",
+      metadata: {},
+    },
+    workerResults: [
+      {
+        taskId: "worker-25",
+        issueRef: "ISSUE-25",
+        repoKey: "app_api",
+        status: "running",
+        summary: "Working on it",
+        changedFiles: [],
+        testsRun: [],
+        blockers: [],
+        completedAt: nowIso(),
+      },
+    ],
+  });
+
+  assert.equal(running.readyToAdvance, false);
+  assert.equal(running.findings.some((f) => f.summary === "Execution handoff is already active for this issue."), true);
+
+  const queued = assessIssue({
+    issue: {
+      ref: "ISSUE-26",
+      title: "Queued worker",
+      repoKeys: ["app_api"],
+      state: "queued",
+      metadata: {},
+    },
+    workerResults: [
+      {
+        taskId: "worker-26",
+        issueRef: "ISSUE-26",
+        repoKey: "app_api",
+        status: "queued",
+        summary: "Waiting to start",
+        changedFiles: [],
+        testsRun: [],
+        blockers: [],
+        completedAt: nowIso(),
+      },
+    ],
+  });
+
+  assert.equal(queued.readyToAdvance, false);
+  assert.equal(queued.findings.some((f) => f.summary === "Execution handoff is already active for this issue."), true);
+});
+
+test("Readiness warns when issue is marked running but has no execution result", () => {
+  const assessment = assessIssue({
+    issue: {
+      ref: "ISSUE-27",
+      title: "Running without worker",
+      repoKeys: ["app_api"],
+      state: "running",
+      metadata: {
+        work_dir: "/tmp/app-api-worktree",
+      },
+    },
+  });
+
+  assert.equal(assessment.readyToAdvance, true);
+  assert.equal(assessment.findings.some((f) => f.severity === "warning" && f.summary === "Issue is marked running but has no execution result."), true);
+});
+
+test("Readiness blocks PR checks not passing", () => {
+  const assessment = assessIssue({
+    issue: {
+      ref: "ISSUE-28",
+      title: "Failed checks",
+      repoKeys: ["app_api"],
+      state: "ready_to_run",
+      metadata: {},
+    },
+    workerResults: [
+      {
+        taskId: "worker-28",
+        issueRef: "ISSUE-28",
+        repoKey: "app_api",
+        status: "succeeded",
+        summary: "Changed code",
+        changedFiles: ["src/example.ts"],
+        testsRun: ["npm test"],
+        blockers: [],
+        completedAt: nowIso(),
+      },
+    ],
+    evidenceRecorded: true,
+    documentationRecorded: true,
+    review: {
+      prUrl: "https://github.com/ExampleOrg/app-api/pull/28",
+      isDraft: false,
+      mergeable: "MERGEABLE",
+      checksPassing: false,
+    },
+  });
+
+  assert.equal(assessment.readyToAdvance, false);
+  assert.equal(assessment.findings.some((f) => f.summary === "Pull request checks are not passing."), true);
+});
+
+test("Readiness blocks auto review still running", () => {
+  const assessment = assessIssue({
+    issue: {
+      ref: "ISSUE-29",
+      title: "Pending auto review",
+      repoKeys: ["app_api"],
+      state: "ready_to_run",
+      metadata: {},
+    },
+    workerResults: [
+      {
+        taskId: "worker-29",
+        issueRef: "ISSUE-29",
+        repoKey: "app_api",
+        status: "succeeded",
+        summary: "Changed code",
+        changedFiles: ["src/example.ts"],
+        testsRun: ["npm test"],
+        blockers: [],
+        completedAt: nowIso(),
+      },
+    ],
+    evidenceRecorded: true,
+    documentationRecorded: true,
+    review: {
+      prUrl: "https://github.com/ExampleOrg/app-api/pull/29",
+      isDraft: false,
+      mergeable: "MERGEABLE",
+      checksPassing: true,
+      autoReviewStatus: "pending",
+    },
+  });
+
+  assert.equal(assessment.readyToAdvance, false);
+  assert.equal(assessment.findings.some((f) => f.summary === "Auto review is still running."), true);
+});
+
+test("Readiness warns when PR status snapshot is stale", () => {
+  const staleTime = new Date(Date.now() - 11 * 60 * 1000).toISOString();
+  const assessment = assessIssue({
+    issue: {
+      ref: "ISSUE-30",
+      title: "Stale PR",
+      repoKeys: ["app_api"],
+      state: "ready_to_run",
+      metadata: {},
+    },
+    workerResults: [
+      {
+        taskId: "worker-30",
+        issueRef: "ISSUE-30",
+        repoKey: "app_api",
+        status: "succeeded",
+        summary: "Changed code",
+        changedFiles: ["src/example.ts"],
+        testsRun: ["npm test"],
+        blockers: [],
+        completedAt: nowIso(),
+      },
+    ],
+    evidenceRecorded: true,
+    documentationRecorded: true,
+    review: {
+      prUrl: "https://github.com/ExampleOrg/app-api/pull/30",
+      isDraft: false,
+      mergeable: "MERGEABLE",
+      checksPassing: true,
+      autoReviewStatus: "passed",
+      checkedAt: staleTime,
+    },
+  });
+
+  assert.equal(assessment.readyToAdvance, true);
+  assert.equal(assessment.findings.some((f) => f.severity === "warning" && f.summary === "Pull request status is stale; refresh is required."), true);
+});
+
+test("Readiness ignores stale review snapshot warning once PR is merged", () => {
+  const staleTime = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+  const assessment = assessIssue({
+    issue: {
+      ref: "ISSUE-31",
+      title: "Merged stale PR",
+      repoKeys: ["app_api"],
+      state: "awaiting_review",
+      metadata: {},
+    },
+    workerResults: [
+      {
+        taskId: "worker-31",
+        issueRef: "ISSUE-31",
+        repoKey: "app_api",
+        status: "succeeded",
+        summary: "Changed code",
+        changedFiles: ["src/example.ts"],
+        testsRun: ["npm test"],
+        blockers: [],
+        completedAt: nowIso(),
+      },
+    ],
+    evidenceRecorded: true,
+    documentationRecorded: true,
+    review: {
+      prUrl: "https://github.com/ExampleOrg/app-api/pull/31",
+      state: "MERGED",
+      mergedAt: "2026-05-29T10:00:00Z",
+      isDraft: false,
+      checksPassing: false,
+      checkedAt: staleTime,
+    },
+  });
+
+  assert.equal(assessment.reviewReady, true);
+  assert.equal(assessment.findings.some((f) => f.summary === "Pull request status is stale; refresh is required."), false);
+});
+
+test("Readiness treats empty worker blockers as ignorable", () => {
+  const assessment = assessIssue({
+    issue: {
+      ref: "ISSUE-32",
+      title: "Empty blockers",
+      repoKeys: ["app_api"],
+      state: "ready_to_run",
+      metadata: {},
+    },
+    workerResults: [
+      {
+        taskId: "worker-32",
+        issueRef: "ISSUE-32",
+        repoKey: "app_api",
+        status: "blocked",
+        summary: "Worker needs input",
+        changedFiles: [],
+        testsRun: [],
+        blockers: ["", "   ", "\t\n"],
+        completedAt: nowIso(),
+      },
+    ],
+  });
+
+  assert.equal(assessment.readyToAdvance, false);
+  assert.equal(assessment.findings.some((f) => f.summary === "Worker is blocked: Worker needs input"), true);
+  assert.equal(assessment.findings.filter((f) => f.source === "readiness").length, 1);
+});
+
+test("Readiness skips retryable blockers and falls back to successful worker", () => {
+  const assessment = assessIssue({
+    issue: {
+      ref: "ISSUE-33",
+      title: "Retryable blocker",
+      repoKeys: ["app_api"],
+      state: "ready_to_run",
+      metadata: {},
+    },
+    workerResults: [
+      {
+        taskId: "worker-33-success",
+        issueRef: "ISSUE-33",
+        repoKey: "app_api",
+        status: "succeeded",
+        summary: "Previous success",
+        changedFiles: ["src/example.ts"],
+        testsRun: ["npm test"],
+        blockers: [],
+        completedAt: nowIso(),
+      },
+      {
+        taskId: "worker-33-timeout",
+        issueRef: "ISSUE-33",
+        repoKey: "app_api",
+        status: "blocked",
+        summary: "Agent handoff timed out or was interrupted before returning a structured result.",
+        changedFiles: [],
+        testsRun: [],
+        blockers: ["Agent handoff timed out or was interrupted before returning a structured result."],
+        completedAt: nowIso(),
+      },
+    ],
+    evidenceRecorded: true,
+    documentationRecorded: true,
+    codeReviewRequired: false,
+  });
+
+  assert.equal(assessment.readyToAdvance, true);
+  assert.equal(assessment.reviewReady, true);
+  assert.equal(assessment.findings.some((f) => f.severity === "blocker"), false);
+});
+
+test("Readiness handles auto-review needs-confirmation without detail or disposition", () => {
+  const assessment = assessIssue({
+    issue: {
+      ref: "ISSUE-34",
+      title: "Needs confirmation empty",
+      repoKeys: ["app_api"],
+      state: "ready_to_run",
+      metadata: {},
+    },
+    workerResults: [
+      {
+        taskId: "worker-34",
+        issueRef: "ISSUE-34",
+        repoKey: "app_api",
+        status: "succeeded",
+        summary: "Changed code",
+        changedFiles: ["src/example.ts"],
+        testsRun: ["npm test"],
+        blockers: [],
+        completedAt: nowIso(),
+      },
+    ],
+    evidenceRecorded: true,
+    documentationRecorded: true,
+    review: {
+      prUrl: "https://github.com/ExampleOrg/app-api/pull/34",
+      isDraft: false,
+      mergeable: "MERGEABLE",
+      checksPassing: true,
+      autoReviewStatus: "passed",
+      autoReviewNeedsConfirmation: true,
+    },
+  });
+
+  assert.equal(assessment.readyToAdvance, false);
+  assert.equal(assessment.reviewReady, false);
+  const finding = assessment.findings.find((f) => f.summary === "Auto review requires confirmation.");
+  assert.ok(finding);
+  assert.match(finding.detail ?? "", /Review the auto-review needs-confirmation item/);
+});
+
+test("Readiness reports PR as missing when code review is required and no PR exists", () => {
+  const assessment = assessIssue({
+    issue: {
+      ref: "ISSUE-35",
+      title: "No PR",
+      repoKeys: ["app_api"],
+      state: "ready_to_run",
+      metadata: {},
+    },
+    workerResults: [
+      {
+        taskId: "worker-35",
+        issueRef: "ISSUE-35",
+        repoKey: "app_api",
+        status: "succeeded",
+        summary: "Changed code",
+        changedFiles: ["src/example.ts"],
+        testsRun: ["npm test"],
+        blockers: [],
+        completedAt: nowIso(),
+      },
+    ],
+    evidenceRecorded: true,
+    documentationRecorded: true,
+    codeReviewRequired: true,
+  });
+
+  assert.equal(assessment.readyToAdvance, false);
+  assert.equal(assessment.findings.some((f) => f.summary === "Pull request is missing."), true);
+});
+
+test("Readiness skips PR checks when PR is already merged", () => {
+  const assessment = assessIssue({
+    issue: {
+      ref: "ISSUE-36",
+      title: "Merged PR with stale checks",
+      repoKeys: ["app_api"],
+      state: "awaiting_review",
+      metadata: {},
+    },
+    workerResults: [
+      {
+        taskId: "worker-36",
+        issueRef: "ISSUE-36",
+        repoKey: "app_api",
+        status: "succeeded",
+        summary: "Changed code",
+        changedFiles: ["src/example.ts"],
+        testsRun: ["npm test"],
+        blockers: [],
+        completedAt: nowIso(),
+      },
+    ],
+    evidenceRecorded: true,
+    documentationRecorded: true,
+    review: {
+      prUrl: "https://github.com/ExampleOrg/app-api/pull/36",
+      state: "MERGED",
+      mergedAt: "2026-05-29T10:00:00Z",
+      isDraft: true,
+      mergeable: "CONFLICTING",
+      checksPassing: false,
+      autoReviewStatus: "failed",
+      templateMissingHeadings: ["Description"],
+    },
+  });
+
+  assert.equal(assessment.reviewReady, true);
+  assert.equal(assessment.findings.some((f) => f.severity === "blocker"), false);
+});
+
+test("Readiness shows approval review as info when human review is required", () => {
+  const assessment = assessIssue({
+    issue: {
+      ref: "ISSUE-37",
+      title: "Needs approval",
+      repoKeys: ["app_api"],
+      state: "awaiting_review",
+      metadata: {},
+    },
+    workerResults: [
+      {
+        taskId: "worker-37",
+        issueRef: "ISSUE-37",
+        repoKey: "app_api",
+        status: "succeeded",
+        summary: "Changed code",
+        changedFiles: ["src/example.ts"],
+        testsRun: ["npm test"],
+        blockers: [],
+        completedAt: nowIso(),
+      },
+    ],
+    evidenceRecorded: true,
+    documentationRecorded: true,
+    review: {
+      prUrl: "https://github.com/ExampleOrg/app-api/pull/37",
+      isDraft: false,
+      mergeable: "MERGEABLE",
+      checksPassing: true,
+      autoReviewStatus: "passed",
+      humanReviewRequired: true,
+      reviewDecision: "REVIEW_REQUIRED",
+    },
+  });
+
+  assert.equal(assessment.readyToAdvance, true);
+  assert.equal(assessment.reviewReady, true);
+  assert.equal(assessment.findings.some((f) => f.summary === "Approval review is required." && f.severity === "info"), true);
+  assert.equal(assessment.findings.some((f) => f.summary === "Review comments are present."), false);
+});
+
+test("Readiness ignores human review requirements when PR is merged", () => {
+  const assessment = assessIssue({
+    issue: {
+      ref: "ISSUE-38",
+      title: "Merged needs approval",
+      repoKeys: ["app_api"],
+      state: "awaiting_review",
+      metadata: {},
+    },
+    workerResults: [
+      {
+        taskId: "worker-38",
+        issueRef: "ISSUE-38",
+        repoKey: "app_api",
+        status: "succeeded",
+        summary: "Changed code",
+        changedFiles: ["src/example.ts"],
+        testsRun: ["npm test"],
+        blockers: [],
+        completedAt: nowIso(),
+      },
+    ],
+    evidenceRecorded: true,
+    documentationRecorded: true,
+    review: {
+      prUrl: "https://github.com/ExampleOrg/app-api/pull/38",
+      state: "MERGED",
+      mergedAt: "2026-05-29T10:00:00Z",
+      isDraft: false,
+      humanReviewRequired: true,
+      reviewDecision: "REVIEW_REQUIRED",
+      reviewCommentCount: 3,
+      reviewCommentAuthors: ["reviewer1", "reviewer2"],
+    },
+  });
+
+  assert.equal(assessment.reviewReady, true);
+  assert.equal(assessment.findings.some((f) => f.summary === "Approval review is required."), false);
+  assert.equal(assessment.findings.some((f) => f.summary === "Review comments are present."), false);
+});
+
+test("Readiness reports a fully ready issue with all conditions met", () => {
+  const assessment = assessIssue({
+    issue: {
+      ref: "ISSUE-39",
+      title: "Ready to advance",
+      repoKeys: ["app_api"],
+      state: "awaiting_review",
+      metadata: {},
+    },
+    workerResults: [
+      {
+        taskId: "worker-39",
+        issueRef: "ISSUE-39",
+        repoKey: "app_api",
+        status: "succeeded",
+        summary: "Changed code",
+        changedFiles: ["src/example.ts"],
+        testsRun: ["npm test"],
+        blockers: [],
+        completedAt: nowIso(),
+      },
+    ],
+    evidenceRecorded: true,
+    documentationRecorded: true,
+    review: {
+      prUrl: "https://github.com/ExampleOrg/app-api/pull/39",
+      isDraft: false,
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN",
+      checksPassing: true,
+      autoReviewStatus: "passed",
+      checkedAt: nowIso(),
+    },
+  });
+
+  assert.equal(assessment.readyToAdvance, true);
+  assert.equal(assessment.reviewReady, true);
+  assert.equal(assessment.findings.length, 0);
+});
+
+test("Readiness treats without-a-readable-error-message as auto-retryable", () => {
+  const assessment = assessIssue({
+    issue: {
+      ref: "ISSUE-40",
+      title: "Unreadable error",
+      repoKeys: ["app_api"],
+      state: "ready_to_run",
+      metadata: {},
+    },
+    workerResults: [
+      {
+        taskId: "worker-40",
+        issueRef: "ISSUE-40",
+        repoKey: "app_api",
+        status: "failed",
+        summary: "Worker completed without a readable error message.",
+        changedFiles: [],
+        testsRun: [],
+        blockers: ["Worker completed without a readable error message."],
+        completedAt: nowIso(),
+      },
+    ],
+  });
+
+  assert.equal(assessment.findings.some((f) => f.severity === "warning"), true);
+  assert.equal(assessment.findings.some((f) => f.severity === "blocker"), false);
+});
+
+test("Readiness handles PR with DIRTY mergeStateStatus as conflicted", () => {
+  const assessment = assessIssue({
+    issue: {
+      ref: "ISSUE-41",
+      title: "Dirty merge state",
+      repoKeys: ["app_api"],
+      state: "ready_to_run",
+      metadata: {},
+    },
+    workerResults: [
+      {
+        taskId: "worker-41",
+        issueRef: "ISSUE-41",
+        repoKey: "app_api",
+        status: "succeeded",
+        summary: "Changed code",
+        changedFiles: ["src/example.ts"],
+        testsRun: ["npm test"],
+        blockers: [],
+        completedAt: nowIso(),
+      },
+    ],
+    evidenceRecorded: true,
+    documentationRecorded: true,
+    review: {
+      prUrl: "https://github.com/ExampleOrg/app-api/pull/41",
+      isDraft: false,
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "DIRTY",
+      checksPassing: true,
+    },
+  });
+
+  assert.equal(assessment.readyToAdvance, false);
+  assert.equal(assessment.findings.some((f) => f.summary === "Pull request has merge conflicts."), true);
+});
+
+test("Readiness finds prepared workspace via work_dir metadata", () => {
+  const assessment = assessIssue({
+    issue: {
+      ref: "ISSUE-42",
+      title: "Work dir exists",
+      repoKeys: ["app_api"],
+      state: "ready_to_run",
+      metadata: {
+        work_dir: "/tmp/app-api-worktree",
+      },
+    },
+    workerResults: [
+      {
+        taskId: "worker-42",
+        issueRef: "ISSUE-42",
+        repoKey: "app_api",
+        executor: "live_agent_thread",
+        status: "succeeded",
+        summary: "Changed code",
+        changedFiles: ["src/example.ts"],
+        testsRun: ["npm test"],
+        blockers: [],
+        completedAt: nowIso(),
+      },
+    ],
+    evidenceRecorded: true,
+    documentationRecorded: true,
+    codeReviewRequired: false,
+  });
+
+  assert.equal(assessment.readyToAdvance, true);
+  assert.equal(assessment.findings.some((f) => f.summary === "Prepared worktree is missing."), false);
+});
+
+test("Readiness finds prepared workspace via worktree_path metadata", () => {
+  const assessment = assessIssue({
+    issue: {
+      ref: "ISSUE-43",
+      title: "Worktree path exists",
+      repoKeys: ["app_api"],
+      state: "ready_to_run",
+      metadata: {
+        worktree_path: "/repo/app-api/.worktrees/feature-issue-43",
+      },
+    },
+    workerResults: [
+      {
+        taskId: "worker-43",
+        issueRef: "ISSUE-43",
+        repoKey: "app_api",
+        executor: "live_agent_thread",
+        status: "succeeded",
+        summary: "Changed code",
+        changedFiles: ["src/example.ts"],
+        testsRun: ["npm test"],
+        blockers: [],
+        completedAt: nowIso(),
+      },
+    ],
+    evidenceRecorded: true,
+    documentationRecorded: true,
+    codeReviewRequired: false,
+  });
+
+  assert.equal(assessment.readyToAdvance, true);
+  assert.equal(assessment.findings.some((f) => f.summary === "Prepared worktree is missing."), false);
+});
+
+test("Readiness finds dirty worktree via per-repo metadata", () => {
+  const assessment = assessIssue({
+    issue: {
+      ref: "ISSUE-44",
+      title: "Dirty per-repo worktree",
+      repoKeys: ["public_api"],
+      state: "ready_to_run",
+      metadata: {
+        "workflow.repos.public_api.worktree_path": "/repo/public-api/.worktrees/feature-issue-44",
+        "workflow.repos.public_api.dirty": true,
+      },
+    },
+    workerResults: [
+      {
+        taskId: "worker-44",
+        issueRef: "ISSUE-44",
+        repoKey: "public_api",
+        status: "succeeded",
+        summary: "Changed code",
+        changedFiles: ["src/example.ts"],
+        testsRun: ["npm test"],
+        blockers: [],
+        completedAt: nowIso(),
+      },
+    ],
+    review: {
+      prUrl: "https://github.com/ExampleOrg/public-api/pull/44",
+      isDraft: false,
+      checksPassing: true,
+    },
+  });
+
+  assert.equal(assessment.readyToAdvance, false);
+  assert.equal(assessment.findings.some((f) => f.summary === "Executor changes are not pushed."), true);
+});
+
+test("Readiness clears dirty worktree blocker when PR is merged", () => {
+  const assessment = assessIssue({
+    issue: {
+      ref: "ISSUE-45",
+      title: "Dirty merged PR",
+      repoKeys: ["public_api"],
+      state: "awaiting_review",
+      metadata: {
+        "workflow.repos.public_api.worktree_path": "/repo/public-api/.worktrees/feature-issue-45",
+        "workflow.repos.public_api.dirty": true,
+      },
+    },
+    workerResults: [
+      {
+        taskId: "worker-45",
+        issueRef: "ISSUE-45",
+        repoKey: "public_api",
+        status: "succeeded",
+        summary: "Changed code",
+        changedFiles: ["src/example.ts"],
+        testsRun: ["npm test"],
+        blockers: [],
+        completedAt: nowIso(),
+      },
+    ],
+    evidenceRecorded: true,
+    documentationRecorded: true,
+    review: {
+      prUrl: "https://github.com/ExampleOrg/public-api/pull/45",
+      state: "MERGED",
+      mergedAt: "2026-05-29T10:00:00Z",
+      isDraft: false,
+    },
+  });
+
+  assert.equal(assessment.reviewReady, true);
+  assert.equal(assessment.findings.some((f) => f.summary === "Executor changes are not pushed."), false);
+});
+
+test("Readiness ignores provider-credential failures and checks other review blockers", () => {
+  const assessment = assessIssue({
+    issue: {
+      ref: "ISSUE-46",
+      title: "Credential failure with review blockers",
+      repoKeys: ["app_api"],
+      state: "blocked",
+      metadata: {},
+    },
+    workerResults: [
+      {
+        taskId: "worker-46-success",
+        issueRef: "ISSUE-46",
+        repoKey: "app_api",
+        status: "succeeded",
+        summary: "Previous success",
+        changedFiles: ["src/example.ts"],
+        testsRun: ["npm test"],
+        blockers: [],
+        completedAt: nowIso(),
+      },
+      {
+        taskId: "worker-46-creds",
+        issueRef: "ISSUE-46",
+        repoKey: "app_api",
+        status: "failed",
+        summary: "Agent handoff could not find provider credentials.",
+        changedFiles: [],
+        testsRun: [],
+        blockers: ["Agent handoff could not find provider credentials."],
+        completedAt: nowIso(),
+      },
+    ],
+    review: {
+      prUrl: "https://github.com/ExampleOrg/app-api/pull/46",
+      isDraft: true,
+      checksPassing: true,
+    },
+  });
+
+  assert.equal(assessment.findings.some((f) => f.summary.includes("provider credentials")), false);
+  assert.equal(assessment.findings.some((f) => f.summary === "Pull request is still draft."), true);
+});
+
 test("Work Runtime advances by reconciling then requesting confirmation", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
   const ledger = new MemoryWorkflowLedger();
