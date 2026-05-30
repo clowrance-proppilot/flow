@@ -11,7 +11,10 @@ const outDir = join(flowRoot, ".tmp", "test");
 
 rmSync(outDir, { recursive: true, force: true });
 buildFlow();
-await runTests([join(outDir, "test", "flow.test.js")]);
+await runTests([
+  join(outDir, "test", "flow.test.js"),
+  join(outDir, "test", "dashboard-state.test.js"),
+]);
 
 function buildFlow() {
   const packageRoot = flowRoot;
