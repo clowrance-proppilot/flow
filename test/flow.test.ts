@@ -45,12 +45,34 @@ import {
 import type { ProjectTopology } from "../src/project-topology.js";
 import { normalizePullRequest, parseGitHubIssues, parsePullRequests } from "../src/adapters/github.js";
 import { currentUserBacklogJql, currentUserOpenSprintJql, parseJiraCommentUrl, parseJiraIssue, parseJiraSearch } from "../src/adapters/jira.js";
-import { DesktopActionRouter } from "../desktop/action-router.js";
+import { DesktopActionRouter, isDesktopAction } from "../desktop/action-router.js";
 import { PiAgentOrchestrator } from "../desktop/pi-agent-orchestrator.js";
 import { PiSessionDriver } from "../desktop/pi-session-driver.js";
 import { PiSdkSessionRunner } from "../desktop/pi-sdk-runner.js";
 import { DesktopProjectRegistry } from "../desktop/project-registry.js";
 import { DesktopPromptRouter } from "../desktop/prompt-router.js";
+import { message, requireActiveProject, isPromptTarget, summarizeProjectIssues } from "../desktop/route-helpers.js";
+import {
+  workStatusLabel,
+  issueDetail,
+  recordStatusLabel,
+  recordStatusClass,
+  statusThemeClass,
+  statusFilterThemeClass,
+  isExceptionalStatus,
+  isActiveWorkStatus,
+  isManualActionIssue,
+  statusRank,
+  issueAttentionRank,
+  sessionStatusForUi,
+  contextLine,
+  workflowSteps,
+} from "../desktop/renderer/status.js";
+import {
+  pendingConfirmationFromActionResult,
+  formatActionSummary,
+  actionPayload,
+} from "../desktop/renderer/action-format.js";
 import { projectThemeFor } from "../src/theme/project-theme.js";
 
 const execFileAsync = promisify(execFile);
@@ -6027,4 +6049,366 @@ test("Custom topology overrides repo names, paths, branch names, and PR URLs", a
 
   assert.equal(customTopology.isValidRepoKey("my_service"), true);
   assert.equal(customTopology.isValidRepoKey("unknown_repo"), false);
+});
+
+test("Route helpers message() extracts error messages", () => {
+  assert.equal(message(new Error("Project not found")), "Project not found");
+  assert.equal(message("string error"), "string error");
+  assert.equal(message(42), "42");
+  assert.equal(message(null), "null");
+  assert.equal(message(undefined), "undefined");
+});
+
+test("Route helpers requireActiveProject() returns active project or throws", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-route-helpers-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  await bootstrapFlowConfig({ projectRoot: root, storage: "repo-tracked" });
+  const stateRoot = await mkdtemp(join(tmpdir(), "flow-route-helpers-state-"));
+  const registry = new DesktopProjectRegistry({ statePath: join(stateRoot, "projects.json") });
+  await registry.addProject(root);
+
+  const project = await requireActiveProject(registry);
+  assert.ok(project);
+  assert.equal(project.root, root);
+});
+
+test("Route helpers requireActiveProject() throws when no active project", async () => {
+  const stateRoot = await mkdtemp(join(tmpdir(), "flow-route-helpers-empty-"));
+  const registry = new DesktopProjectRegistry({ statePath: join(stateRoot, "projects.json") });
+
+  await assert.rejects(
+    () => requireActiveProject(registry),
+    /No active Flow project/,
+  );
+});
+
+test("Route helpers isPromptTarget() validates prompt target strings", () => {
+  assert.equal(isPromptTarget("project"), true);
+  assert.equal(isPromptTarget("issue"), true);
+  assert.equal(isPromptTarget("thread"), true);
+  assert.equal(isPromptTarget("session"), true);
+  assert.equal(isPromptTarget("artifact"), true);
+  assert.equal(isPromptTarget("invalid"), false);
+  assert.equal(isPromptTarget(undefined), false);
+  assert.equal(isPromptTarget(null), false);
+  assert.equal(isPromptTarget(42), false);
+});
+
+test("Route helpers summarizeProjectIssues() counts issue statuses", () => {
+  const summary = summarizeProjectIssues([
+    { workStatus: "Blocked" },
+    { workStatus: "Blocked" },
+    { workStatus: "Needs Input" },
+    { workStatus: "In Review" },
+    { workStatus: "Running" },
+    { workStatus: "Running" },
+    { workStatus: "Running" },
+    { workStatus: "Ready" },
+    { workStatus: "Queued" },
+    { workStatus: "Done" },
+  ]);
+
+  assert.equal(summary.blocked, 2);
+  assert.equal(summary.needsInput, 1);
+  assert.equal(summary.inReview, 1);
+  assert.equal(summary.running, 3);
+  assert.equal(summary.ready, 1);
+  assert.equal(summary.queued, 1);
+  assert.equal(summary.done, 1);
+  assert.equal(summary.total, 10);
+});
+
+test("Route helpers summarizeProjectIssues() handles non-array input", () => {
+  const summary = summarizeProjectIssues(undefined);
+  assert.equal(summary.total, 0);
+  assert.equal(summary.blocked, 0);
+
+  const summaryNull = summarizeProjectIssues(null);
+  assert.equal(summaryNull.total, 0);
+});
+
+test("Route helpers summarizeProjectIssues() falls back to statusLabel when workStatus missing", () => {
+  const summary = summarizeProjectIssues([
+    { statusLabel: "Blocked" },
+    { statusLabel: "Done" },
+    {},
+  ]);
+
+  assert.equal(summary.blocked, 1);
+  assert.equal(summary.done, 1);
+  assert.equal(summary.queued, 1);
+  assert.equal(summary.total, 3);
+});
+
+test("Desktop action router isDesktopAction() validates action strings", () => {
+  assert.equal(isDesktopAction("autoflow"), true);
+  assert.equal(isDesktopAction("approve_confirmation"), true);
+  assert.equal(isDesktopAction("record_evidence"), true);
+  assert.equal(isDesktopAction("record_result"), true);
+  assert.equal(isDesktopAction("record_documentation"), true);
+  assert.equal(isDesktopAction("run_doctor"), true);
+  assert.equal(isDesktopAction("invalid_action"), false);
+  assert.equal(isDesktopAction(""), false);
+  assert.equal(isDesktopAction(undefined), false);
+  assert.equal(isDesktopAction(null), false);
+  assert.equal(isDesktopAction(42), false);
+});
+
+test("Desktop action router handles approve_confirmation action", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-desktop-approve-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  await bootstrapFlowConfig({ projectRoot: root, storage: "repo-tracked" });
+  const stateRoot = await mkdtemp(join(tmpdir(), "flow-desktop-approve-state-"));
+  const registry = new DesktopProjectRegistry({ statePath: join(stateRoot, "projects.json") });
+  await registry.addProject(root);
+  const ledger = new MemoryWorkflowLedger();
+  const runtime = testWorkRuntime({ store: new FlowStore({ root: join(root, ".flow", "runtime") }), ledger });
+  await ledger.writeIssue({
+    ref: "ISSUE-APPROVE",
+    title: "Test approve confirmation",
+    repoKeys: ["app_api"],
+    state: "blocked",
+    metadata: {},
+  });
+
+  let advanceCalledWith: string | undefined;
+  const originalAdvance = runtime.advanceIssue.bind(runtime);
+  runtime.advanceIssue = async (sessionId: string, confirmationId: string) => {
+    advanceCalledWith = confirmationId;
+    return originalAdvance(sessionId, confirmationId);
+  };
+
+  const router = new DesktopActionRouter({
+    projects: registry,
+    runtimeForProject: () => runtime,
+    ledgerForProject: () => ledger,
+  });
+
+  await assert.rejects(
+    () => router.invoke({ action: "approve_confirmation", issueRef: "ISSUE-APPROVE", payload: {} }),
+    /No pending confirmation id/,
+  );
+
+  const result = await router.invoke({
+    action: "approve_confirmation",
+    issueRef: "ISSUE-APPROVE",
+    payload: { confirmationId: "confirm-123" },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.action, "approve_confirmation");
+  assert.equal(advanceCalledWith, "confirm-123");
+});
+
+test("Renderer status workStatusLabel() extracts work status from issue", () => {
+  assert.equal(workStatusLabel({ ref: "1", workStatus: "Blocked" }), "Blocked");
+  assert.equal(workStatusLabel({ ref: "2", workStatus: "Running" }), "Running");
+  assert.equal(workStatusLabel({ ref: "3", statusLabel: "In Review" }), "In Review");
+  assert.equal(workStatusLabel({ ref: "4" }), "Queued");
+  assert.equal(workStatusLabel({ ref: "5", workStatus: "  " }), "Queued");
+});
+
+test("Renderer status issueDetail() returns secondary detail line", () => {
+  assert.equal(issueDetail({ ref: "1", blockerLabels: ["CI failed"] }), "CI failed");
+  assert.equal(issueDetail({ ref: "2", reviewStatus: "Changes requested" }), "Changes requested");
+  assert.equal(issueDetail({ ref: "3", evidenceStatus: "Needed" }), "Needed");
+  assert.equal(issueDetail({ ref: "4", documentationStatus: "Present" }), "Present");
+  assert.equal(issueDetail({ ref: "5", updatedLabel: "2h ago" }), "2h ago");
+  assert.equal(issueDetail({ ref: "6", repositories: ["app-api"] }), "app-api");
+  assert.equal(issueDetail({ ref: "7", workStatus: "Running", updatedLabel: "Running" }), "");
+});
+
+test("Renderer status recordStatusLabel() and recordStatusClass() classify record presence", () => {
+  assert.equal(recordStatusLabel("Present"), "Present");
+  assert.equal(recordStatusLabel("Needed"), "Needed");
+  assert.equal(recordStatusLabel(undefined), "Needed");
+  assert.equal(recordStatusClass("Present"), "record-present");
+  assert.equal(recordStatusClass("Needed"), "record-needed");
+  assert.equal(recordStatusClass(undefined), "record-needed");
+});
+
+test("Renderer status statusThemeClass() maps labels to CSS classes", () => {
+  assert.equal(statusThemeClass("Blocked"), "issue-state blocked");
+  assert.equal(statusThemeClass("Needs Input"), "issue-state needs-input");
+  assert.equal(statusThemeClass("In Review"), "issue-state in-review");
+  assert.equal(statusThemeClass("Running"), "issue-state running");
+  assert.equal(statusThemeClass("Ready"), "issue-state ready");
+  assert.equal(statusThemeClass("Queued"), "issue-state queued");
+  assert.equal(statusThemeClass("Done"), "issue-state done");
+  assert.equal(statusThemeClass("Unknown"), "issue-state queued");
+});
+
+test("Renderer status statusFilterThemeClass() maps filter labels to CSS classes", () => {
+  assert.equal(statusFilterThemeClass("Active"), "status-theme-active");
+  assert.equal(statusFilterThemeClass("Attention"), "status-theme-active");
+  assert.equal(statusFilterThemeClass("All"), "status-theme-all");
+  assert.equal(statusFilterThemeClass("Blocked"), "status-theme-blocked");
+  assert.equal(statusFilterThemeClass("Running"), "status-theme-running");
+  assert.equal(statusFilterThemeClass("Unknown"), "status-theme-unknown");
+});
+
+test("Renderer status isExceptionalStatus() identifies blocked and needs-input statuses", () => {
+  assert.equal(isExceptionalStatus("Blocked"), true);
+  assert.equal(isExceptionalStatus("Needs Input"), true);
+  assert.equal(isExceptionalStatus("Running"), false);
+  assert.equal(isExceptionalStatus("Done"), false);
+  assert.equal(isExceptionalStatus("Queued"), false);
+});
+
+test("Renderer status isActiveWorkStatus() identifies active vs terminal statuses", () => {
+  assert.equal(isActiveWorkStatus("Blocked"), true);
+  assert.equal(isActiveWorkStatus("Running"), true);
+  assert.equal(isActiveWorkStatus("Queued"), true);
+  assert.equal(isActiveWorkStatus("Done"), false);
+  assert.equal(isActiveWorkStatus("Unknown"), true);
+});
+
+test("Renderer status isManualActionIssue() flags issues needing attention", () => {
+  assert.equal(isManualActionIssue({ ref: "1", workStatus: "Blocked" }), true);
+  assert.equal(isManualActionIssue({ ref: "2", workStatus: "Needs Input" }), true);
+  assert.equal(isManualActionIssue({ ref: "3", workStatus: "Running" }), false);
+  assert.equal(isManualActionIssue({ ref: "4", workStatus: "Done" }), false);
+});
+
+test("Renderer status statusRank() and issueAttentionRank() provide sort ordering", () => {
+  assert.equal(statusRank("Blocked"), 0);
+  assert.equal(statusRank("Needs Input"), 1);
+  assert.equal(statusRank("In Review"), 2);
+  assert.equal(statusRank("Running"), 3);
+  assert.equal(statusRank("Ready"), 4);
+  assert.equal(statusRank("Queued"), 5);
+  assert.equal(statusRank("Done"), 6);
+  assert.equal(statusRank("Unknown"), 7);
+
+  const blockedNoEvidence = issueAttentionRank({ ref: "1", workStatus: "Blocked" });
+  const runningWithEvidence = issueAttentionRank({ ref: "2", workStatus: "Running", evidenceStatus: "Present", documentationStatus: "Present" });
+  assert.ok(blockedNoEvidence < runningWithEvidence);
+});
+
+test("Renderer status sessionStatusForUi() normalizes session status", () => {
+  assert.equal(sessionStatusForUi("running"), "running");
+  assert.equal(sessionStatusForUi("failed"), "failed");
+  assert.equal(sessionStatusForUi("active"), "idle");
+  assert.equal(sessionStatusForUi("done"), "idle");
+  assert.equal(sessionStatusForUi(undefined), "idle");
+});
+
+test("Renderer status contextLine() builds context breadcrumb", () => {
+  assert.equal(contextLine({ id: "1", name: "Flow", root: "/repo", valid: true }, { ref: "ISSUE-1" }, {}), "Flow / ISSUE-1");
+  assert.equal(contextLine(undefined, undefined, {}), "No active context");
+  assert.equal(contextLine({ id: "1", name: "Flow", root: "/repo", valid: true }, undefined, {}), "Flow");
+});
+
+test("Renderer status workflowSteps() defines correct step ordering", () => {
+  assert.deepEqual(workflowSteps, ["Queued", "Ready", "Running", "In Review", "Done"]);
+});
+
+test("Renderer action-format pendingConfirmationFromActionResult() extracts pending confirmation", () => {
+  const result = pendingConfirmationFromActionResult({
+    session: { pendingConfirmation: { id: "confirm-1", summary: "Run tests?" } },
+  });
+  assert.ok(result);
+  assert.equal(result.id, "confirm-1");
+  assert.equal(result.summary, "Run tests?");
+
+  assert.equal(pendingConfirmationFromActionResult(null), null);
+  assert.equal(pendingConfirmationFromActionResult(undefined), null);
+  assert.equal(pendingConfirmationFromActionResult({}), null);
+  assert.equal(pendingConfirmationFromActionResult({ session: {} }), null);
+  assert.equal(pendingConfirmationFromActionResult({ session: { pendingConfirmation: {} } }), null);
+});
+
+test("Renderer action-format formatActionSummary() formats action summaries", () => {
+  const autoflowSummary = formatActionSummary("autoflow", "Autoflow needs_confirmation for ISSUE-1. Run tests to verify.");
+  assert.match(autoflowSummary, /Needs confirmation/);
+  assert.match(autoflowSummary, /Run tests to verify/);
+
+  const approveSummary = formatActionSummary("approve_confirmation", "Confirmation approved for ISSUE-1.");
+  assert.equal(approveSummary, "Confirmation approved for ISSUE-1.");
+
+  const doctorSummary = formatActionSummary("run_doctor", 'Doctor ok for ISSUE-1. {"blockers":["Missing tests"],"readiness":{"nextActions":[{"summary":"Add unit tests"}]},"codeReview":{"prUrl":"https://github.com/example/pull/1","state":"OPEN","mergeStateStatus":"CLEAN"}}');
+  assert.match(doctorSummary, /Doctor ok for ISSUE-1/);
+  assert.match(doctorSummary, /PR: https/);
+  assert.match(doctorSummary, /Blockers: Missing tests/);
+  assert.match(doctorSummary, /Next: Add unit tests/);
+
+  const plainSummary = formatActionSummary("record_evidence", "Evidence recorded for ISSUE-1.");
+  assert.equal(plainSummary, "Evidence recorded for ISSUE-1.");
+});
+
+test("Renderer action-format formatActionSummary() truncates long summaries", () => {
+  const longText = "A".repeat(800);
+  const summary = formatActionSummary("record_result", longText);
+  assert.ok(summary.length < 710);
+  assert.ok(summary.endsWith("..."));
+});
+
+test("Renderer action-format actionPayload() builds correct payload per action", () => {
+  const issue = { ref: "ISSUE-1", title: "Test issue" };
+
+  const approvePayload = actionPayload("approve_confirmation", "approve", issue, { id: "confirm-1", summary: "Run?" });
+  assert.equal(approvePayload.confirmationId, "confirm-1");
+
+  const evidencePayload = actionPayload("record_evidence", "Check this", issue);
+  assert.equal(evidencePayload.summary, "Check this");
+  assert.equal(evidencePayload.source, "Flow Desktop conversation");
+
+  const docsPayload = actionPayload("record_documentation", "", issue);
+  assert.equal(docsPayload.disposition, "not_needed");
+
+  const resultPayload = actionPayload("record_result", "Done", issue);
+  assert.equal(resultPayload.status, "succeeded");
+  assert.equal(resultPayload.summary, "Done");
+
+  const emptyPayload = actionPayload("autoflow", "", undefined);
+  assert.deepEqual(emptyPayload, {});
+});
+
+test("Desktop project registry refreshProject() re-validates config", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-desktop-refresh-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  await bootstrapFlowConfig({ projectRoot: root, storage: "repo-tracked" });
+  const stateRoot = await mkdtemp(join(tmpdir(), "flow-desktop-refresh-state-"));
+  const registry = new DesktopProjectRegistry({ statePath: join(stateRoot, "projects.json") });
+  const project = await registry.addProject(root);
+
+  const refreshed = await registry.refreshProject(project.id);
+  assert.equal(refreshed.id, project.id);
+  assert.equal(refreshed.valid, true);
+});
+
+test("Desktop project registry refreshProject() throws for unknown project", async () => {
+  const stateRoot = await mkdtemp(join(tmpdir(), "flow-desktop-refresh-unknown-"));
+  const registry = new DesktopProjectRegistry({ statePath: join(stateRoot, "projects.json") });
+
+  await assert.rejects(
+    () => registry.refreshProject("nonexistent"),
+    /Unknown Flow project/,
+  );
+});
+
+test("Desktop project registry setProjectAutoflow() toggles autoflow flag", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-desktop-autoflow-toggle-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  await bootstrapFlowConfig({ projectRoot: root, storage: "repo-tracked" });
+  const stateRoot = await mkdtemp(join(tmpdir(), "flow-desktop-autoflow-state-"));
+  const registry = new DesktopProjectRegistry({ statePath: join(stateRoot, "projects.json") });
+  const project = await registry.addProject(root);
+
+  assert.equal(project.autoflowEnabled, true);
+
+  const disabled = await registry.setProjectAutoflow(project.id, false);
+  assert.equal(disabled.autoflowEnabled, false);
+
+  const reenabled = await registry.setProjectAutoflow(project.id, true);
+  assert.equal(reenabled.autoflowEnabled, true);
+});
+
+test("Desktop project registry setProjectAutoflow() throws for unknown project", async () => {
+  const stateRoot = await mkdtemp(join(tmpdir(), "flow-desktop-autoflow-unknown-"));
+  const registry = new DesktopProjectRegistry({ statePath: join(stateRoot, "projects.json") });
+
+  await assert.rejects(
+    () => registry.setProjectAutoflow("nonexistent", true),
+    /Unknown Flow project/,
+  );
 });

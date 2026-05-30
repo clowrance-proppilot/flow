@@ -1,13 +1,13 @@
-import type { DashboardIssue, PiSessionSnapshot, ProjectRecord, ContextProjection } from "./types";
+import type { DashboardIssue, PiSessionSnapshot, ProjectRecord, ContextProjection } from "./types.js";
 
 const statusMetadata = [
-  { label: "Blocked", rank: 0, themeClass: "status-theme-blocked", stateClass: "blocked", exceptional: true, active: true },
-  { label: "Needs Input", rank: 1, themeClass: "status-theme-needs-input", stateClass: "needs-input", exceptional: true, active: true },
-  { label: "In Review", rank: 2, workflowRank: 3, themeClass: "status-theme-review", stateClass: "in-review", exceptional: false, active: true },
-  { label: "Running", rank: 3, workflowRank: 2, themeClass: "status-theme-running", stateClass: "running", exceptional: false, active: true },
-  { label: "Ready", rank: 4, workflowRank: 1, themeClass: "status-theme-ready", stateClass: "ready", exceptional: false, active: true },
-  { label: "Queued", rank: 5, workflowRank: 0, themeClass: "status-theme-queued", stateClass: "queued", exceptional: false, active: true },
-  { label: "Done", rank: 6, workflowRank: 4, themeClass: "status-theme-done", stateClass: "done", exceptional: false, active: false },
+  { label: "Blocked", rank: 0, workflowRank: undefined as number | undefined, themeClass: "status-theme-blocked", stateClass: "blocked", exceptional: true, active: true },
+  { label: "Needs Input", rank: 1, workflowRank: undefined as number | undefined, themeClass: "status-theme-needs-input", stateClass: "needs-input", exceptional: true, active: true },
+  { label: "In Review", rank: 2, workflowRank: 3 as number | undefined, themeClass: "status-theme-review", stateClass: "in-review", exceptional: false, active: true },
+  { label: "Running", rank: 3, workflowRank: 2 as number | undefined, themeClass: "status-theme-running", stateClass: "running", exceptional: false, active: true },
+  { label: "Ready", rank: 4, workflowRank: 1 as number | undefined, themeClass: "status-theme-ready", stateClass: "ready", exceptional: false, active: true },
+  { label: "Queued", rank: 5, workflowRank: 0 as number | undefined, themeClass: "status-theme-queued", stateClass: "queued", exceptional: false, active: true },
+  { label: "Done", rank: 6, workflowRank: 4 as number | undefined, themeClass: "status-theme-done", stateClass: "done", exceptional: false, active: false },
 ] as const;
 
 const statusMetadataByLabel = new Map<string, typeof statusMetadata[number]>(

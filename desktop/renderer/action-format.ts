@@ -1,4 +1,4 @@
-import type { DashboardIssue, DesktopAction, PendingConfirmationState } from "./types";
+import type { DashboardIssue, DesktopAction, PendingConfirmationState } from "./types.js";
 
 export function pendingConfirmationFromActionResult(result: unknown): PendingConfirmationState | null {
   if (!result || typeof result !== "object") return null;
