@@ -73,7 +73,7 @@ import {
 } from "../src/index.js";
 import { JsonCliError, runJsonCli, type JsonCliOptions } from "../src/json-cli.js";
 import type { ProjectTopology } from "../src/project-topology.js";
-import { normalizePullRequest, parseGitHubIssues, parsePullRequests } from "../src/adapters/github.js";
+import { githubIssueCreateBody, normalizePullRequest, parseGitHubIssues, parsePullRequests } from "../src/adapters/github.js";
 import { currentUserBacklogJql, currentUserOpenSprintJql, parseJiraCommentUrl, parseJiraIssue, parseJiraSearch } from "../src/adapters/jira.js";
 import { DesktopActionRouter, isDesktopAction } from "../desktop/action-router.js";
 import { desktopActionValues } from "../desktop/action-types.js";
@@ -4430,6 +4430,16 @@ test("Work Runtime creates provider-neutral issues without requiring a Jira proj
   assert.equal(issue.metadata.issueType, "task");
   assert.equal(issue.metadata.jiraIssueType, undefined);
   assert.deepEqual(issue.repoKeys, ["main"]);
+});
+
+test("GitHub issue creation keeps structured descriptions in the issue body", () => {
+  const body = githubIssueCreateBody({
+    summary: "Add first-class Flow review command",
+    description: "## Problem\nDetailed issue body.",
+  });
+
+  assert.equal(body, "## Problem\nDetailed issue body.");
+  assert.equal(githubIssueCreateBody({ summary: "Fallback summary" }), "Fallback summary");
 });
 
 test("Work Runtime keeps local provider issue metadata provider-neutral", async () => {
