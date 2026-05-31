@@ -593,6 +593,80 @@ test("AutoflowService does not immediately re-pick failed issues after slot clea
   assert.equal(prompts, 1);
 });
 
+test("AutoflowService can target awaiting-review remediation without broad pickup", async () => {
+  let starts = 0;
+  const issue = {
+    ref: "GH-241",
+    title: "Desktop: add retry/backoff on failed refresh",
+    repoKeys: ["flow"],
+    state: "awaiting_review",
+    metadata: {},
+  };
+  const runtime = {
+    inspectQueue: async () => [issue],
+    inspectIssue: async () => issue,
+    summarizeHandoff: async () => "handoff",
+    createSession: async (id: string) => ({ id, findings: [], workerResults: [], createdAt: nowIso(), updatedAt: nowIso() }),
+    selectIssue: async () => undefined,
+    diagnoseIssue: async () => ({
+      issueRef: "GH-241",
+      status: "ok",
+      issue,
+      visibility: {
+        ledger: true,
+        issueTracker: true,
+        repoRouting: true,
+        preparedWorktree: true,
+        codeReview: true,
+        codeReviewRequired: true,
+      },
+      findings: [],
+      nextAction: { type: "advance", summary: "Run Autoflow." },
+    }),
+    autoFlowIssue: async () => {
+      starts += 1;
+      return {
+        status: "execution_handoff",
+        message: "Ready for remediation executor.",
+        steps: [],
+        workerResults: [],
+        session: { id: "session", findings: [], workerResults: [], createdAt: nowIso(), updatedAt: nowIso() },
+      };
+    },
+    adoptPendingLiveWorker: async () => ({
+      id: "task-241",
+      issueRef: "GH-241",
+      repoKey: "flow",
+      workJobId: "job-241",
+      prompt: "Resolve GH-241 merge conflicts.",
+      workspacePath: "/tmp/flow-gh-241",
+    }),
+    recordLocalThreadResult: async (_sessionId: string, result: { issueRef: string; status: string }) => result,
+    recordEvidence: async () => undefined,
+    recordDocumentation: async () => undefined,
+    recordPullRequest: async () => undefined,
+    advanceIssue: async () => ({
+      status: "awaiting_review",
+      message: "Ready for review.",
+    }),
+  };
+  const service = new AutoflowService({
+    projectId: "flow",
+    runtime: runtime as never,
+    agentSessionDriver: fakeAgentDriver(),
+    autoReconcileOnSlotAvailable: false,
+  });
+
+  assert.equal((await service.reconcile()).activeCount, 0);
+  assert.equal(starts, 0);
+
+  assert.equal((await service.reconcile({ issueRefs: ["GH-241"] })).activeCount, 1);
+  const status = await service.waitForIdle();
+
+  assert.equal(starts, 1);
+  assert.equal(status.issues["GH-241"]?.phase, "idle");
+});
+
 test("AutoflowService sends one commit follow-up when the workspace stays dirty", async () => {
   const messages: string[] = [];
   let gitInspections = 0;
