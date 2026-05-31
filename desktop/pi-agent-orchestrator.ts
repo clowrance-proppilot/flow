@@ -1,5 +1,5 @@
 import { nowIso, WorkerStatusValue, type WorkerTaskRequest } from "../src/contracts.js";
-import type { AutoFlowIssueResult, FlowDoctorResult, FlowWorkRuntime, LocalThreadResultInput } from "../src/work-runtime.js";
+import type { AdvanceIssueResult, AutoFlowIssueResult, FlowDoctorResult, FlowWorkRuntime, LocalThreadResultInput } from "../src/work-runtime.js";
 import type { PiSessionDriver, PiSessionSnapshot } from "./pi-session-driver.js";
 
 type OrchestratorRuntime = Pick<
@@ -13,6 +13,7 @@ type OrchestratorRuntime = Pick<
   | "adoptPendingLiveWorker"
   | "diagnoseIssue"
   | "recordLocalThreadResult"
+  | "advanceIssue"
 >;
 
 export type PiAgentOrchestratorPhase = "paused" | "idle" | "starting" | "running" | "needs_input" | "failed";
@@ -268,8 +269,13 @@ export class PiAgentOrchestrator {
     const completed = await this.piSessionDriver.postPrompt(piSession.id, handoff.prompt);
     const resultStatus = await this.recordResult(flowSessionId, handoff, completed);
 
-    const finalPhase = completed.status === "failed" ? "failed" : resultStatus === "blocked" ? "needs_input" : "idle";
-    const finalSummary = completed.error ?? latestAssistantText(completed) ?? `Autoflow finished ${issueRef}.`;
+    let finalPhase: PiAgentOrchestratorPhase = completed.status === "failed" ? "failed" : resultStatus === "blocked" ? "needs_input" : "idle";
+    let finalSummary = completed.error ?? latestAssistantText(completed) ?? `Autoflow finished ${issueRef}.`;
+    if (completed.status !== "failed" && resultStatus === "succeeded") {
+      const advanced = await this.runtime.advanceIssue(flowSessionId);
+      finalPhase = phaseAfterWorkerAdvance(advanced);
+      finalSummary = advanced.message || finalSummary;
+    }
 
     const activeRun = this.activeRuns.get(issueRef);
     if (activeRun) {
@@ -415,6 +421,11 @@ export class PiAgentOrchestrator {
 
 function isExecutionReady(result: AutoFlowIssueResult): boolean {
   return result.status === "needs_confirmation" || result.status === "execution_handoff";
+}
+
+function phaseAfterWorkerAdvance(result: AdvanceIssueResult): PiAgentOrchestratorPhase {
+  if (result.status === "awaiting_review") return "idle";
+  return "needs_input";
 }
 
 function isMissingExternalIssueText(value: string): boolean {

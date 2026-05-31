@@ -1150,7 +1150,20 @@ test("Pi agent orchestrator starts the next ready issue and records a result", a
           timeline: [{
             id: "assistant-1",
             role: "assistant",
-            content: "Implemented by Pi.",
+            content: "Implemented by Pi and committed the changes.",
+            createdAt: nowIso(),
+          }, {
+            id: "write-1",
+            role: "tool",
+            toolName: "write",
+            content: "Wrote test file.",
+            diff: { path: "test/flowstore.test.ts", content: "test" },
+            createdAt: nowIso(),
+          }, {
+            id: "test-1",
+            role: "tool",
+            toolName: "npm test",
+            content: "Tests passed.",
             createdAt: nowIso(),
           }],
         };
@@ -1173,6 +1186,14 @@ test("Pi agent orchestrator starts the next ready issue and records a result", a
   assert.equal(results.length, 1);
   assert.equal(results[0].status, "succeeded");
   assert.match(results[0].summary, /Implemented by Pi/);
+  for (let index = 0; index < 100; index += 1) {
+    const issueStatus = orchestrator.getStatus().issues["GH-56"];
+    if (issueStatus?.phase === "needs_input") break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  const issueStatus = orchestrator.getStatus().issues["GH-56"];
+  assert.equal(issueStatus?.phase, "needs_input");
+  assert.match(issueStatus?.summary ?? "", /Acceptance evidence is missing/);
 });
 
 test("Pi agent orchestrator sends follow-up messages to running sessions", async () => {
