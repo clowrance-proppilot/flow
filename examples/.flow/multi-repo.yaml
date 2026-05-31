@@ -1,0 +1,60 @@
+# Multi-repo Flow configuration
+# This configuration demonstrates a multi-repo setup with multiple repositories.
+# It's useful for monorepos or projects with multiple related repositories.
+
+version: "1"
+project:
+  name: "multi-repo-project"
+
+topology:
+  repos:
+    main:
+      name: "main-app"
+      baseBranch: "main"
+    api:
+      name: "api-service"
+      baseBranch: "main"
+      pathFromRoot: "services/api"
+    frontend:
+      name: "frontend-app"
+      baseBranch: "main"
+      pathFromRoot: "apps/frontend"
+    shared:
+      name: "shared-libs"
+      baseBranch: "main"
+      pathFromRoot: "libs/shared"
+  branchPattern: "{kind}/{issueRef}-{slug}"
+  pullRequestUrlPattern: "https://github.com/my-org/{repoName}/pull/{number}"
+  issueInference:
+    - repo: api
+      keywords: ["api", "backend", "endpoint", "server"]
+    - repo: frontend
+      keywords: ["ui", "frontend", "react", "component"]
+    - repo: shared
+      keywords: ["shared", "common", "util", "library"]
+
+issueTracker:
+  type: "jira"
+  siteUrl: "https://my-org.atlassian.net"
+  projectKey: "MULTI"
+
+collaboration:
+  type: "github"
+  owner: "my-org"
+
+sourceControl:
+  type: "git"
+
+ledger:
+  type: "flow"
+
+runtime:
+  dashboard:
+    defaultThemeId: "purple"
+    defaultMode: "dark"
+    themes:
+      - id: "purple"
+        name: "Purple"
+        primary: "#9b59b6"
+        primaryDark: "#8e44ad"
+        primaryFg: "#ffffff"

@@ -1,0 +1,38 @@
+# Local-only Flow configuration
+# This configuration uses a local issue tracker and no external services.
+# All data is stored locally in the .flow/ directory.
+
+version: "1"
+project:
+  name: "local-project"
+
+topology:
+  repos:
+    main:
+      name: "local-project"
+      baseBranch: "main"
+  branchPattern: "{kind}/{issueRef}-{slug}"
+
+issueTracker:
+  type: "local"
+  prefix: "LOCAL"
+
+collaboration:
+  type: "none"
+
+sourceControl:
+  type: "git"
+
+ledger:
+  type: "flow"
+
+runtime:
+  dashboard:
+    defaultThemeId: "light"
+    defaultMode: "light"
+    themes:
+      - id: "light"
+        name: "Light"
+        primary: "#4a90d9"
+        primaryDark: "#2a6cb8"
+        primaryFg: "#ffffff"

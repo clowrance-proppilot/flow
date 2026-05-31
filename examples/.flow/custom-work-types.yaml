@@ -1,0 +1,77 @@
+# Custom work types Flow configuration
+# This configuration demonstrates custom work type definitions.
+# Work types define the different kinds of work that can be done in a project.
+
+version: "1"
+project:
+  name: "custom-work-types-project"
+
+topology:
+  repos:
+    main:
+      name: "custom-work-types-project"
+      baseBranch: "main"
+  branchPattern: "{kind}/{issueRef}-{slug}"
+
+issueTracker:
+  type: "jira"
+  siteUrl: "https://my-org.atlassian.net"
+  projectKey: "CUST"
+
+collaboration:
+  type: "github"
+  owner: "my-org"
+
+sourceControl:
+  type: "git"
+
+ledger:
+  type: "flow"
+
+workTypes:
+  - workType: "flow.prepare_workspace"
+    category: "prepare"
+    requiredCapabilities: []
+    allowedExecutors: ["live_agent_thread"]
+    outputType: "workspace_result"
+  - workType: "flow.implement"
+    category: "implement"
+    requiredCapabilities: []
+    allowedExecutors: ["live_agent_thread"]
+    outputType: "worker_result"
+  - workType: "flow.remediate"
+    category: "remediate"
+    requiredCapabilities: []
+    allowedExecutors: ["live_agent_thread"]
+    outputType: "worker_result"
+  - workType: "flow.verify"
+    category: "verify"
+    requiredCapabilities: []
+    allowedExecutors: ["live_agent_thread"]
+    outputType: "evidence_result"
+  - workType: "flow.issue_intake"
+    category: "custom"
+    requiredCapabilities: ["issue.intake"]
+    allowedExecutors: ["live_agent_thread"]
+    outputType: "worker_result"
+  - workType: "custom.review"
+    category: "custom"
+    requiredCapabilities: ["code.review"]
+    allowedExecutors: ["live_agent_thread"]
+    outputType: "review_result"
+  - workType: "custom.test"
+    category: "custom"
+    requiredCapabilities: ["test.run"]
+    allowedExecutors: ["live_agent_thread"]
+    outputType: "test_result"
+
+runtime:
+  dashboard:
+    defaultThemeId: "orange"
+    defaultMode: "dark"
+    themes:
+      - id: "orange"
+        name: "Orange"
+        primary: "#e67e22"
+        primaryDark: "#d35400"
+        primaryFg: "#ffffff"

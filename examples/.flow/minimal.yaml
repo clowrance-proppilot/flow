@@ -1,0 +1,26 @@
+# Minimal Flow configuration
+# This is the bare minimum configuration needed to run Flow locally.
+# It uses a local issue tracker and no external services.
+
+version: "1"
+project:
+  name: "my-project"
+
+topology:
+  repos:
+    main:
+      name: "my-project"
+      baseBranch: "main"
+
+issueTracker:
+  type: "local"
+  prefix: "MYPROJ"
+
+collaboration:
+  type: "none"
+
+sourceControl:
+  type: "git"
+
+ledger:
+  type: "flow"
