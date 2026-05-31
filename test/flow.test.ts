@@ -73,7 +73,8 @@ import { JsonCliError, runJsonCli, type JsonCliOptions } from "../src/json-cli.j
 import type { ProjectTopology } from "../src/project-topology.js";
 import { normalizePullRequest, parseGitHubIssues, parsePullRequests } from "../src/adapters/github.js";
 import { currentUserBacklogJql, currentUserOpenSprintJql, parseJiraCommentUrl, parseJiraIssue, parseJiraSearch } from "../src/adapters/jira.js";
-import { DesktopActionRouter } from "../desktop/action-router.js";
+import { DesktopActionRouter, isDesktopAction } from "../desktop/action-router.js";
+import { desktopActionValues } from "../desktop/action-types.js";
 import { PiAgentOrchestrator } from "../desktop/pi-agent-orchestrator.js";
 import { PiSessionDriver } from "../src/pi-session-driver.js";
 import { PiSdkSessionRunner } from "../src/pi-sdk-runner.js";
@@ -1923,6 +1924,21 @@ test("Desktop action router records evidence, result, docs, and doctor output", 
   assert.equal(results[0].summary, "Implementation done.");
   assert.match(doctor.summary, /Doctor/);
   assert.equal(projection.artifacts.length, 4);
+});
+
+test("Desktop action router and renderer share action values", () => {
+  assert.deepEqual([...desktopActionValues], [
+    "autoflow",
+    "approve_confirmation",
+    "record_evidence",
+    "record_result",
+    "record_documentation",
+    "run_doctor",
+  ]);
+  for (const action of desktopActionValues) {
+    assert.equal(isDesktopAction(action), true);
+  }
+  assert.equal(isDesktopAction("missing_action"), false);
 });
 
 test("Desktop action router runs Autoflow as the primary issue action", async () => {

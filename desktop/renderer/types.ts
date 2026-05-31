@@ -12,6 +12,8 @@ export type ProjectStatusCounts = {
   total: number;
 };
 
+export type { DesktopAction } from "../action-types";
+
 export type ProjectRecord = {
   id: string;
   name: string;
@@ -119,8 +121,6 @@ export type PendingConfirmationState = {
   id: string;
   summary: string;
 };
-
-export type DesktopAction = "autoflow" | "approve_confirmation" | "record_evidence" | "record_result" | "record_documentation" | "run_doctor";
 
 export type PiActivityState = {
   phase: "idle" | "starting" | "thinking" | "tool" | "responding" | "done" | "failed";
