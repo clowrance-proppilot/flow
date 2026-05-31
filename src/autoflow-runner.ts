@@ -122,7 +122,6 @@ export class StandaloneAutoflowRunner {
     const issues = { ...status.issues };
     let changed = false;
     for (const [ref, issueStatus] of Object.entries(issues)) {
-      if (isActiveAutoflowPhase(issueStatus.phase)) continue;
       const issue = await inspectIssue(ref).catch(() => undefined);
       if (!issue || !isTerminalWorkflowIssue(issue)) continue;
       delete issues[ref];

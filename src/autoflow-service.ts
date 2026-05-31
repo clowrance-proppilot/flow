@@ -685,8 +685,7 @@ function isPendingCheckAdvance(result: AdvanceIssueResult): boolean {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
-    const timeout = setTimeout(resolve, ms);
-    timeout.unref?.();
+    setTimeout(resolve, ms);
   });
 }
 
