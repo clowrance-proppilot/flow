@@ -2214,18 +2214,65 @@ test("Issue intake works through Flow CLI without creating during dry-run", asyn
   assert.equal(intake.proposal.tags.includes("lane-sql"), true);
 });
 
-test("Flow config builds default and custom work type registries", () => {
+test("Flow config builds the default work type registry when no work types are configured", () => {
   const baseConfig = flowConfigSchema.parse({
     version: "1",
     project: { name: "Example" },
     topology: { repos: { main: { name: "example" } } },
   });
+
   const defaultRegistry = configToWorkTypeRegistry(baseConfig);
+
   assert.equal(defaultRegistry.workTypeForCategory("implement"), "flow.implement");
+  assert.equal(defaultRegistry.workTypeForCategory("remediate"), "flow.remediate");
+  assert.equal(defaultRegistry.has("flow.issue_intake"), true);
   assert.equal(defaultRegistry.executorCanRun("live_agent_thread", "flow.implement", ["code.edit"]), true);
+});
+
+test("Flow config builds a custom work type registry from configured definitions", () => {
+  const baseConfig = flowConfigSchema.parse({
+    version: "1",
+    project: { name: "Example" },
+    topology: { repos: { main: { name: "example" } } },
+  });
 
   const customRegistry = configToWorkTypeRegistry(flowConfigSchema.parse({
     ...baseConfig,
+    workTypes: [
+      {
+        name: "project.fix",
+        category: "implement",
+        requiredCapabilities: ["code.edit"],
+        allowedExecutors: ["live_agent_thread"],
+        outputType: "worker_result",
+      },
+      {
+        name: "project.verify",
+        category: "verify",
+        requiredCapabilities: ["test.run"],
+        allowedExecutors: ["live_agent_thread"],
+        outputType: "evidence_result",
+      },
+    ],
+    executors: [{
+      name: "live_agent_thread",
+      capabilities: ["code.edit", "test.run"],
+      outputs: ["worker_result", "evidence_result"],
+    }],
+  }));
+
+  assert.equal(customRegistry.workTypeForCategory("implement"), "project.fix");
+  assert.equal(customRegistry.workTypeForCategory("verify"), "project.verify");
+  assert.equal(customRegistry.get("project.fix")?.outputType, "worker_result");
+  assert.equal(customRegistry.executorCanRun("live_agent_thread", "project.fix", ["code.edit"]), true);
+  assert.equal(customRegistry.executorCanRun("live_agent_thread", "project.verify", ["test.run"]), true);
+});
+
+test("Flow config work type registry falls back to the default executor definition", () => {
+  const registry = configToWorkTypeRegistry(flowConfigSchema.parse({
+    version: "1",
+    project: { name: "Example" },
+    topology: { repos: { main: { name: "example" } } },
     workTypes: [{
       name: "project.fix",
       category: "implement",
@@ -2233,14 +2280,11 @@ test("Flow config builds default and custom work type registries", () => {
       allowedExecutors: ["live_agent_thread"],
       outputType: "worker_result",
     }],
-    executors: [{
-      name: "live_agent_thread",
-      capabilities: ["code.edit"],
-      outputs: ["worker_result"],
-    }],
   }));
-  assert.equal(customRegistry.workTypeForCategory("implement"), "project.fix");
-  assert.equal(customRegistry.executorCanRun("live_agent_thread", "project.fix", ["code.edit"]), true);
+
+  assert.equal(registry.executorCanRun("live_agent_thread", "project.fix"), true);
+  assert.equal(registry.executorCanRun("live_agent_thread", "project.fix", ["deploy.prod"]), false);
+  assert.deepEqual(registry.getExecutor("live_agent_thread")?.canSubmit, ["project.fix"]);
 });
 
 test("Local thread executor advertises capabilities and returns a reportable handoff result", async () => {
