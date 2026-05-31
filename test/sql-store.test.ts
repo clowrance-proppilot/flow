@@ -1,18 +1,12 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import assert from "node:assert/strict";
 import test from "node:test";
 
 import { SqlFlowStore } from "../src/sql-store.js";
 import { FlowStore, createFlowStore } from "../src/store.js";
+import { withTempFlowRoot, withSqlFlowStore } from "./helpers/fixtures.js";
 
 test("SqlFlowStore creates and reads sessions", async () => {
-  const root = await mkdtemp(join(tmpdir(), "sql-store-test-"));
-  try {
-    const store = new SqlFlowStore({ root });
-    await store.ensure();
-
+  await withSqlFlowStore("sql-store-test-", async (store) => {
     const session = await store.createSession("test-session-1");
     assert.equal(session.id, "test-session-1");
     assert.ok(session.createdAt);
@@ -24,19 +18,11 @@ test("SqlFlowStore creates and reads sessions", async () => {
 
     const missing = await store.readSession("non-existent");
     assert.equal(missing, undefined);
-
-    store.close();
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  });
 });
 
 test("SqlFlowStore writes and updates sessions", async () => {
-  const root = await mkdtemp(join(tmpdir(), "sql-store-update-"));
-  try {
-    const store = new SqlFlowStore({ root });
-    await store.ensure();
-
+  await withSqlFlowStore("sql-store-update-", async (store) => {
     const session = await store.createSession("test-session-2");
     assert.equal(session.selectedIssueRef, undefined);
 
@@ -51,19 +37,11 @@ test("SqlFlowStore writes and updates sessions", async () => {
     const read = await store.readSession("test-session-2");
     assert.ok(read);
     assert.equal(read.selectedIssueRef, "ISSUE-1");
-
-    store.close();
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  });
 });
 
 test("SqlFlowStore appends events", async () => {
-  const root = await mkdtemp(join(tmpdir(), "sql-store-events-"));
-  try {
-    const store = new SqlFlowStore({ root });
-    await store.ensure();
-
+  await withSqlFlowStore("sql-store-events-", async (store) => {
     await store.createSession("test-session-3");
 
     const event = await store.appendEvent({
@@ -75,16 +53,11 @@ test("SqlFlowStore appends events", async () => {
     assert.ok(event.id);
     assert.equal(event.sessionId, "test-session-3");
     assert.equal(event.type, "test.event");
-
-    store.close();
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  });
 });
 
 test("createFlowStore factory creates SQLite store by default", async () => {
-  const root = await mkdtemp(join(tmpdir(), "sql-store-factory-"));
-  try {
+  await withTempFlowRoot("sql-store-factory-", async (root) => {
     const store = createFlowStore({ root });
     assert.ok(store instanceof SqlFlowStore);
 
@@ -95,50 +68,45 @@ test("createFlowStore factory creates SQLite store by default", async () => {
     if (store instanceof SqlFlowStore) {
       store.close();
     }
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  });
 });
 
 test("createFlowStore factory creates file store when specified", async () => {
-  const root = await mkdtemp(join(tmpdir(), "file-store-factory-"));
-  try {
+  await withTempFlowRoot("file-store-factory-", async (root) => {
     const store = createFlowStore({ root, backend: "file" });
     assert.ok(store instanceof FlowStore);
 
     await store.ensure();
     const session = await store.createSession("file-factory-test");
     assert.ok(session.id);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  });
 });
 
 test("SqlFlowStore handles concurrent writes from multiple store instances", async () => {
-  const root = await mkdtemp(join(tmpdir(), "sql-store-concurrent-"));
-  const stores = [
-    new SqlFlowStore({ root }),
-    new SqlFlowStore({ root }),
-    new SqlFlowStore({ root }),
-  ];
-  try {
+  await withTempFlowRoot("sql-store-concurrent-", async (root) => {
+    const stores = [
+      new SqlFlowStore({ root }),
+      new SqlFlowStore({ root }),
+      new SqlFlowStore({ root }),
+    ];
     await Promise.all(stores.map((store) => store.ensure()));
 
-    const sessions = await Promise.all([
-      stores[0].createSession("concurrent-1"),
-      stores[1].createSession("concurrent-2"),
-      stores[2].createSession("concurrent-3"),
-    ]);
+    try {
+      const sessions = await Promise.all([
+        stores[0].createSession("concurrent-1"),
+        stores[1].createSession("concurrent-2"),
+        stores[2].createSession("concurrent-3"),
+      ]);
 
-    assert.equal(sessions.length, 3);
+      assert.equal(sessions.length, 3);
 
-    for (const session of sessions) {
-      const read = await stores[0].readSession(session.id);
-      assert.ok(read);
-      assert.equal(read.id, session.id);
+      for (const session of sessions) {
+        const read = await stores[0].readSession(session.id);
+        assert.ok(read);
+        assert.equal(read.id, session.id);
+      }
+    } finally {
+      for (const store of stores) store.close();
     }
-  } finally {
-    for (const store of stores) store.close();
-    await rm(root, { recursive: true, force: true });
-  }
+  });
 });

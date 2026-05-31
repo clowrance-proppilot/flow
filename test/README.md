@@ -29,3 +29,14 @@ Coverage output is written under `coverage/v8/`, which is ignored by git.
 Add a new category script when a test file becomes a stable local feedback
 boundary. Do not remove a file from `scripts/test-flow.mjs` unless it should no
 longer run in the full required suite.
+
+## Fixtures
+
+Shared setup helpers live in `test/helpers/fixtures.ts`.
+
+- `withTempFlowRoot(prefix, run)` creates and cleans up a temporary Flow root.
+- `withSqlFlowStore(prefix, run)` creates, ensures, closes, and cleans up a `SqlFlowStore`.
+- `withFileFlowStore(prefix, run)` creates, ensures, and cleans up a file-backed `FlowStore`.
+
+Use these helpers for repeated setup. Keep assertions in the test body so each
+test still shows the behavior it proves.
