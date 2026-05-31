@@ -12,11 +12,41 @@ const files = [
   "src/work-runtime.ts",
   "src/dashboard/index.html",
   "src/dashboard/main.tsx",
+  "src/dashboard/types.ts",
+  "src/dashboard/utils.ts",
+  "src/dashboard/components/TopBar.tsx",
+  "src/dashboard/components/Sidebar.tsx",
+  "src/dashboard/components/IssueList.tsx",
+  "src/dashboard/components/WorkflowTrack.tsx",
+  "src/dashboard/components/DetailSection.tsx",
+  "src/dashboard/components/BrandMark.tsx",
   "src/dashboard/styles.css",
   "scripts/smoke-dashboard.mjs",
 ].map((path) => [path, readFileSync(join(flowRoot, path), "utf8")]);
 
+const dashboardClientFiles = [
+  "src/dashboard/main.tsx",
+  "src/dashboard/types.ts",
+  "src/dashboard/utils.ts",
+  "src/dashboard/components/TopBar.tsx",
+  "src/dashboard/components/Sidebar.tsx",
+  "src/dashboard/components/IssueList.tsx",
+  "src/dashboard/components/WorkflowTrack.tsx",
+  "src/dashboard/components/DetailSection.tsx",
+  "src/dashboard/components/BrandMark.tsx",
+];
+
 const violations = [];
+
+function checkAbsentInDashboardClient(pattern, message) {
+  for (const path of dashboardClientFiles) {
+    const source = files.find(([candidate]) => candidate === path)?.[1] ?? "";
+    if (pattern.test(source)) {
+      violations.push(message);
+      return;
+    }
+  }
+}
 
 checkAbsent("src/dashboard-server.ts", /\bapp\.(post|put|patch|delete)\s*\(/, "Dashboard server must not expose mutation routes.");
 checkAbsent("src/dashboard-server.ts", /\/api\/actions\b/, "Dashboard server must not expose action endpoints.");
@@ -88,56 +118,56 @@ checkDashboardStatePublicContract();
 checkDashboardQueueContract();
 checkDashboardRuntimeMethods("src/dashboard-state.ts", ["inspectDashboardQueue"]);
 checkDashboardSmokeContract();
-checkAbsent("src/dashboard/main.tsx", /\bEventSource\b/, "Dashboard UI must not subscribe to command event streams.");
-checkAbsent("src/dashboard/main.tsx", /\/api\/actions\b/, "Dashboard UI must not call action endpoints.");
-checkAbsent("src/dashboard/main.tsx", /\bmethod\s*:\s*["'](?:POST|PUT|PATCH|DELETE)["']/, "Dashboard UI must not issue mutation requests.");
-checkAbsent("src/dashboard/main.tsx", /\bSettings2\b|settings-menu|aria-label=["']Settings["']/, "Dashboard UI must not expose non-state settings controls.");
-checkAbsent("src/dashboard/main.tsx", /onRefresh|Reload dashboard snapshot|["'>(](?:Advance|Autoflow|Prepare Workspace|Run Flow|Command|Reload)["'<)]/, "Dashboard UI must not expose command-like labels or mutation controls.");
-checkAbsent("src/dashboard/main.tsx", /Open Issue|Open PR|No Issue Link|No PR/, "Dashboard links should not use command-shaped labels.");
-checkAbsent("src/dashboard/main.tsx", /\bExternalButton\b|\bDisabledButton\b/, "Dashboard links must render as mirror metadata, not button-like controls.");
-checkAbsent("src/dashboard/main.tsx", /\bExternalLink\b|target=["']_blank["']|href=\{issue\.(?:issueUrl|prUrl)\}|href=\{href\}/, "Dashboard UI must not expose external navigation controls.");
-checkAbsent("src/dashboard/main.tsx", /selected:\s*["'](?:Selected|In Flow)["']|Flow State|Flow Stage|No issue selected|accent-selected/, "Dashboard UI should use clear work status labels instead of raw workflow wording.");
-checkAbsent("src/dashboard/main.tsx", /Flow stage|Flow Stage/, "Dashboard tooltips and headings should use work status wording.");
-checkAbsent("src/dashboard/main.tsx", /\bworkflowState\b|ready_to_run|awaiting_review|awaiting_human/, "Dashboard UI should consume display work status labels, not raw workflow state keys.");
-checkAbsent("src/dashboard/main.tsx", /\.split\(["']_["']\)|slice\(0,\s*1\).*toUpperCase/, "Dashboard UI must not derive visible labels from raw workflow state names.");
-checkAbsent("src/dashboard/main.tsx", /["']Live["']/, "Dashboard status should describe snapshots, not a live stream.");
-checkAbsent("src/dashboard/main.tsx", /Flow CLI|reconciliation|Flow runtime/, "Dashboard UI copy must not expose implementation-specific runtime wording.");
-checkAbsent("src/dashboard/main.tsx", /No issue tracker status/, "Dashboard UI copy should avoid adapter-specific status wording.");
-checkAbsent("src/dashboard/main.tsx", /\bapplyThemeToDOM\b|\bdefaultThemes\b|\bresolveTheme\b|\/dashboard\/custom\.css/, "Dashboard UI must use the built-in presentation only.");
-checkAbsent("src/dashboard/main.tsx", /data-theme|themed-scroll|\[data-theme=/, "Dashboard UI must not keep mutable theme hooks.");
-checkAbsent("src/dashboard/main.tsx", /autoflow/i, "Dashboard UI must not expose Autoflow orchestration fields.");
-checkAbsent("src/dashboard/main.tsx", /statusMessage|degraded|degradedError|refreshing\?:|stale\?:|source\?:/, "Dashboard UI must not consume unused runtime status wrapper fields.");
-checkAbsent("src/dashboard/main.tsx", /\berror\?:\s*string|payload\.error/, "Dashboard UI must not consume dashboard API error strings.");
-checkAbsent("src/dashboard/main.tsx", /\brefreshedAt\b|\bageSeconds\b|toLocaleTimeString|new Date\(/, "Dashboard UI should consume display snapshot freshness labels, not raw snapshot freshness fields.");
-checkAbsent("src/dashboard/main.tsx", /\b(?:evidenceRecorded|documentationRecorded)\b/, "Dashboard UI should consume display record status labels, not raw record booleans.");
-checkAbsent("src/dashboard/main.tsx", /\b(?:prIsDraft|prChecksPassing|prReviewDecision|humanReviewRequired)\b/, "Dashboard UI should consume display PR and review labels, not raw provider PR fields.");
-checkAbsent("src/dashboard/main.tsx", /\bworktreePath\b|Worktree/, "Dashboard UI must not expose local worktree paths.");
-checkAbsent("src/dashboard/main.tsx", /\bheadSha\b|\bshortSha\b|>\s*Head\s*</, "Dashboard UI must not expose raw commit heads.");
-checkAbsent("src/dashboard/main.tsx", /\bissue\.branch\b|>\s*Branch\s*</, "Dashboard UI must not expose source-control branch details.");
-checkAbsent("src/dashboard/main.tsx", /\brepoKeys\b/, "Dashboard UI should consume repository labels, not raw repoKeys fields.");
-checkAbsent("src/dashboard/main.tsx", /\bissueStatus\b/, "Dashboard UI should consume display status labels, not raw issueStatus fields.");
-checkAbsent("src/dashboard/main.tsx", /\bupdatedAt\b|\brelativeTime\b/, "Dashboard UI should consume display update labels, not raw per-issue timestamps.");
-checkAbsent("src/dashboard/main.tsx", /\b(?:issueUrl|prUrl|issueLinkStatus|prLinkStatus|LinkPresence|linkStatusLabel)\b/, "Dashboard UI must not expose external URLs or non-actionable link presence fields.");
-checkAbsent("src/dashboard/main.tsx", /\bactiveState\b|\bactiveStage\b|\bstateCounts\b|\bstageCounts\b|\bonStateChange\b|\bonStageChange\b|\bStateFilter\b|\bStageFilter\b/, "Dashboard status filters must be keyed by visible labels, not raw workflow states.");
-checkAbsent("src/dashboard/main.tsx", /const state = flowState\(issue\);\s*counts\[state\]|\bflowState\(/, "Dashboard status counts must use visible labels, not raw workflow state names.");
-checkAbsent("src/dashboard/main.tsx", /setActiveRef[\s\S]*nextIssues\[0\]\?\.ref/, "Dashboard initial focus should prefer the active Flow issue, not the first queue item.");
-checkAbsent("src/dashboard/main.tsx", /<DetailSection title=["']Work Status["']>[\s\S]*workflowStatusLabel\(workflowStatusKey\(issue\)\)[\s\S]*<WorkflowTrack statusKey=\{issue\.workflowState\} size=["']md["'] \/>/, "Dashboard detail status should not render duplicate visible status labels.");
-checkAbsent("src/dashboard/main.tsx", /function matchesQuery[\s\S]*issue\.workflowState/, "Dashboard search must use visible stage labels, not raw workflow state names.");
-checkAbsent("src/dashboard/main.tsx", /function matchesQuery[\s\S]*issue\.(?:issueUrl|prUrl)/, "Dashboard search must not index hidden link URLs.");
-checkAbsent("src/dashboard/main.tsx", /\{issue\.prReviewDecision\s*\|\|/, "Dashboard UI must label review decisions instead of rendering raw provider values.");
-checkAbsent("src/dashboard/main.tsx", /checks passing|checks failing/, "Dashboard UI must label PR check state with display wording.");
-checkAbsent("src/dashboard/main.tsx", />\s*\{blocker\}\s*</, "Dashboard UI must label blockers instead of rendering raw blocker text directly.");
-checkAbsent("src/dashboard/main.tsx", /function matchesQuery[\s\S]*\?\s*issue\.blockers\s*:\s*\[\]/, "Dashboard search must use visible blocker labels, not raw blocker text.");
-checkAbsent("src/dashboard/main.tsx", /\bissue\.blockers\b|\bblockerLabel\b/, "Dashboard UI should consume blocker display labels, not raw blocker fields.");
-checkAbsent("src/dashboard/main.tsx", /issue\.(?:evidenceRecorded|documentationRecorded)\s*\?\s*["']recorded["']\s*:\s*["']missing["']/, "Dashboard UI must label record booleans as dashboard status, not raw recorded/missing wording.");
-checkAbsent("src/dashboard/main.tsx", /No blockers recorded/, "Dashboard blocker empty state should be concise mirror wording.");
+checkAbsentInDashboardClient(/\bEventSource\b/, "Dashboard UI must not subscribe to command event streams.");
+checkAbsentInDashboardClient(/\/api\/actions\b/, "Dashboard UI must not call action endpoints.");
+checkAbsentInDashboardClient(/\bmethod\s*:\s*["'](?:POST|PUT|PATCH|DELETE)["']/, "Dashboard UI must not issue mutation requests.");
+checkAbsentInDashboardClient(/\bSettings2\b|settings-menu|aria-label=["']Settings["']/, "Dashboard UI must not expose non-state settings controls.");
+checkAbsentInDashboardClient(/onRefresh|Reload dashboard snapshot|["'>(](?:Advance|Autoflow|Prepare Workspace|Run Flow|Command|Reload)["'<)]/, "Dashboard UI must not expose command-like labels or mutation controls.");
+checkAbsentInDashboardClient(/Open Issue|Open PR|No Issue Link|No PR/, "Dashboard links should not use command-shaped labels.");
+checkAbsentInDashboardClient(/\bExternalButton\b|\bDisabledButton\b/, "Dashboard links must render as mirror metadata, not button-like controls.");
+checkAbsentInDashboardClient(/\bExternalLink\b|target=["']_blank["']|href=\{issue\.(?:issueUrl|prUrl)\}|href=\{href\}/, "Dashboard UI must not expose external navigation controls.");
+checkAbsentInDashboardClient(/selected:\s*["'](?:Selected|In Flow)["']|Flow State|Flow Stage|No issue selected|accent-selected/, "Dashboard UI should use clear work status labels instead of raw workflow wording.");
+checkAbsentInDashboardClient(/Flow stage|Flow Stage/, "Dashboard tooltips and headings should use work status wording.");
+checkAbsentInDashboardClient(/\bworkflowState\b|ready_to_run|awaiting_review|awaiting_human/, "Dashboard UI should consume display work status labels, not raw workflow state keys.");
+checkAbsentInDashboardClient(/\.split\(["']_["']\)|slice\(0,\s*1\).*toUpperCase/, "Dashboard UI must not derive visible labels from raw workflow state names.");
+checkAbsentInDashboardClient(/["']Live["']/, "Dashboard status should describe snapshots, not a live stream.");
+checkAbsentInDashboardClient(/Flow CLI|reconciliation|Flow runtime/, "Dashboard UI copy must not expose implementation-specific runtime wording.");
+checkAbsentInDashboardClient(/No issue tracker status/, "Dashboard UI copy should avoid adapter-specific status wording.");
+checkAbsentInDashboardClient(/\bapplyThemeToDOM\b|\bdefaultThemes\b|\bresolveTheme\b|\/dashboard\/custom\.css/, "Dashboard UI must use the built-in presentation only.");
+checkAbsentInDashboardClient(/data-theme|themed-scroll|\[data-theme=/, "Dashboard UI must not keep mutable theme hooks.");
+checkAbsentInDashboardClient(/autoflow/i, "Dashboard UI must not expose Autoflow orchestration fields.");
+checkAbsentInDashboardClient(/statusMessage|degraded|degradedError|refreshing\?:|stale\?:|source\?:/, "Dashboard UI must not consume unused runtime status wrapper fields.");
+checkAbsentInDashboardClient(/\berror\?:\s*string|payload\.error/, "Dashboard UI must not consume dashboard API error strings.");
+checkAbsentInDashboardClient(/\brefreshedAt\b|\bageSeconds\b|toLocaleTimeString|new Date\(/, "Dashboard UI should consume display snapshot freshness labels, not raw snapshot freshness fields.");
+checkAbsentInDashboardClient(/\b(?:evidenceRecorded|documentationRecorded)\b/, "Dashboard UI should consume display record status labels, not raw record booleans.");
+checkAbsentInDashboardClient(/\b(?:prIsDraft|prChecksPassing|prReviewDecision|humanReviewRequired)\b/, "Dashboard UI should consume display PR and review labels, not raw provider PR fields.");
+checkAbsentInDashboardClient(/\bworktreePath\b|Worktree/, "Dashboard UI must not expose local worktree paths.");
+checkAbsentInDashboardClient(/\bheadSha\b|\bshortSha\b|>\s*Head\s*</, "Dashboard UI must not expose raw commit heads.");
+checkAbsentInDashboardClient(/\bissue\.branch\b|>\s*Branch\s*</, "Dashboard UI must not expose source-control branch details.");
+checkAbsentInDashboardClient(/\brepoKeys\b/, "Dashboard UI should consume repository labels, not raw repoKeys fields.");
+checkAbsentInDashboardClient(/\bissueStatus\b/, "Dashboard UI should consume display status labels, not raw issueStatus fields.");
+checkAbsentInDashboardClient(/\bupdatedAt\b|\brelativeTime\b/, "Dashboard UI should consume display update labels, not raw per-issue timestamps.");
+checkAbsentInDashboardClient(/\b(?:issueUrl|prUrl|issueLinkStatus|prLinkStatus|LinkPresence|linkStatusLabel)\b/, "Dashboard UI must not expose external URLs or non-actionable link presence fields.");
+checkAbsentInDashboardClient(/\bactiveState\b|\bactiveStage\b|\bstateCounts\b|\bstageCounts\b|\bonStateChange\b|\bonStageChange\b|\bStateFilter\b|\bStageFilter\b/, "Dashboard status filters must be keyed by visible labels, not raw workflow states.");
+checkAbsentInDashboardClient(/const state = flowState\(issue\);\s*counts\[state\]|\bflowState\(/, "Dashboard status counts must use visible labels, not raw workflow state names.");
+checkAbsentInDashboardClient(/setActiveRef[\s\S]*nextIssues\[0\]\?\.ref/, "Dashboard initial focus should prefer the active Flow issue, not the first queue item.");
+checkAbsentInDashboardClient(/<DetailSection title=["']Work Status["']>[\s\S]*workflowStatusLabel\(workflowStatusKey\(issue\)\)[\s\S]*<WorkflowTrack statusKey=\{issue\.workflowState\} size=["']md["'] \/>/, "Dashboard detail status should not render duplicate visible status labels.");
+checkAbsentInDashboardClient(/function matchesQuery[\s\S]*issue\.workflowState/, "Dashboard search must use visible stage labels, not raw workflow state names.");
+checkAbsentInDashboardClient(/function matchesQuery[\s\S]*issue\.(?:issueUrl|prUrl)/, "Dashboard search must not index hidden link URLs.");
+checkAbsentInDashboardClient(/\{issue\.prReviewDecision\s*\|\|/, "Dashboard UI must label review decisions instead of rendering raw provider values.");
+checkAbsentInDashboardClient(/checks passing|checks failing/, "Dashboard UI must label PR check state with display wording.");
+checkAbsentInDashboardClient(/>\s*\{blocker\}\s*</, "Dashboard UI must label blockers instead of rendering raw blocker text directly.");
+checkAbsentInDashboardClient(/function matchesQuery[\s\S]*\?\s*issue\.blockers\s*:\s*\[\]/, "Dashboard search must use visible blocker labels, not raw blocker text.");
+checkAbsentInDashboardClient(/\bissue\.blockers\b|\bblockerLabel\b/, "Dashboard UI should consume blocker display labels, not raw blocker fields.");
+checkAbsentInDashboardClient(/issue\.(?:evidenceRecorded|documentationRecorded)\s*\?\s*["']recorded["']\s*:\s*["']missing["']/, "Dashboard UI must label record booleans as dashboard status, not raw recorded/missing wording.");
+checkAbsentInDashboardClient(/No blockers recorded/, "Dashboard blocker empty state should be concise mirror wording.");
 checkAbsent("src/dashboard/index.html", /%2364a844|viewBox='0 0 35 46'/, "Dashboard favicon must use the current flow mark.");
 checkAbsent("src/dashboard/index.html", /<a\b|<button\b|<form\b|\bon[a-z]+\s*=|\btarget\s*=\s*["']_blank["']|\bdownload\s*=/i, "Dashboard HTML shell must not expose controls before React loads.");
 checkAbsent("src/dashboard/styles.css", /data-theme|themed-scroll|color-scheme:\s*light/, "Dashboard CSS must keep a single fixed navy mirror presentation.");
 checkDashboardClientPublicContract();
-checkDashboardFetches("src/dashboard/main.tsx", ["/api/dashboard"]);
-checkDashboardBrowserIsolation("src/dashboard/main.tsx");
-checkDashboardMirrorControls("src/dashboard/main.tsx", ["copy-handoff-prompt", "issue-focus", "refresh-snapshot", "search-filter", "status-filter"]);
+checkDashboardFetches(["/api/dashboard"]);
+checkDashboardBrowserIsolation();
+checkDashboardMirrorControls(["copy-handoff-prompt", "issue-focus", "refresh-snapshot", "search-filter", "status-filter"]);
 
 if (violations.length > 0) {
   console.error("Flow dashboard read-only contract check failed:");
@@ -157,40 +187,45 @@ function checkRequired(path, pattern, message) {
   if (!pattern.test(source)) violations.push(message);
 }
 
-function checkDashboardFetches(path, allowedPrefixes) {
-  const source = files.find(([candidate]) => candidate === path)?.[1] ?? "";
-  const fetchCalls = source.match(/\bfetch\s*\(/g) ?? [];
-  const literalFetches = [
-    ...[...source.matchAll(/\bfetch\s*\(\s*`([^`]+)`/g)].map((match) => match[1]),
-    ...[...source.matchAll(/\bfetch\s*\(\s*(["'])([^"']+)\1/g)].map((match) => match[2]),
-  ];
-  if (fetchCalls.length !== literalFetches.length) {
-    violations.push("Dashboard UI fetch targets must be literal read-only endpoints.");
-    return;
-  }
-  for (const target of literalFetches) {
-    if (!allowedPrefixes.includes(target)) {
-      violations.push(`Dashboard UI must only fetch ${allowedPrefixes.join(", ")}; found ${target}.`);
+function checkDashboardFetches(allowedPrefixes) {
+  for (const path of dashboardClientFiles) {
+    const source = files.find(([candidate]) => candidate === path)?.[1] ?? "";
+    const fetchCalls = source.match(/\bfetch\s*\(/g) ?? [];
+    const literalFetches = [
+      ...[...source.matchAll(/\bfetch\s*\(\s*`([^`]+)`/g)].map((match) => match[1]),
+      ...[...source.matchAll(/\bfetch\s*\(\s*(["'])([^"']+)\1/g)].map((match) => match[2]),
+    ];
+    if (fetchCalls.length !== literalFetches.length) {
+      violations.push(`Dashboard UI fetch targets must be literal read-only endpoints (found non-literal fetch in ${path}).`);
+      continue;
+    }
+    for (const target of literalFetches) {
+      if (!allowedPrefixes.includes(target)) {
+        violations.push(`Dashboard UI must only fetch ${allowedPrefixes.join(", ")}; found ${target} in ${path}.`);
+      }
     }
   }
 }
 
 function checkDashboardClientPublicContract() {
-  checkRequired("src/dashboard/main.tsx", /function normalizeDashboardIssue/, "Dashboard UI must normalize fetched issues through a display-field allowlist.");
+  checkRequired("src/dashboard/utils.ts", /function normalizeDashboardIssue/, "Dashboard UI must normalize fetched issues through a display-field allowlist.");
   checkRequired("src/dashboard/main.tsx", /payload\.issues\)\s*\?\s*payload\.issues\.map\(normalizeDashboardIssue\)/, "Dashboard UI must not trust raw fetched issues directly.");
-  checkRequired("src/dashboard/main.tsx", /normalizeWorkStatusLabel/, "Dashboard UI must use the shared visible work status label allowlist.");
-  checkRequired("src/dashboard/main.tsx", /function normalizeWorkStatus/, "Dashboard UI must normalize work status labels before rendering.");
-  checkRequired("src/dashboard/main.tsx", /issue\.workStatus = normalizeWorkStatus\(input\.workStatus\)/, "Dashboard UI must not copy raw work status strings directly.");
-  checkRequired("src/dashboard/main.tsx", /normalizeRecordStatusLabel/, "Dashboard UI must use the shared record status label allowlist.");
-  checkRequired("src/dashboard/main.tsx", /function normalizeRecordStatus/, "Dashboard UI must normalize evidence and documentation status labels before rendering.");
-  checkRequired("src/dashboard/main.tsx", /issue\.evidenceStatus = normalizeRecordStatus\(input\.evidenceStatus\)/, "Dashboard UI must not copy raw evidence status strings directly.");
-  checkRequired("src/dashboard/main.tsx", /issue\.documentationStatus = normalizeRecordStatus\(input\.documentationStatus\)/, "Dashboard UI must not copy raw documentation status strings directly.");
-  checkAbsent("src/dashboard/main.tsx", /assignDisplayString\(issue,\s*["'](?:workStatus|evidenceStatus|documentationStatus)["']/, "Dashboard UI must not copy guarded display status fields with generic string assignment.");
-  checkAbsent("src/dashboard/main.tsx", /return issue\.workStatus \|\| ["']Unknown["']/, "Dashboard UI must render normalized work status labels.");
-  checkAbsent("src/dashboard/main.tsx", /return status \|\| ["']Needed["']/, "Dashboard UI must render normalized record status labels.");
+  checkRequired("src/dashboard/utils.ts", /normalizeWorkStatusLabel/, "Dashboard UI must use the shared visible work status label allowlist.");
+  checkRequired("src/dashboard/utils.ts", /function normalizeWorkStatus/, "Dashboard UI must normalize work status labels before rendering.");
+  checkRequired("src/dashboard/utils.ts", /issue\.workStatus = normalizeWorkStatus\(input\.workStatus\)/, "Dashboard UI must not copy raw work status strings directly.");
+  checkRequired("src/dashboard/utils.ts", /normalizeRecordStatusLabel/, "Dashboard UI must use the shared record status label allowlist.");
+  checkRequired("src/dashboard/utils.ts", /function normalizeRecordStatus/, "Dashboard UI must normalize evidence and documentation status labels before rendering.");
+  checkRequired("src/dashboard/utils.ts", /issue\.evidenceStatus = normalizeRecordStatus\(input\.evidenceStatus\)/, "Dashboard UI must not copy raw evidence status strings directly.");
+  checkRequired("src/dashboard/utils.ts", /issue\.documentationStatus = normalizeRecordStatus\(input\.documentationStatus\)/, "Dashboard UI must not copy raw documentation status strings directly.");
+  checkAbsentInDashboardClient(/assignDisplayString\(issue,\s*["'](?:workStatus|evidenceStatus|documentationStatus)["']/, "Dashboard UI must not copy guarded display status fields with generic string assignment.");
+  checkAbsentInDashboardClient(/return issue\.workStatus \|\| ["']Unknown["']/, "Dashboard UI must render normalized work status labels.");
+  checkAbsentInDashboardClient(/return status \|\| ["']Needed["']/, "Dashboard UI must render normalized record status labels.");
   for (const rawField of ["workflowState", "issueUrl", "prUrl", "repoKeys", "worktreePath", "headSha", "prIsDraft", "prChecksPassing", "prReviewDecision", "humanReviewRequired", "evidenceRecorded", "documentationRecorded"]) {
-    if (new RegExp(`\\b${rawField}\\b`).test(files.find(([candidate]) => candidate === "src/dashboard/main.tsx")?.[1] ?? "")) {
-      violations.push(`Dashboard UI normalizer must not expose raw field ${rawField}.`);
+    for (const path of dashboardClientFiles) {
+      if (new RegExp(`\\b${rawField}\\b`).test(files.find(([candidate]) => candidate === path)?.[1] ?? "")) {
+        violations.push(`Dashboard UI normalizer must not expose raw field ${rawField} (found in ${path}).`);
+        break;
+      }
     }
   }
 }
@@ -205,8 +240,7 @@ function checkDashboardLabelContract() {
   checkAbsent("src/dashboard-labels.ts", /\bselected\b|\bready_to_run\b|\bawaiting_review\b|\bawaiting_human\b|\bworkflowState\b/, "Dashboard shared labels must not include raw workflow state keys.");
 }
 
-function checkDashboardBrowserIsolation(path) {
-  const source = files.find(([candidate]) => candidate === path)?.[1] ?? "";
+function checkDashboardBrowserIsolation() {
   const forbidden = [
     [/\blocalStorage\b/, "localStorage"],
     [/\bsessionStorage\b/, "sessionStorage"],
@@ -230,30 +264,37 @@ function checkDashboardBrowserIsolation(path) {
     [/\bdownload\s*=/, "download"],
     [/\btarget\s*=\s*["']_blank["']/, "new-window target"],
   ];
-  for (const [pattern, label] of forbidden) {
-    if (pattern.test(source)) {
-      violations.push(`Dashboard UI must stay a passive mirror and not use browser ${label} APIs.`);
+  for (const path of dashboardClientFiles) {
+    const source = files.find(([candidate]) => candidate === path)?.[1] ?? "";
+    for (const [pattern, label] of forbidden) {
+      if (pattern.test(source)) {
+        violations.push(`Dashboard UI must stay a passive mirror and not use browser ${label} APIs (found in ${path}).`);
+      }
     }
   }
 }
 
-function checkDashboardMirrorControls(path, allowedControls) {
-  const source = files.find(([candidate]) => candidate === path)?.[1] ?? "";
+function checkDashboardMirrorControls(allowedControls) {
   const allowed = new Set(allowedControls);
-  const controlTags = [...source.matchAll(/<(button|input)\b[\s\S]*?(?:>|\/>)/g)];
-  if (!controlTags.length) {
-    violations.push("Dashboard UI should declare local mirror controls explicitly.");
+  let totalControlTags = 0;
+  for (const path of dashboardClientFiles) {
+    const source = files.find(([candidate]) => candidate === path)?.[1] ?? "";
+    const controlTags = [...source.matchAll(/<(button|input)\b[\s\S]*?(?:>|\/>)/g)];
+    totalControlTags += controlTags.length;
+    for (const match of controlTags) {
+      const tag = match[0];
+      const control = tag.match(/\bdata-mirror-control=["']([^"']+)["']/)?.[1];
+      if (!control) {
+        violations.push(`Dashboard ${match[1]} controls must be marked with data-mirror-control (found in ${path}).`);
+        continue;
+      }
+      if (!allowed.has(control)) {
+        violations.push(`Dashboard mirror control ${control} is not an allowed local view control (found in ${path}).`);
+      }
+    }
   }
-  for (const match of controlTags) {
-    const tag = match[0];
-    const control = tag.match(/\bdata-mirror-control=["']([^"']+)["']/)?.[1];
-    if (!control) {
-      violations.push(`Dashboard ${match[1]} controls must be marked with data-mirror-control.`);
-      continue;
-    }
-    if (!allowed.has(control)) {
-      violations.push(`Dashboard mirror control ${control} is not an allowed local view control.`);
-    }
+  if (!totalControlTags) {
+    violations.push("Dashboard UI should declare local mirror controls explicitly.");
   }
 }
 
