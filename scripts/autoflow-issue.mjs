@@ -5,47 +5,70 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const flowRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+const scriptPath = fileURLToPath(import.meta.url);
+const flowRoot = dirname(dirname(scriptPath));
 
-const { issueRef, flowBin, maxCycles, maxSteps } = parseArgs(process.argv.slice(2));
-
-const session = await call("createSession", {});
-const queue = await call("inspectQueue", { limit: 50 });
-const selectedIssue = Array.isArray(queue)
-  ? queue.find((item) => item && typeof item === "object" && String(item.ref ?? "") === issueRef)
-  : undefined;
-await call("selectIssue", {
-  sessionId: session.id,
-  issue: selectedIssue ?? { ref: issueRef, title: issueRef, repoKeys: [], metadata: {} },
-});
-
-let finalResult = null;
-for (let cycle = 0; cycle < maxCycles; cycle += 1) {
-  finalResult = await call("autoFlowIssue", {
-    sessionId: session.id,
-    options: {
-      autoPrepareWorkspace: true,
-      maxSteps,
-    },
-  });
-  const status = String(finalResult?.status ?? "");
-  const message = String(finalResult?.message ?? "");
-  if (status === "review_ready" || status === "done") break;
-  if (message.toLowerCase().includes("blocked on provider escalation")) break;
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  await main(process.argv.slice(2));
 }
 
-const issue = finalResult?.issue ?? null;
-const output = {
-  sessionId: session.id,
-  issueRef,
-  status: finalResult?.status ?? "unknown",
-  message: finalResult?.message ?? "",
-  finalIssueState: issue?.state ?? undefined,
-};
-console.log(JSON.stringify(output, null, 2));
+export async function main(args) {
+  const { issueRef, flowBin, maxCycles, maxSteps } = parseArgs(args);
+  const flowCommand = flowInvocationForBin(flowBin);
 
-async function call(method, params) {
-  const { stdout, stderr } = await execFileAsync(flowBin, [JSON.stringify({ op: "runtime", method, params })], {
+  const session = await call(flowCommand, "createSession", {});
+  const queue = await call(flowCommand, "inspectQueue", { limit: 50 });
+  const selectedIssue = Array.isArray(queue)
+    ? queue.find((item) => item && typeof item === "object" && String(item.ref ?? "") === issueRef)
+    : undefined;
+  await call(flowCommand, "selectIssue", {
+    sessionId: session.id,
+    issue: selectedIssue ?? { ref: issueRef, title: issueRef, repoKeys: [], metadata: {} },
+  });
+
+  let finalResult = null;
+  for (let cycle = 0; cycle < maxCycles; cycle += 1) {
+    finalResult = await call(flowCommand, "autoFlowIssue", {
+      sessionId: session.id,
+      options: {
+        autoPrepareWorkspace: true,
+        maxSteps,
+      },
+    });
+    const status = String(finalResult?.status ?? "");
+    const message = String(finalResult?.message ?? "");
+    if (status === "review_ready" || status === "done") break;
+    if (message.toLowerCase().includes("blocked on provider escalation")) break;
+  }
+
+  const issue = finalResult?.issue ?? null;
+  const output = {
+    sessionId: session.id,
+    issueRef,
+    status: finalResult?.status ?? "unknown",
+    message: finalResult?.message ?? "",
+    finalIssueState: issue?.state ?? undefined,
+  };
+  console.log(JSON.stringify(output, null, 2));
+}
+
+export function flowInvocationForBin(flowBin, platform = process.platform, nodePath = process.execPath) {
+  const lower = flowBin.toLowerCase();
+  if (platform !== "win32") return { command: flowBin, argsPrefix: [] };
+  if (lower.endsWith(".ps1")) {
+    throw new Error("PowerShell flow shims cannot be launched by execFile. Use the repository bin/flow script or a .cmd/.exe flow shim.");
+  }
+  if (lower.endsWith(".cmd") || lower.endsWith(".bat") || lower.endsWith(".exe") || lower.endsWith(".com")) {
+    return { command: flowBin, argsPrefix: [] };
+  }
+  return { command: nodePath, argsPrefix: [flowBin] };
+}
+
+async function call(flowCommand, method, params) {
+  const { stdout, stderr } = await execFileAsync(flowCommand.command, [
+    ...flowCommand.argsPrefix,
+    JSON.stringify({ op: "runtime", method, params }),
+  ], {
     cwd: process.cwd(),
     maxBuffer: 20 * 1024 * 1024,
   });
