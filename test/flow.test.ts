@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { Readable } from "node:stream";
 import { promisify } from "node:util";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -48,6 +49,7 @@ import {
   type CreateIssueOptions,
   type WorkItem,
 } from "../src/index.js";
+import { JsonCliError, runJsonCli, type JsonCliOptions } from "../src/json-cli.js";
 import type { ProjectTopology } from "../src/project-topology.js";
 import { normalizePullRequest, parseGitHubIssues, parsePullRequests } from "../src/adapters/github.js";
 import { currentUserBacklogJql, currentUserOpenSprintJql, parseJiraCommentUrl, parseJiraIssue, parseJiraSearch } from "../src/adapters/jira.js";
@@ -128,6 +130,64 @@ async function commandPath(command: string): Promise<string> {
   const first = stdout.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
   if (!first) throw new Error(`Could not resolve ${command}.`);
   return first;
+}
+
+async function captureJsonCli(
+  argv: string[],
+  options: {
+    stdin?: NodeJS.ReadableStream;
+    route?: JsonCliOptions["route"];
+  } = {},
+): Promise<{ exitCode: string | number | undefined; payload: any; routeCalls: number }> {
+  const originalArgv = process.argv;
+  const originalExitCode = process.exitCode;
+  const originalWrite = process.stdout.write;
+  const stdinDescriptor = Object.getOwnPropertyDescriptor(process, "stdin");
+  let output = "";
+  let routeCalls = 0;
+
+  process.argv = ["node", "flow", ...argv];
+  process.exitCode = undefined;
+  process.stdout.write = ((chunk: string | Uint8Array, encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void), callback?: (error?: Error | null) => void) => {
+    output += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+    const done = typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
+    done?.();
+    return true;
+  }) as typeof process.stdout.write;
+  if (options.stdin) {
+    Object.defineProperty(process, "stdin", { value: options.stdin, configurable: true });
+  }
+
+  try {
+    await runJsonCli({
+      manifest: () => ({ targets: [] }),
+      route: async (request, context) => {
+        routeCalls += 1;
+        if (options.route) return options.route(request, context);
+        return { ok: true };
+      },
+    });
+    return {
+      exitCode: process.exitCode,
+      payload: parseCapturedJsonCliOutput(output),
+      routeCalls,
+    };
+  } finally {
+    process.argv = originalArgv;
+    process.exitCode = originalExitCode;
+    process.stdout.write = originalWrite;
+    if (stdinDescriptor) Object.defineProperty(process, "stdin", stdinDescriptor);
+  }
+}
+
+function parseCapturedJsonCliOutput(output: string): any {
+  const start = output.indexOf('{"ok"');
+  if (start === -1) {
+    throw new Error(`JSON CLI did not write a response envelope: ${JSON.stringify(output)}`);
+  }
+  const end = output.indexOf("\n", start);
+  const json = end === -1 ? output.slice(start) : output.slice(start, end);
+  return JSON.parse(json);
 }
 
 test("Typed work contracts and registry validate supported jobs", () => {
@@ -677,6 +737,103 @@ test("Flow CLI honors FLOW_ROOT when invoked from another directory", async () =
   const explained = await callFlow({ op: "config", mode: "explain" });
 
   assert.equal(explained.path, flowConfigPath(root));
+});
+
+test("JSON CLI returns INVALID_JSON for malformed argv input", async () => {
+  const result = await captureJsonCli(["not-json"]);
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.payload.ok, false);
+  assert.equal(result.payload.error.code, "INVALID_JSON");
+  assert.equal(result.payload.error.details.body, "not-json");
+  assert.equal(result.routeCalls, 0);
+});
+
+test("JSON CLI returns BAD_REQUEST when op is missing", async () => {
+  const result = await captureJsonCli([JSON.stringify({ mode: "state" })]);
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.payload.ok, false);
+  assert.equal(result.payload.error.code, "BAD_REQUEST");
+  assert.equal(result.payload.error.message, "JSON body must include a non-empty string op.");
+  assert.deepEqual(result.payload.error.details.expected, { op: "string" });
+  assert.equal(result.routeCalls, 0);
+});
+
+test("JSON CLI returns BAD_ARGS for multiple body arguments", async () => {
+  const result = await captureJsonCli(["{}", "{}"]);
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.payload.ok, false);
+  assert.equal(result.payload.error.code, "BAD_ARGS");
+  assert.equal(result.payload.error.details.expected, "flow, flow manifest, or flow '<json-body>'");
+  assert.equal(result.routeCalls, 0);
+});
+
+test("JSON CLI returns RUNTIME_ERROR for route exceptions", async () => {
+  const result = await captureJsonCli([JSON.stringify({ op: "state" })], {
+    route: () => {
+      throw new Error("route exploded");
+    },
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.payload.ok, false);
+  assert.equal(result.payload.error.code, "RUNTIME_ERROR");
+  assert.equal(result.payload.error.message, "route exploded");
+  assert.deepEqual(result.payload.error.details, { op: "state" });
+  assert.equal(result.routeCalls, 1);
+});
+
+test("JSON CLI preserves JsonCliError details and manifest target", async () => {
+  const result = await captureJsonCli([JSON.stringify({ op: "review", target: "invalid" })], {
+    route: () => {
+      throw new JsonCliError("BAD_TARGET", "Unknown review target.", {
+        manifestTarget: "review",
+        details: { target: "invalid" },
+      });
+    },
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.payload.ok, false);
+  assert.equal(result.payload.error.code, "BAD_TARGET");
+  assert.equal(result.payload.error.manifest.body.target, "review");
+  assert.equal(result.payload.error.details.op, "review");
+  assert.equal(result.payload.error.details.target, "invalid");
+  assert.deepEqual(result.payload.error.details.manifest, { op: "manifest", target: "review" });
+  assert.equal(result.routeCalls, 1);
+});
+
+test("JSON CLI returns UNHANDLED_ERROR when stdin cannot be read", async () => {
+  const stdin = new Readable({
+    read() {
+      this.destroy(new Error("stdin exploded"));
+    },
+  });
+  const result = await captureJsonCli([], { stdin });
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.payload.ok, false);
+  assert.equal(result.payload.error.code, "UNHANDLED_ERROR");
+  assert.equal(result.payload.error.message, "stdin exploded");
+  assert.equal(result.routeCalls, 0);
+});
+
+test("JSON CLI routes valid stdin bodies with stdin source context", async () => {
+  const stdin = Readable.from([JSON.stringify({ op: "state" })]);
+  const result = await captureJsonCli([], {
+    stdin,
+    route: (_request, context) => ({ source: context.source }),
+  });
+
+  assert.equal(result.exitCode, undefined);
+  assert.deepEqual(result.payload, {
+    ok: true,
+    op: "state",
+    result: { source: "stdin" },
+  });
+  assert.equal(result.routeCalls, 1);
 });
 
 test("Flow CLI can record evidence and documentation in one workflow call", async () => {
