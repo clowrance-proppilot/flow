@@ -50,7 +50,8 @@
     "check": "npm run check:cli-contract && npm run check:dashboard-readonly && tsc -p tsconfig.json --noEmit",
     "check:dashboard-readonly": "node scripts/check-dashboard-readonly.mjs",
     "check:cli-contract": "node scripts/check-flow-cli-contract.mjs",
-    "test": "npm run check:cli-contract && npm run check:dashboard-readonly && node scripts/test-flow.mjs",
+    "test": "npm run check:cli-contract && npm run check:dashboard-readonly && npm run test:fast --",
+    "test:fast": "node --import tsx scripts/test-flow.mjs",
     "build:flow": "tsc -p tsconfig.json",
     "build:dashboard": "vite build --config vite.dashboard.config.ts",
     "build": "npm run build:flow && npm run build:dashboard",
@@ -118,6 +119,7 @@
     "electron": "^42.3.0",
     "electron-builder": "^26.0.12",
     "esbuild": "^0.28.0",
+    "tsx": "^4.22.3",
     "typescript": "^6.0.3"
   }
 }
