@@ -52,7 +52,7 @@ import type {
   IssueIntakeCandidate,
 } from "./adapters/provider-contracts.js";
 import { triageIssues } from "./triage.js";
-import { assessIssue } from "./readiness.js";
+import { assessIssue, isRetryableWorkerFailure } from "./readiness.js";
 import type { WorkflowLedger } from "./ledger.js";
 import type { FlowStoreInterface } from "./store.js";
 import { parseWorkEnvelope } from "./work-envelope.js";
@@ -1596,6 +1596,9 @@ export class FlowWorkRuntime {
   async diagnoseIssue(sessionId: string, issueRef?: string): Promise<FlowDoctorResult> {
     const issue = await this.reconcileIssue(sessionId, issueRef);
     const workerResults = await this.ledger.listWorkerResults(issue.ref);
+    const workJobs = await this.ledger.listWorkJobs(issue.ref);
+    const workJobResults = await this.ledger.listWorkJobResults(issue.ref);
+    const retryableWorkJobFailure = latestRetryableWorkJobFailure(workJobs, workJobResults, this.workTypes);
     const review = reviewMetadata(issue);
     const assessment = await this.readiness.assess({
       issue,
@@ -1636,7 +1639,7 @@ export class FlowWorkRuntime {
       visibility,
       codeReview: review,
       findings: assessment.findings,
-      nextAction: doctorNextAction(issue, assessment.findings, visibility),
+      nextAction: doctorNextAction(issue, assessment.findings, visibility, workerResults.at(-1), retryableWorkJobFailure),
     };
   }
 
@@ -3772,10 +3775,59 @@ function flowReviewComment(findings: any[]): string {
 function collaborationCanPostReviewComments(provider: CodeCollaborationIntegration | undefined): provider is CodeCollaborationIntegration & Required<Pick<GitHubInspector, "postPullRequestComment">> {
   return collaborationCanPostComments(provider);
 }
+
+interface RetryableWorkJobFailure {
+  jobId: string;
+  summary: string;
+}
+
+function latestRetryableWorkJobFailure(
+  workJobs: WorkJob[],
+  workJobResults: WorkJobResult[],
+  workTypes: WorkTypeRegistry,
+): RetryableWorkJobFailure | undefined {
+  const resultsByJobId = new Map(workJobResults.map((result) => [result.jobId, result]));
+  for (let index = workJobs.length - 1; index >= 0; index -= 1) {
+    const job = workJobs[index];
+    if (!job || !workTypes.isCodeProducing(job.workType)) continue;
+    if (job.status !== "blocked" && job.status !== "failed") continue;
+    const result = resultsByJobId.get(job.id);
+    if (result?.workerResult) {
+      return isRetryableWorkerFailure(result.workerResult)
+        ? { jobId: job.id, summary: result.summary }
+        : undefined;
+    }
+    if (result) {
+      const syntheticWorkerResult: WorkerTaskResult = {
+        taskId: stringFromRecord(job.input, "handoffTaskId") ?? job.id,
+        issueRef: job.issueRef,
+        repoKey: job.repoKey,
+        workJobId: job.id,
+        status: result.status === "blocked" ? "blocked" : "failed",
+        summary: result.summary,
+        changedFiles: [],
+        testsRun: [],
+        blockers: result.evidence,
+        completedAt: result.completedAt,
+      };
+      return isRetryableWorkerFailure(syntheticWorkerResult)
+        ? { jobId: job.id, summary: result.summary }
+        : undefined;
+    }
+    return {
+      jobId: job.id,
+      summary: "The latest execution job ended without a Worker result.",
+    };
+  }
+  return undefined;
+}
+
 function doctorNextAction(
   issue: WorkItem,
   findings: ReadinessFinding[],
   visibility: FlowDoctorResult["visibility"],
+  latestWorker?: WorkerTaskResult,
+  retryableWorkJobFailure?: RetryableWorkJobFailure,
 ): FlowDoctorResult["nextAction"] {
   if (isFlowTerminal(issue)) {
     return {
@@ -3810,6 +3862,13 @@ function doctorNextAction(
       type: "prepare_workspace",
       command: `flow '{"op":"workflow","mode":"advance","id":"${issue.ref}"}'`,
       summary: "Let Flow prepare the routed workspace or approve the prepare-workspace confirmation.",
+    };
+  }
+  if (isRetryableWorkerFailure(latestWorker) || retryableWorkJobFailure) {
+    return {
+      type: "retry_execution",
+      command: `flow '{"op":"workflow","mode":"advance","id":"${issue.ref}"}'`,
+      summary: "Retry the execution handoff now that the executor setup can be repaired.",
     };
   }
   if (

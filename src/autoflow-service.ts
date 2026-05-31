@@ -569,6 +569,7 @@ export class AutoflowService {
   }
 
   private async nextCandidates(limit: number, issueRefs?: string[]): Promise<Array<{ ref: string; repoKeys: string[]; title: string; metadata: Record<string, unknown> }>> {
+    const explicitTargets = Boolean(issueRefs?.length);
     const queue = issueRefs?.length
       ? await Promise.all(issueRefs.map((ref) => this.runtime.inspectIssue(ref).then((issue) => issue ?? undefined)))
       : await this.runtime.inspectQueue(50);
@@ -578,11 +579,11 @@ export class AutoflowService {
       if (!issue) continue;
       if (candidates.length >= limit) break;
       // Only pick up issues that can still advance automatically.
-      if (issue.state !== "queued" && issue.state !== "selected" && issue.state !== "ready_to_run") continue;
+      if (issue.state !== "queued" && issue.state !== "selected" && issue.state !== "ready_to_run" && !(explicitTargets && issue.state === "blocked")) continue;
       if (this.activeRuns.has(issue.ref)) continue;
       // Skip issues that have been flagged as needing input
       const issueStatus = this.issueStatuses.get(issue.ref);
-      if (issueStatus?.phase === "needs_input") continue;
+      if (issueStatus?.phase === "needs_input" && !explicitTargets) continue;
       candidates.push({
         ref: issue.ref,
         repoKeys: issue.repoKeys.length ? issue.repoKeys : ["flow"],

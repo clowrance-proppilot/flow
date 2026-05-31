@@ -355,13 +355,28 @@ function readableText(value: unknown): string | undefined {
   return compact;
 }
 
-function shouldAutoRetryWorker(result: WorkerTaskResult): boolean {
-  const summary = readableText(result.summary)?.toLowerCase() ?? "";
-  if (summary.includes("without a readable error message")) return true;
-  if (summary.includes("timed out")) return true;
-  if (summary.includes("interrupted before returning a structured result")) return true;
-  if (summary.includes("provider credentials")) return true;
+export function isRetryableWorkerFailure(result: WorkerTaskResult | undefined): boolean {
+  if (!result || (result.status !== "blocked" && result.status !== "failed")) return false;
+  const text = readableText([
+    result.summary,
+    result.nextPickup,
+    ...result.blockers,
+  ].filter((item): item is string => typeof item === "string").join(" "))?.toLowerCase() ?? "";
+  if (text.includes("without a readable error message")) return true;
+  if (text.includes("timed out")) return true;
+  if (text.includes("interrupted before returning a structured result")) return true;
+  if (text.includes("provider credentials")) return true;
+  if (text.includes("executor setup")) return true;
+  if (text.includes("environment setup")) return true;
+  if (text.includes("pi sdk")) return true;
+  if (text.includes("@earendil-works/pi-coding-agent")) return true;
+  if (text.includes("worker session stalled")) return true;
+  if (text.includes("autoflow") && text.includes("stuck")) return true;
   return false;
+}
+
+function shouldAutoRetryWorker(result: WorkerTaskResult): boolean {
+  return isRetryableWorkerFailure(result);
 }
 
 function shouldTreatBlockerAsRetryable(blocker: string, result: WorkerTaskResult): boolean {
@@ -370,7 +385,13 @@ function shouldTreatBlockerAsRetryable(blocker: string, result: WorkerTaskResult
   return normalized.includes("without a readable error message") ||
     normalized.includes("timed out") ||
     normalized.includes("interrupted before returning a structured result") ||
-    normalized.includes("provider credentials");
+    normalized.includes("provider credentials") ||
+    normalized.includes("executor setup") ||
+    normalized.includes("environment setup") ||
+    normalized.includes("pi sdk") ||
+    normalized.includes("@earendil-works/pi-coding-agent") ||
+    normalized.includes("worker session stalled") ||
+    (normalized.includes("autoflow") && normalized.includes("stuck"));
 }
 
 function isProviderCredentialWorkerFailure(result: WorkerTaskResult | undefined): boolean {

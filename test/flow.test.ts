@@ -5423,6 +5423,283 @@ test("Work Runtime records current local thread against a pending handoff reques
   assert.notEqual(advanced.session.pendingConfirmation?.action, "request_execution");
 });
 
+test("Work Runtime retries retryable executor setup failures without recreating the workspace", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  const session = await workRuntime.createSession("session-retry-executor-setup");
+  const workspacePath = "/repo/app-api/.worktrees/bug-gh-376";
+  await workRuntime.selectIssue(session.id, {
+    ref: "GH-376",
+    title: "Retry executor setup",
+    repoKeys: ["app_api"],
+    state: "ready_to_run",
+    metadata: {
+      "workflow.repos.app_api.worktree_path": workspacePath,
+    },
+  });
+
+  const firstPending = await workRuntime.advanceIssue(session.id);
+  const firstConfirmationId = firstPending.session.pendingConfirmation?.id;
+  assert.ok(firstConfirmationId);
+  const firstApproved = await workRuntime.advanceIssue(session.id, firstConfirmationId);
+  assert.equal(firstApproved.status, "execution_handoff");
+  assert.ok(firstApproved.handoffRequest?.workJobId);
+  assert.ok(firstApproved.handoffRequest?.id);
+
+  await workRuntime.recordLocalThreadResult(session.id, {
+    issueRef: "GH-376",
+    repoKey: "app_api",
+    taskId: firstApproved.handoffRequest.id,
+    workJobId: firstApproved.handoffRequest.workJobId,
+    status: "failed",
+    summary: "Executor setup failed: @earendil-works/pi-coding-agent could not be imported.",
+    blockers: ["Install @earendil-works/pi-coding-agent, then retry the handoff."],
+  });
+
+  const doctor = await workRuntime.diagnoseIssue(session.id);
+  assert.equal(doctor.nextAction.type, "retry_execution");
+  assert.match(doctor.nextAction.summary, /Retry the execution handoff/);
+
+  const retryPending = await workRuntime.advanceIssue(session.id);
+  const retryConfirmationId = retryPending.session.pendingConfirmation?.id;
+  assert.equal(retryPending.status, "needs_confirmation");
+  assert.equal(retryPending.session.pendingConfirmation?.action, "request_execution");
+  assert.ok(retryConfirmationId);
+  const retryApproved = await workRuntime.advanceIssue(session.id, retryConfirmationId);
+  assert.equal(retryApproved.status, "execution_handoff");
+  assert.ok(retryApproved.handoffRequest?.workJobId);
+
+  const jobs = await ledger.listWorkJobs("GH-376");
+  assert.equal(jobs.length, 2);
+  assert.equal(jobs[0].status, "failed");
+  assert.equal(jobs[1].status, "queued");
+  assert.equal(jobs[0].input.workspacePath, workspacePath);
+  assert.equal(jobs[1].input.workspacePath, workspacePath);
+  assert.equal((await ledger.readIssue("GH-376"))?.metadata["workflow.repos.app_api.worktree_path"], workspacePath);
+});
+
+test("Work Runtime doctor treats blocked execution jobs without Worker results as retryable handoff failures", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  const session = await workRuntime.createSession("session-retry-blocked-job");
+  const workspacePath = "/repo/app-api/.worktrees/bug-gh-378";
+  await workRuntime.selectIssue(session.id, {
+    ref: "GH-378",
+    title: "Retry raw blocked work job",
+    repoKeys: ["app_api"],
+    state: "selected",
+    metadata: {
+      "workflow.repos.app_api.worktree_path": workspacePath,
+    },
+  });
+  const job = await workRuntime.submitWorkEnvelope(session.id, {
+    issueRef: "GH-378",
+    repoKey: "app_api",
+    workType: "flow.implement",
+    executionMode: "local_thread",
+    body: "Use Flow to work this prompt.",
+    metadata: {
+      workspacePath,
+      handoffTaskId: "worker-gh-378",
+    },
+    requiredCapabilities: [],
+  });
+  const completedAt = nowIso();
+  await ledger.recordWorkJob({
+    ...job,
+    status: "blocked",
+    claimedBy: "live_agent_thread",
+    claimedAt: completedAt,
+    updatedAt: completedAt,
+    completedAt,
+  });
+  await ledger.recordWorkJobResult({
+    jobId: job.id,
+    issueRef: "GH-378",
+    repoKey: "app_api",
+    workType: "flow.implement",
+    status: "blocked",
+    summary: "Autoflow worker session stalled after reading large source files.",
+    evidence: ["Flow status reported idle while the work job remained running."],
+    completedAt,
+  });
+
+  const doctor = await workRuntime.diagnoseIssue(session.id);
+  const advanced = await workRuntime.advanceIssue(session.id);
+
+  assert.equal(doctor.nextAction.type, "retry_execution");
+  assert.equal(advanced.status, "needs_confirmation");
+  assert.equal(advanced.session.pendingConfirmation?.action, "request_execution");
+});
+
+test("Work Runtime keeps non-retryable worker failures blocked", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  const session = await workRuntime.createSession("session-nonretryable-worker-failure");
+  await workRuntime.selectIssue(session.id, {
+    ref: "GH-377",
+    title: "Non-retryable worker failure",
+    repoKeys: ["app_api"],
+    state: "ready_to_run",
+    metadata: {
+      "workflow.repos.app_api.worktree_path": "/repo/app-api/.worktrees/bug-gh-377",
+    },
+  });
+
+  const pending = await workRuntime.advanceIssue(session.id);
+  const confirmationId = pending.session.pendingConfirmation?.id;
+  assert.ok(confirmationId);
+  const approved = await workRuntime.advanceIssue(session.id, confirmationId);
+  assert.equal(approved.status, "execution_handoff");
+  assert.ok(approved.handoffRequest?.workJobId);
+  assert.ok(approved.handoffRequest?.id);
+
+  await workRuntime.recordLocalThreadResult(session.id, {
+    issueRef: "GH-377",
+    repoKey: "app_api",
+    taskId: approved.handoffRequest.id,
+    workJobId: approved.handoffRequest.workJobId,
+    status: "failed",
+    summary: "Tests failed.",
+    blockers: ["npm test failed."],
+    testsRun: ["npm test"],
+  });
+
+  const blocked = await workRuntime.advanceIssue(session.id);
+  const jobs = await ledger.listWorkJobs("GH-377");
+
+  assert.equal(blocked.status, "blocked");
+  assert.equal(blocked.session.pendingConfirmation, undefined);
+  assert.match(blocked.message, /npm test failed/);
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].status, "failed");
+});
+
+test("AutoflowService retries a targeted blocked issue when the latest failure is retryable", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    collaboration: new NoopCodeCollaborationAdapter(),
+  });
+  const session = await workRuntime.createSession("session-autoflow-targeted-retry");
+  const workspacePath = "/repo/app-api/.worktrees/bug-gh-376";
+  await workRuntime.selectIssue(session.id, {
+    ref: "GH-376",
+    title: "Targeted Autoflow retry",
+    repoKeys: ["app_api"],
+    state: "ready_to_run",
+    metadata: {
+      "workflow.repos.app_api.worktree_path": workspacePath,
+    },
+  });
+
+  const firstPending = await workRuntime.advanceIssue(session.id);
+  const firstConfirmationId = firstPending.session.pendingConfirmation?.id;
+  assert.ok(firstConfirmationId);
+  const firstApproved = await workRuntime.advanceIssue(session.id, firstConfirmationId);
+  assert.ok(firstApproved.handoffRequest?.id);
+  assert.ok(firstApproved.handoffRequest?.workJobId);
+  await workRuntime.recordLocalThreadResult(session.id, {
+    issueRef: "GH-376",
+    repoKey: "app_api",
+    taskId: firstApproved.handoffRequest.id,
+    workJobId: firstApproved.handoffRequest.workJobId,
+    status: "failed",
+    summary: "Executor setup failed: Pi SDK import failed.",
+    blockers: ["@earendil-works/pi-coding-agent is installed incorrectly."],
+  });
+
+  const service = new AutoflowService({
+    projectId: "flow",
+    runtime: workRuntime,
+    agentSessionDriver: {
+      async getSession() {
+        return {
+          id: "agent-gh-376",
+          workspacePath,
+          status: "done",
+          timeline: [],
+        };
+      },
+      async openOrCreateIssueSession() {
+        return {
+          id: "agent-gh-376",
+          workspacePath,
+          status: "active",
+          timeline: [],
+        };
+      },
+      async sendUserMessage() {
+        return {
+          id: "agent-gh-376",
+          workspacePath,
+          status: "done",
+          summary: "Implemented and committed GH-376.",
+          timeline: [],
+        };
+      },
+      async postPrompt() {
+        return {
+          id: "agent-gh-376",
+          workspacePath,
+          status: "done",
+          summary: "Implemented and committed GH-376.",
+          timeline: [
+            {
+              id: "tool-edit",
+              role: "tool",
+              toolName: "apply_patch",
+              content: "edited",
+              diff: { path: "src/work-runtime.ts" },
+              createdAt: nowIso(),
+            },
+            {
+              id: "tool-test",
+              role: "tool",
+              toolName: "npm test",
+              content: "tests passed",
+              createdAt: nowIso(),
+            },
+            {
+              id: "tool-commit",
+              role: "tool",
+              toolName: "git",
+              content: "commit abc123",
+              createdAt: nowIso(),
+            },
+            {
+              id: "assistant-done",
+              role: "assistant",
+              content: "Implemented and committed GH-376.",
+              createdAt: nowIso(),
+            },
+          ],
+        };
+      },
+    },
+    autoReconcileOnSlotAvailable: false,
+  });
+
+  const started = await service.reconcile({ issueRefs: ["GH-376"] });
+  assert.equal(started.activeCount, 1);
+  const status = await service.waitForIdle();
+  const jobs = await ledger.listWorkJobs("GH-376");
+  const results = await ledger.listWorkerResults("GH-376");
+
+  assert.equal(status.issues["GH-376"]?.phase, "idle");
+  assert.equal(jobs.length, 2);
+  assert.equal(jobs[0].status, "failed");
+  assert.equal(jobs[1].status, "succeeded");
+  assert.equal(results.at(-1)?.status, "succeeded");
+  assert.equal(results.at(-1)?.workJobId, jobs[1].id);
+  assert.equal((await ledger.readIssue("GH-376"))?.state, "awaiting_review");
+});
+
 test("Work Runtime routes and prepares main work in the project root", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
   const projectRoot = await mkdtemp(join(tmpdir(), "host-root-"));
