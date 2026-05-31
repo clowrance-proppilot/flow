@@ -363,6 +363,78 @@ export interface FlowDoctorResult {
   };
 }
 
+export interface FlowReviewLocalResult {
+  issueRef: string;
+  state: WorkItem["state"];
+  repoKeys: string[];
+  target: "local";
+  summary: string;
+  findings: FlowReviewFinding[];
+  blocking: boolean;
+  diffs: FlowReviewDiffSummary[];
+  readiness: {
+    readyToAdvance: boolean;
+    reviewReady: boolean;
+    findings: ReadinessFinding[];
+  };
+  worker?: {
+    taskId: string;
+    status: string;
+    summary: string;
+    changedFiles: string[];
+    testsRun: string[];
+    blockers: string[];
+    completedAt?: string;
+  };
+  evidenceRecorded: boolean;
+  documentationRecorded: boolean;
+}
+
+export interface FlowReviewCodeReviewResult {
+  issueRef: string;
+  repoKeys: string[];
+  target: "code_review";
+  summary: string;
+  findings: FlowReviewFinding[];
+  blocking: boolean;
+  codeReviewRequired: boolean;
+  collaboration: string;
+  pullRequest?: {
+    url: string;
+    state?: string;
+    isDraft: boolean;
+    checksPassing?: boolean;
+    reviewDecision?: string;
+    mergeable?: string;
+    mergedAt?: string;
+    autoReviewStatus?: string;
+    autoReviewMustFix: boolean;
+    autoReviewNeedsConfirmation: boolean;
+    humanReviewRequired?: boolean;
+    reviewCommentCount?: number;
+    reviewCommentAuthors?: string[];
+  };
+  blockers: string[];
+  postedComment?: { url?: string; body: string };
+}
+
+export interface FlowReviewFinding {
+  severity: "info" | "warning" | "error";
+  message: string;
+  file?: string;
+  line?: number;
+  range?: { start?: number; end?: number };
+  blocking: boolean;
+}
+
+export interface FlowReviewDiffSummary {
+  repoKey: string;
+  repoPath: string;
+  baseRef?: string;
+  headRef?: string;
+  files: string[];
+  stat?: string;
+}
 export class FlowWorkRuntime {
   private readonly store: FlowStoreInterface;
   private readonly ledger: WorkflowLedger;
@@ -1431,6 +1503,79 @@ export class FlowWorkRuntime {
     return this.reconcileIssue(sessionId, issueRef);
   }
 
+  async reviewLocal(sessionId: string, issueRef: string): Promise<any> {
+    const issue = await this.reconcileIssue(sessionId, issueRef);
+    const workerResults = await this.ledger.listWorkerResults(issue.ref);
+    const diffs = await this.localReviewDiffs(issue);
+    const findings = reviewFindingsFromDiffs(diffs);
+    const review = reviewMetadata(issue);
+    const assessment = await this.readiness.assess({
+      issue,
+      workerResults,
+      evidenceRecorded: hasRecordedEvidence(issue),
+      documentationRecorded: hasRecordedDocumentation(issue),
+      review,
+      codeReviewRequired: this.codeReviewRequired(),
+    });
+    return {
+      issueRef: issue.ref,
+      state: issue.state,
+      repoKeys: issue.repoKeys,
+      target: "local",
+      summary: reviewSummary("local", findings, diffs),
+      findings,
+      blocking: findings.some((finding) => finding.blocking),
+      diffs: diffs.map((diff) => ({ repoKey: diff.repoKey, repoPath: diff.repoPath, baseRef: diff.baseRef, headRef: diff.headRef, files: diff.files, stat: diff.stat })),
+      readiness: { readyToAdvance: assessment.readyToAdvance, reviewReady: assessment.reviewReady, findings: assessment.findings },
+      evidenceRecorded: hasRecordedEvidence(issue),
+      documentationRecorded: hasRecordedDocumentation(issue),
+    };
+  }
+
+  async reviewCodeReview(sessionId: string, issueRef: string, options?: { repo?: string; post?: boolean }): Promise<any> {
+    const issue = await this.reconcileIssue(sessionId, issueRef);
+    const review = reviewMetadata(issue);
+    const codeReviewRequired = this.codeReviewRequired();
+    const collaborationType = this.collaboration?.capabilities?.requiresCodeReview === false ? "none" : this.collaboration ? "configured" : "none";
+    if (!review) {
+      const findings = missingReviewFindings("Pull request is missing.");
+      return { issueRef: issue.ref, repoKeys: issue.repoKeys, target: "code_review", summary: reviewSummary("code_review", findings, []), findings, blocking: true, codeReviewRequired, collaboration: collaborationType, pullRequest: undefined, blockers: codeReviewRequired ? ["Pull request is missing."] : [] };
+    }
+    const target = closeoutPullRequestTarget(issue, (k) => this.topology.repoName(k)) ?? codeReviewTargetFromMetadata(issue, review, options?.repo);
+    const diff = target && (this.collaboration as any)?.getPullRequestDiff ? await (this.collaboration as any).getPullRequestDiff(options?.repo ?? target.repo, target.number) : undefined;
+    const findings = reviewFindingsFromCodeReview(review, diff);
+    const blockers = pullRequestBlockersFromMetadata(review);
+    const postReviewComment = (this.collaboration as any)?.postPullRequestComment ?? (this.collaboration as any)?.postReviewComment;
+    const postedComment = target && postReviewComment && options?.post === true ? await postReviewComment.call(this.collaboration, target.repo, target.number, flowReviewComment(findings)) : undefined;
+    return {
+      issueRef: issue.ref,
+      repoKeys: issue.repoKeys,
+      target: "code_review",
+      summary: reviewSummary("code_review", findings, diff ? [diff] : []),
+      findings,
+      blocking: findings.some((finding) => finding.blocking) || blockers.length > 0,
+      codeReviewRequired,
+      collaboration: collaborationType,
+      pullRequest: { url: review.prUrl, state: review.state, isDraft: review.isDraft, checksPassing: review.checksPassing, reviewDecision: review.reviewDecision, mergeable: review.mergeable, mergedAt: review.mergedAt, autoReviewStatus: review.autoReviewStatus, autoReviewMustFix: review.autoReviewMustFix, autoReviewNeedsConfirmation: review.autoReviewNeedsConfirmation, humanReviewRequired: review.humanReviewRequired, reviewCommentCount: review.reviewCommentCount, reviewCommentAuthors: review.reviewCommentAuthors },
+      blockers,
+      postedComment,
+    };
+  }
+
+  private async localReviewDiffs(issue: WorkItem): Promise<any[]> {
+    if (!(this.sourceControl as any).diffWorkspace) return [];
+    const repoKeys = issue.repoKeys.length ? issue.repoKeys : [...this.topology.validRepoKeys];
+    const diffs: any[] = [];
+    for (const repoKey of repoKeys) {
+      const metadataPath = existingString(issue.metadata[`workflow.repos.${repoKey}.worktree_path`]) ?? existingString(issue.metadata.work_dir);
+      const repoPath = metadataPath ?? this.topology.repoPath(this.projectRoot, repoKey);
+      const baseBranch = existingString(issue.metadata[`workflow.repos.${repoKey}.base_branch`]) ?? "main";
+      const baseRef = baseBranch.startsWith("origin/") ? baseBranch : `origin/${baseBranch}`;
+      const diff = await (this.sourceControl as any).diffWorkspace({ repoPath, baseRef, headRef: "HEAD" });
+      diffs.push({ repoKey, repoPath, ...diff });
+    }
+    return diffs;
+  }
   async explainBlocker(sessionId: string): Promise<string> {
     const session = await this.requireSession(sessionId);
     const issue = await this.selectedIssue(session);
@@ -3517,6 +3662,74 @@ function pullRequestCloseoutBlockers(issue: WorkItem, pr: PullRequestStatus): st
   return blockers;
 }
 
+function codeReviewTargetFromMetadata(
+  issue: WorkItem,
+  review: NonNullable<ReturnType<typeof reviewMetadata>>,
+  repoOverride?: string,
+): { repo: string; number: number; url?: string } | undefined {
+  const repo = repoOverride ?? repoFromPullRequestUrl(review.prUrl) ?? issue.repoKeys[0];
+  const number = typeof issue.metadata.prNumber === "number"
+    ? issue.metadata.prNumber
+    : typeof issue.metadata["workflow.repos.flow.pr_number"] === "number"
+      ? issue.metadata["workflow.repos.flow.pr_number"]
+      : undefined;
+  if (!repo || typeof number !== "number" || !Number.isFinite(number)) return undefined;
+  return { repo, number, url: review.prUrl };
+}
+function reviewFindingsFromDiffs(diffs: any[]): any[] {
+  if (diffs.length === 0) return missingReviewFindings("Local diff reader is not configured.");
+  const changedFiles = diffs.flatMap((diff) => Array.isArray(diff.files) ? diff.files : []);
+  if (changedFiles.length === 0) return missingReviewFindings("No local diff was available to review.");
+  return [{ severity: "info", message: `Reviewed ${changedFiles.length} changed file${changedFiles.length === 1 ? "" : "s"} in local diff.`, blocking: false }];
+}
+
+function reviewFindingsFromCodeReview(review: NonNullable<ReturnType<typeof reviewMetadata>>, diff: any): any[] {
+  const findings: any[] = [];
+  if (!diff) findings.push(...missingReviewFindings("Code review diff reader is not configured."));
+  else if (!Array.isArray(diff.files) || diff.files.length === 0) findings.push(...missingReviewFindings("Code review diff is empty."));
+  else findings.push({ severity: "info", message: `Reviewed ${diff.files.length} changed file${diff.files.length === 1 ? "" : "s"} in code review diff.`, blocking: false });
+  if (review.autoReviewMustFix) findings.push({ severity: "error", message: review.autoReviewMustFixDetail ?? "Auto-review must-fix feedback is unresolved.", blocking: true });
+  if (review.autoReviewNeedsConfirmation && review.autoReviewNeedsConfirmationDisposition !== "accept") findings.push({ severity: "warning", message: review.autoReviewNeedsConfirmationDetail ?? "Auto-review confirmation is unresolved.", blocking: true });
+  return findings;
+}
+
+function missingReviewFindings(message: string): any[] {
+  return [{ severity: "error", message, blocking: true }];
+}
+
+function pullRequestBlockersFromMetadata(review: NonNullable<ReturnType<typeof reviewMetadata>>): string[] {
+  if (review.state?.toUpperCase() === "MERGED" || review.mergedAt) return [];
+  const blockers: string[] = [];
+  if (review.isDraft) blockers.push("Pull request is still draft.");
+  if (review.checksPassing === false) blockers.push("Pull request checks are not passing.");
+  if (isPullRequestConflicted(review)) blockers.push("Pull request has merge conflicts.");
+  if (review.autoReviewStatus === "failed") blockers.push("Auto-review check is failing.");
+  if (review.autoReviewStatus === "pending") blockers.push("Auto-review check is still pending.");
+  if (review.autoReviewMustFix === true) blockers.push("Auto-review must-fix feedback is unresolved.");
+  if (review.autoReviewNeedsConfirmation === true && review.autoReviewNeedsConfirmationDisposition !== "accept" && !review.autoReviewNeedsConfirmationPostedUrl) {
+    blockers.push("Auto-review confirmation is unresolved.");
+  }
+  if (review.humanReviewRequired && review.reviewDecision !== "APPROVED") blockers.push("Approval review is required.");
+  return blockers;
+}
+
+function reviewSummary(target: string, findings: any[], diffs: any[]): string {
+  const fileCount = diffs.reduce((sum, diff) => sum + (Array.isArray(diff.files) ? diff.files.length : 0), 0);
+  const blockingCount = findings.filter((finding) => finding.blocking).length;
+  if (blockingCount > 0) return `${target} review found ${blockingCount} blocking finding${blockingCount === 1 ? "" : "s"}.`;
+  return `${target} review completed for ${fileCount} changed file${fileCount === 1 ? "" : "s"}.`;
+}
+
+function flowReviewComment(findings: any[]): string {
+  const blocking = findings.filter((finding) => finding.blocking);
+  const mustFix = blocking.length ? blocking.map((finding) => `- ${finding.message}`).join("\n") : "- None identified.";
+  const notes = findings.filter((finding) => !finding.blocking).map((finding) => `- ${finding.message}`).join("\n") || "- None identified.";
+  return ["<!-- flow-pr-review -->", "## Must-fix", mustFix, "", "## Needs Confirmation", "- None identified.", "", "## Notes", notes].join("\n");
+}
+
+function collaborationCanPostReviewComments(provider: CodeCollaborationIntegration | undefined): provider is CodeCollaborationIntegration & Required<Pick<GitHubInspector, "postPullRequestComment">> {
+  return collaborationCanPostComments(provider);
+}
 function doctorNextAction(
   issue: WorkItem,
   findings: ReadinessFinding[],

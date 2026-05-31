@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 
 import type {
   SourceControlProvider,
+  UnifiedDiff,
   UnifiedWorkspaceStatus,
 } from "./provider-contracts.js";
 
@@ -84,6 +85,53 @@ export class GitAdapter implements SourceControlProvider {
     const status = await this.inspectWorkspace(inspectPath);
     return { ...status, worktreePath: inspectPath };
   }
+
+  async diffWorkspace(options: { repoPath: string; baseRef?: string; headRef?: string }): Promise<UnifiedDiff> {
+    const baseRef = options.baseRef ?? "origin/main";
+    const headRef = options.headRef ?? "HEAD";
+    const committedRange = `${baseRef}...${headRef}`;
+    const [committedFiles, committedPatch, committedStat] = await Promise.all([
+      gitOutput(options.repoPath, ["diff", "--name-only", committedRange]),
+      gitOutput(options.repoPath, ["diff", "--no-ext-diff", committedRange]),
+      gitOutput(options.repoPath, ["diff", "--stat", committedRange]),
+    ]);
+    const [workingFiles, workingPatch, workingStat] = await Promise.all([
+      gitOutput(options.repoPath, ["diff", "--name-only"]),
+      gitOutput(options.repoPath, ["diff", "--no-ext-diff"]),
+      gitOutput(options.repoPath, ["diff", "--stat"]),
+    ]);
+    const files = uniqueNonEmptyLines(`${committedFiles}\n${workingFiles}`);
+    return {
+      baseRef,
+      headRef,
+      files,
+      patch: joinNonEmpty([committedPatch, workingPatch]),
+      stat: joinNonEmpty([committedStat, workingStat]),
+    };
+  }
+}
+
+async function gitOutput(repoPath: string, args: string[]): Promise<string> {
+  const { stdout } = await execFileAsync("git", ["-C", repoPath, ...args], { maxBuffer: 20 * 1024 * 1024 })
+    .catch(() => ({ stdout: "" }));
+  return stdout.trim();
+}
+
+function uniqueNonEmptyLines(value: string): string[] {
+  const seen = new Set<string>();
+  const lines: string[] = [];
+  for (const line of value.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    lines.push(trimmed);
+  }
+  return lines;
+}
+
+function joinNonEmpty(values: string[]): string | undefined {
+  const joined = values.map((value) => value.trim()).filter(Boolean).join("\n\n");
+  return joined || undefined;
 }
 
 function worktreeAlreadyExists(error: unknown): boolean {

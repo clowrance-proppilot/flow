@@ -131,6 +131,14 @@ export interface CollaborationCapabilities {
   canMerge: boolean;
 }
 
+export interface UnifiedDiff {
+  baseRef?: string;
+  headRef?: string;
+  files: string[];
+  patch?: string;
+  stat?: string;
+}
+
 export interface CreateIssueInput {
   projectKey?: string;
   issueType: string;
@@ -170,6 +178,7 @@ export interface CodeCollaborationProvider {
     draft?: boolean;
   }): Promise<UnifiedCodeReview>;
   getCodeReview?(repo: string, id: string | number): Promise<UnifiedCodeReview | undefined>;
+  getCodeReviewDiff?(repo: string, id: string | number): Promise<UnifiedDiff>;
   markReadyForReview?(repo: string, id: string | number): Promise<UnifiedCodeReview | undefined>;
   postReviewComment?(repo: string, id: string | number, body: string): Promise<{ url?: string; body: string }>;
   mergeCodeReview?(repo: string, id: string | number, options?: { method?: string }): Promise<{ merged: boolean; sha?: string }>;
@@ -178,4 +187,5 @@ export interface CodeCollaborationProvider {
 export interface SourceControlProvider {
   inspectWorkspace(repoPath: string): Promise<UnifiedWorkspaceStatus>;
   prepareWorktree?(options: { repoPath: string; worktreePath: string; branch: string; baseRef?: string }): Promise<UnifiedWorkspaceStatus>;
+  diffWorkspace?(options: { repoPath: string; baseRef?: string; headRef?: string }): Promise<UnifiedDiff>;
 }

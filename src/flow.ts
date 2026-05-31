@@ -98,9 +98,10 @@ async function routeFlowRequest(request: Record<string, unknown>): Promise<unkno
   if (op === "issue") return handleIssueRequest(request);
   if (op === "workflow") return handleWorkflowRequest(request);
   if (op === "autoflow") return handleAutoflowRequest(request);
+  if (op === "review") return handleReviewRequest(request);
   if (op === "runtime") return dispatch(requireString(request, "method"), paramsFromRequest(request));
   throw new JsonCliError("BAD_OP", `Unsupported Flow op: ${op}`, {
-    details: { supportedOps: ["manifest", "state", "queue", "backlog", "bootstrap", "config", "ledger", "issue", "workflow", "autoflow", "runtime"] },
+    details: { supportedOps: ["manifest", "state", "queue", "backlog", "bootstrap", "config", "ledger", "issue", "workflow", "autoflow", "review", "runtime"] },
   });
 }
 
@@ -360,6 +361,24 @@ async function handleAutoflowRequest(request: Record<string, unknown>): Promise<
   }
 }
 
+async function handleReviewRequest(request: Record<string, unknown>): Promise<unknown> {
+  const rawTarget = optionalString(request, "mode") ?? optionalString(request, "target") ?? "local";
+  const target = rawTarget === "codeReview" ? "code_review" : rawTarget;
+  if (target !== "local" && target !== "code_review") {
+    throw badMode("review", rawTarget, ["local", "code_review", "codeReview"]);
+  }
+  const activeSessionId = sessionId(request);
+  await ensureSession(activeSessionId);
+  const issueRef = requireId(request);
+  await runtime.selectIssue(activeSessionId, await queueIssue(issueRef));
+  if (target === "local") {
+    return runtime.reviewLocal(activeSessionId, issueRef);
+  }
+  return runtime.reviewCodeReview(activeSessionId, issueRef, {
+    repo: optionalString(request, "repo"),
+  });
+}
+
 function autoflowIssueRefs(request: Record<string, unknown>): string[] | undefined {
   const refs = [
     optionalString(request, "id"),
@@ -428,7 +447,7 @@ function flowManifest(target?: string) {
         body: ["flow '{\"op\":\"state\"}'", "printf '%s\\n' '{\"op\":\"state\"}' | flow"],
       },
       detail: { op: "manifest", target: "<op>" },
-      targets: ["workflow", "issue", "autoflow", "runtime", "config", "layout"],
+      targets: ["workflow", "issue", "autoflow", "review", "runtime", "config", "layout"],
       ops: {
         manifest: "Get compact or targeted capability metadata.",
         state: "Read current Flow state, optionally scoped by id.",
@@ -440,6 +459,7 @@ function flowManifest(target?: string) {
         issue: "Inspect, create, select, or adopt issue/workspace state through the configured issue tracker.",
         workflow: "Advance, audit, autoflow, record, or observe workflow state.",
         autoflow: "Run or inspect standalone Autoflow outside Desktop.",
+        review: "Provider-neutral review of local readiness or external code review state.",
         runtime: "Call a raw Work Runtime method by name.",
       },
     };
@@ -497,6 +517,24 @@ function flowManifest(target?: string) {
       id: "Optional issue/work item id for targeted tick or run. Use ids for a bounded batch.",
       state: {
         enabled: "Stored in Flow SQL project state under autoflow.enabled.",
+      },
+    };
+  }
+  if (target === "review") {
+    return {
+      target,
+      modes: ["local", "codeReview"],
+      targets: ["local", "code_review"],
+      examples: [
+        { op: "review", id: "FLOW-123" },
+        { op: "review", id: "FLOW-123", mode: "local" },
+        { op: "review", id: "FLOW-123", mode: "codeReview" },
+        { op: "review", id: "FLOW-123", mode: "codeReview", repo: "owner/repo", post: false },
+      ],
+      id: "Required issue/work item id.",
+      target_description: {
+        local: "Review local readiness state: worker results, evidence, documentation, findings.",
+        code_review: "Review external code review state: pull request status, checks, review decision.",
       },
     };
   }

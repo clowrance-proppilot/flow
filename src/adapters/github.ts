@@ -8,6 +8,7 @@ import type {
   IssueTrackerCapabilities,
   IssueSearchParams,
   IssueTrackerProvider,
+  UnifiedDiff,
   UnifiedIssue,
   UnifiedCodeReview,
 } from "./provider-contracts.js";
@@ -118,6 +119,10 @@ export class GhGitHubAdapter implements CodeCollaborationProvider {
   async getCodeReview(repo: string, id: string | number): Promise<UnifiedCodeReview | undefined> {
     const pr = await this.getPullRequest(repo, Number(id));
     if (pr) return normalizePullRequest(pr);
+  }
+
+  async getCodeReviewDiff(repo: string, id: string | number): Promise<UnifiedDiff> {
+    return this.getPullRequestDiff(repo, Number(id));
   }
 
   async markReadyForReview(repo: string, id: string | number): Promise<UnifiedCodeReview | undefined> {
@@ -240,6 +245,24 @@ export class GhGitHubAdapter implements CodeCollaborationProvider {
     );
     const url = stdout.trim();
     return { url: url || undefined, body };
+  }
+
+  async getPullRequestDiff(repo: string, number: number): Promise<UnifiedDiff> {
+    const repoSpecifier = this.repoSpecifier(repo);
+    const [files, patch] = await Promise.all([
+      execFileAsync("gh", ["pr", "diff", String(number), "--repo", repoSpecifier, "--name-only"], {
+        cwd: this.cwd,
+        maxBuffer: 20 * 1024 * 1024,
+      }),
+      execFileAsync("gh", ["pr", "diff", String(number), "--repo", repoSpecifier], {
+        cwd: this.cwd,
+        maxBuffer: 50 * 1024 * 1024,
+      }),
+    ]);
+    return {
+      files: files.stdout.split("\n").map((line) => line.trim()).filter(Boolean),
+      patch: patch.stdout.trim() || undefined,
+    };
   }
 
   async mergePullRequest(

@@ -692,6 +692,350 @@ test("Flow workflow doctor strict mode exits nonzero when readiness is not ok", 
   assert.equal(error.details?.status, "blocked");
 });
 
+test("Flow CLI review command returns local readiness state", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-review-local-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  const flowCli = join(process.cwd(), ".tmp", "test", "src", "flow.js");
+
+  const callFlow = async (body: Record<string, unknown>) => {
+    const { stdout } = await execFileAsync(process.execPath, [flowCli, JSON.stringify(body)], {
+      cwd: root,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+    const parsed = JSON.parse(stdout) as { ok?: boolean; result?: unknown; error?: unknown };
+    if (parsed.ok === false) throw new Error(`Flow CLI failed: ${JSON.stringify(parsed.error)}`);
+    return parsed.result as Record<string, unknown>;
+  };
+
+  await callFlow({ op: "bootstrap", storage: "repo-tracked" });
+  const issueRequest = {
+    op: "issue",
+    mode: "create",
+    summary: "Review local test",
+    issueType: "Task",
+  };
+  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true });
+  const reviewJob = intake.reviewJob as { id: string; issueRef: string; repoKey: string; workType: string };
+  await callFlow({
+    op: "runtime",
+    method: "recordWorkJobResult",
+    params: {
+      result: {
+        jobId: reviewJob.id,
+        issueRef: reviewJob.issueRef,
+        repoKey: reviewJob.repoKey,
+        workType: reviewJob.workType,
+        status: "succeeded",
+        summary: "Executor approved issue intake.",
+        evidence: ["CLI test executor review."],
+        completedAt: nowIso(),
+      },
+    },
+  });
+  const issue = await callFlow(issueRequest) as { ref: string };
+
+  const review = await callFlow({
+    op: "review",
+    id: issue.ref,
+  }) as { issueRef: string; state: string; repoKeys: string[]; readiness: { readyToAdvance: boolean; reviewReady: boolean; findings: unknown[] }; evidenceRecorded: boolean; documentationRecorded: boolean };
+
+  assert.equal(review.issueRef, issue.ref);
+  assert.ok(review.state);
+  assert.ok(Array.isArray(review.repoKeys));
+  assert.ok(typeof review.readiness === "object");
+  assert.ok(typeof review.readiness.readyToAdvance === "boolean");
+  assert.ok(typeof review.readiness.reviewReady === "boolean");
+  assert.ok(Array.isArray(review.readiness.findings));
+  assert.equal(review.evidenceRecorded, false);
+  assert.equal(review.documentationRecorded, false);
+});
+
+test("Flow CLI review command accepts explicit local target", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-review-local-explicit-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  const flowCli = join(process.cwd(), ".tmp", "test", "src", "flow.js");
+
+  const callFlow = async (body: Record<string, unknown>) => {
+    const { stdout } = await execFileAsync(process.execPath, [flowCli, JSON.stringify(body)], {
+      cwd: root,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+    const parsed = JSON.parse(stdout) as { ok?: boolean; result?: unknown; error?: unknown };
+    if (parsed.ok === false) throw new Error(`Flow CLI failed: ${JSON.stringify(parsed.error)}`);
+    return parsed.result as Record<string, unknown>;
+  };
+
+  await callFlow({ op: "bootstrap", storage: "repo-tracked" });
+  const issueRequest = {
+    op: "issue",
+    mode: "create",
+    summary: "Review local explicit target",
+    issueType: "Task",
+  };
+  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true });
+  const reviewJob = intake.reviewJob as { id: string; issueRef: string; repoKey: string; workType: string };
+  await callFlow({
+    op: "runtime",
+    method: "recordWorkJobResult",
+    params: {
+      result: {
+        jobId: reviewJob.id,
+        issueRef: reviewJob.issueRef,
+        repoKey: reviewJob.repoKey,
+        workType: reviewJob.workType,
+        status: "succeeded",
+        summary: "Executor approved issue intake.",
+        evidence: ["CLI test executor review."],
+        completedAt: nowIso(),
+      },
+    },
+  });
+  const issue = await callFlow(issueRequest) as { ref: string };
+
+  const review = await callFlow({
+    op: "review",
+    id: issue.ref,
+    target: "local",
+  }) as { issueRef: string; readiness: { readyToAdvance: boolean } };
+
+  assert.equal(review.issueRef, issue.ref);
+  assert.ok(typeof review.readiness.readyToAdvance === "boolean");
+});
+
+test("Flow CLI review command returns code_review state", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-review-code-review-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  const flowCli = join(process.cwd(), ".tmp", "test", "src", "flow.js");
+
+  const callFlow = async (body: Record<string, unknown>) => {
+    const { stdout } = await execFileAsync(process.execPath, [flowCli, JSON.stringify(body)], {
+      cwd: root,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+    const parsed = JSON.parse(stdout) as { ok?: boolean; result?: unknown; error?: unknown };
+    if (parsed.ok === false) throw new Error(`Flow CLI failed: ${JSON.stringify(parsed.error)}`);
+    return parsed.result as Record<string, unknown>;
+  };
+
+  await callFlow({ op: "bootstrap", storage: "repo-tracked" });
+  const issueRequest = {
+    op: "issue",
+    mode: "create",
+    summary: "Review code review test",
+    issueType: "Task",
+  };
+  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true });
+  const reviewJob = intake.reviewJob as { id: string; issueRef: string; repoKey: string; workType: string };
+  await callFlow({
+    op: "runtime",
+    method: "recordWorkJobResult",
+    params: {
+      result: {
+        jobId: reviewJob.id,
+        issueRef: reviewJob.issueRef,
+        repoKey: reviewJob.repoKey,
+        workType: reviewJob.workType,
+        status: "succeeded",
+        summary: "Executor approved issue intake.",
+        evidence: ["CLI test executor review."],
+        completedAt: nowIso(),
+      },
+    },
+  });
+  const issue = await callFlow(issueRequest) as { ref: string };
+
+  const review = await callFlow({
+    op: "review",
+    id: issue.ref,
+    target: "code_review",
+  }) as { issueRef: string; codeReviewRequired: boolean; collaboration: string; pullRequest: unknown; blockers: string[] };
+
+  assert.equal(review.issueRef, issue.ref);
+  assert.equal(review.codeReviewRequired, false);
+  assert.equal(review.collaboration, "none");
+  assert.equal(review.pullRequest, undefined);
+  assert.ok(Array.isArray(review.blockers));
+});
+
+test("Flow CLI review manifest includes review target", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-review-manifest-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  const flowCli = join(process.cwd(), ".tmp", "test", "src", "flow.js");
+
+  const callFlow = async (body: Record<string, unknown>) => {
+    const { stdout } = await execFileAsync(process.execPath, [flowCli, JSON.stringify(body)], {
+      cwd: root,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+    const parsed = JSON.parse(stdout) as { ok?: boolean; result?: unknown; error?: unknown };
+    if (parsed.ok === false) throw new Error(`Flow CLI failed: ${JSON.stringify(parsed.error)}`);
+    return parsed.result as Record<string, unknown>;
+  };
+
+  const manifest = await callFlow({ op: "manifest" }) as { targets: string[]; ops: Record<string, string> };
+  assert.ok(manifest.targets.includes("review"));
+  assert.ok(typeof manifest.ops.review === "string");
+
+  const reviewManifest = await callFlow({ op: "manifest", target: "review" }) as { target: string; targets: string[]; id: string };
+  assert.equal(reviewManifest.target, "review");
+  assert.deepEqual(reviewManifest.targets, ["local", "code_review"]);
+  assert.ok(typeof reviewManifest.id === "string");
+});
+
+test("Flow CLI review command rejects invalid target", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-review-bad-target-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  const flowCli = join(process.cwd(), ".tmp", "test", "src", "flow.js");
+
+  try {
+    const { stdout } = await execFileAsync(process.execPath, [flowCli, JSON.stringify({
+      op: "review",
+      id: "FLOW-1",
+      target: "invalid",
+    })], {
+      cwd: root,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+    const parsed = JSON.parse(stdout) as { ok?: boolean; error?: { code?: string } };
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.error?.code, "BAD_MODE");
+  } catch (error) {
+    const failed = error as { stdout?: string };
+    if (failed.stdout) {
+      const parsed = JSON.parse(failed.stdout) as { ok?: boolean; error?: { code?: string } };
+      assert.equal(parsed.ok, false);
+      assert.equal(parsed.error?.code, "BAD_MODE");
+    } else {
+      throw error;
+    }
+  }
+});
+
+test("reviewLocal runtime method returns complete readiness state", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-review-local-runtime-"));
+  const ledger = new MemoryWorkflowLedger();
+  await ledger.writeIssue({
+    ref: "FLOW-LOCAL-1",
+    title: "Local review runtime test",
+    repoKeys: ["main"],
+    state: "running",
+    metadata: {},
+  });
+  const runtime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    issueTracker: new LocalIssueTrackerAdapter({ ledger, projectName: "Flow" }),
+  });
+  await runtime.createSession("review-local-session");
+  await runtime.selectIssue("review-local-session", {
+    ref: "FLOW-LOCAL-1",
+    title: "Local review runtime test",
+    repoKeys: ["main"],
+    state: "running",
+    metadata: {},
+  });
+
+  const result = await runtime.reviewLocal("review-local-session", "FLOW-LOCAL-1");
+
+  assert.equal(result.issueRef, "FLOW-LOCAL-1");
+  assert.equal(result.state, "selected");
+  assert.deepEqual(result.repoKeys, ["main"]);
+  assert.ok(typeof result.readiness.readyToAdvance === "boolean");
+  assert.ok(typeof result.readiness.reviewReady === "boolean");
+  assert.ok(Array.isArray(result.readiness.findings));
+  assert.equal(result.worker, undefined);
+  assert.equal(result.evidenceRecorded, false);
+  assert.equal(result.documentationRecorded, false);
+});
+
+test("reviewCodeReview runtime method returns provider-neutral state", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-review-cr-runtime-"));
+  const ledger = new MemoryWorkflowLedger();
+  await ledger.writeIssue({
+    ref: "FLOW-CR-1",
+    title: "Code review runtime test",
+    repoKeys: ["main"],
+    state: "running",
+    metadata: {},
+  });
+  const runtime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    issueTracker: new LocalIssueTrackerAdapter({ ledger, projectName: "Flow" }),
+    collaboration: new NoopCodeCollaborationAdapter(),
+  });
+  await runtime.createSession("review-cr-session");
+  await runtime.selectIssue("review-cr-session", {
+    ref: "FLOW-CR-1",
+    title: "Code review runtime test",
+    repoKeys: ["main"],
+    state: "selected",
+    metadata: {},
+  });
+
+  const result = await runtime.reviewCodeReview("review-cr-session", "FLOW-CR-1");
+
+  assert.equal(result.issueRef, "FLOW-CR-1");
+  assert.deepEqual(result.repoKeys, ["main"]);
+  assert.equal(result.codeReviewRequired, false);
+  assert.equal(result.collaboration, "none");
+  assert.equal(result.pullRequest, undefined);
+  assert.deepEqual(result.blockers, []);
+});
+
+test("reviewCodeReview runtime method returns pull request metadata when present", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-review-cr-pr-"));
+  const ledger = new MemoryWorkflowLedger();
+  const prUrl = "https://github.com/example/repo/pull/42";
+  await ledger.writeIssue({
+    ref: "FLOW-CR-2",
+    title: "Code review with PR",
+    repoKeys: ["main"],
+    state: "awaiting_review",
+    metadata: {
+      prUrl,
+      prState: "OPEN",
+      prIsDraft: false,
+      prChecksPassing: true,
+      prReviewDecision: "APPROVED",
+      prMergeable: "MERGEABLE",
+    },
+  });
+  const runtime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    issueTracker: new LocalIssueTrackerAdapter({ ledger, projectName: "Flow" }),
+    collaboration: new NoopCodeCollaborationAdapter(),
+  });
+  await runtime.createSession("review-cr-pr-session");
+  await runtime.selectIssue("review-cr-pr-session", {
+    ref: "FLOW-CR-2",
+    title: "Code review with PR",
+    repoKeys: ["main"],
+    state: "selected",
+    metadata: {
+      prUrl,
+      prState: "OPEN",
+      prIsDraft: false,
+      prChecksPassing: true,
+      prReviewDecision: "APPROVED",
+      prMergeable: "MERGEABLE",
+    },
+  });
+
+  const result = await runtime.reviewCodeReview("review-cr-pr-session", "FLOW-CR-2");
+
+  assert.equal(result.issueRef, "FLOW-CR-2");
+  assert.equal(result.codeReviewRequired, false);
+  assert.ok(result.pullRequest);
+  assert.equal(result.pullRequest?.url, prUrl);
+  assert.equal(result.pullRequest?.isDraft, false);
+  assert.equal(result.pullRequest?.reviewDecision, "APPROVED");
+  assert.equal(result.pullRequest?.mergeable, "MERGEABLE");
+  assert.equal(result.pullRequest?.autoReviewMustFix, false);
+  assert.equal(result.pullRequest?.autoReviewNeedsConfirmation, false);
+});
+
 test("Flow config bootstrap can keep repo-local config in local git exclude", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-bootstrap-untracked-"));
   await execFileAsync("git", ["init"], { cwd: root });
