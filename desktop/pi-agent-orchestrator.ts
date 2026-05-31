@@ -265,7 +265,20 @@ export class PiAgentOrchestrator {
       summary: `Autoflow working ${issueRef}.`,
     });
 
-    const completed = await this.piSessionDriver.postPrompt(piSession.id, handoff.prompt);
+    let completed = await this.piSessionDriver.postPrompt(piSession.id, handoff.prompt);
+
+    // Follow-up prompt: if worktree is dirty after initial prompt, ask agent to commit and push
+    if (this.gitInspect && completed.workspacePath) {
+      const needsFollowUp = await this.checkNeedsFollowUp(completed);
+      if (needsFollowUp) {
+        const followUpPrompt = "You have uncommitted changes. Commit them with a descriptive message and push to the branch.";
+        completed = await this.piSessionDriver.sendUserMessage(completed.id, {
+          text: followUpPrompt,
+          mode: "followUp",
+        });
+      }
+    }
+
     const resultStatus = await this.recordResult(flowSessionId, handoff, completed);
 
     const finalPhase = completed.status === "failed" ? "failed" : resultStatus === "blocked" ? "needs_input" : "idle";
@@ -290,6 +303,23 @@ export class PiAgentOrchestrator {
       ...input,
       updatedAt: nowIso(),
     });
+  }
+
+  private async checkNeedsFollowUp(session: PiSessionSnapshot): Promise<boolean> {
+    if (!this.gitInspect || !session.workspacePath) return false;
+
+    const hasCommitEvidence = checkCommitEvidence(session.timeline);
+    if (hasCommitEvidence) return false;
+
+    const changedFiles = extractChangedFilesFromTimeline(session.timeline);
+    if (changedFiles.length === 0) return false;
+
+    try {
+      const gitStatus = await this.gitInspect(session.workspacePath);
+      return gitStatus.dirty;
+    } catch {
+      return false;
+    }
   }
 
   private async recordResult(flowSessionId: string, handoff: WorkerTaskRequest & { workJobId: string }, session: PiSessionSnapshot): Promise<"succeeded" | "blocked" | "failed"> {
