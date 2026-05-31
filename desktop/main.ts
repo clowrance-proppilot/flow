@@ -18,6 +18,7 @@ import { message } from "./route-helpers.js";
 import type { DesktopProjectSurface, RouteContext } from "./route-types.js";
 import { registerStaticRoutes } from "./static-routes.js";
 import { registerWorkRoutes } from "./work-routes.js";
+import { nextAutoflowReconcileDelay, runEnabledProjectAutoflowReconcile } from "./autoflow-reconcile.js";
 
 const isDev = !app.isPackaged;
 
@@ -164,10 +165,16 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
   registerWorkRoutes(server, routeContext, { promptRouter, actionRouter }, jsonBody);
   registerStaticRoutes(server, { desktopFilePath, dashboardFilePath });
 
-  const autoflowInterval = setInterval(() => {
-    void runEnabledProjectAutoflowReconcile(projectRegistry, projectSurface);
-  }, 30000);
-  void runEnabledProjectAutoflowReconcile(projectRegistry, projectSurface);
+  let autoflowReconcileTimer: ReturnType<typeof setTimeout> | undefined;
+  let autoflowReconcileStopped = false;
+  const scheduleAutoflowReconcile = async (): Promise<void> => {
+    const summary = await runEnabledProjectAutoflowReconcile(projectRegistry, projectSurface);
+    if (autoflowReconcileStopped) return;
+    autoflowReconcileTimer = setTimeout(() => {
+      void scheduleAutoflowReconcile();
+    }, nextAutoflowReconcileDelay(summary));
+  };
+  void scheduleAutoflowReconcile();
 
   // Find a free port
   return new Promise((resolve, reject) => {
@@ -180,20 +187,12 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
       }
     });
     listener.on("error", reject);
-    listener.on("close", () => clearInterval(autoflowInterval));
+    listener.on("close", () => {
+      autoflowReconcileStopped = true;
+      if (autoflowReconcileTimer) clearTimeout(autoflowReconcileTimer);
+    });
     dashboardServer = listener;
   });
-}
-
-export async function runEnabledProjectAutoflowReconcile(
-  projectRegistry: DesktopProjectRegistry,
-  projectSurface: (project: DesktopProjectRecord) => Promise<DesktopProjectSurface>,
-): Promise<void> {
-  const projects = await projectRegistry.listProjects();
-  await Promise.all(projects.filter((project) => project.valid && project.autoflowEnabled !== false).map(async (project) => {
-    const surface = await projectSurface(project);
-    await surface.piAgentOrchestrator.reconcile();
-  }));
 }
 
 function createWindow(port: number): BrowserWindow {
