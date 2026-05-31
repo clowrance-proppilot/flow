@@ -15,6 +15,7 @@ await runTests([
   join(outDir, "test", "flow.test.js"),
   join(outDir, "test", "dashboard-state.test.js"),
   join(outDir, "test", "sql-store.test.js"),
+  join(outDir, "test", "store.test.js"),
 ]);
 
 function buildFlow() {
