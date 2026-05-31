@@ -13,17 +13,23 @@ export interface ProjectTheme {
   iconUrl?: string;
 }
 
+/**
+ * Project theme palette.
+ * These hex values align with Flow design tokens defined in src/theme/tokens.css.
+ * Using hex directly (not CSS vars) so the palette works in non-CSS contexts
+ * and passes through projectThemeFor() as concrete color values.
+ */
 const palette = [
-  "#38bdf8",
-  "#2dd4bf",
-  "#f59e0b",
-  "#f97316",
-  "#22c55e",
-  "#ef4444",
-  "#a78bfa",
-  "#f472b6",
-  "#84cc16",
-  "#60a5fa",
+  "#38bdf8",  /* --flow-primary (sky-400) */
+  "#2dd4bf",  /* teal-400 */
+  "#f59e0b",  /* --flow-warning (amber-500) */
+  "#f97316",  /* orange-500 */
+  "#22c55e",  /* --flow-success (green-500) */
+  "#ef4444",  /* --flow-error (red-500) */
+  "#a78bfa",  /* --flow-status-review (violet-400) */
+  "#f472b6",  /* pink-400 */
+  "#84cc16",  /* lime-500 */
+  "#60a5fa",  /* blue-400 */
 ];
 
 export function projectThemeFor(project: ProjectThemeInput): ProjectTheme {
