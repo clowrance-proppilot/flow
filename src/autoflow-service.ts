@@ -166,7 +166,7 @@ export class AutoflowService {
       }
     }
 
-    const activeCount = this.activeRuns.size;
+    const activeCount = [...this.activeRuns.values()].filter((run) => isActivePhase(run.status)).length;
     const blockedCount = [...this.issueStatuses.values()].filter((s) => s.phase === "needs_input").length;
     let summary: string;
     if (activeCount === 0 && blockedCount === 0) {
@@ -213,7 +213,7 @@ export class AutoflowService {
     try {
       // Clean up completed runs
       for (const [ref, run] of this.activeRuns) {
-        if (run.status !== "running" && run.status !== "starting") {
+        if (!isActivePhase(run.status)) {
           this.activeRuns.delete(ref);
         }
       }
@@ -237,7 +237,7 @@ export class AutoflowService {
       const runs = [...this.activeRuns.values()].map((run) => run.promise.catch(() => undefined));
       await Promise.all(runs);
       for (const [ref, run] of this.activeRuns) {
-        if (run.status !== "running" && run.status !== "starting") {
+        if (!isActivePhase(run.status)) {
           this.activeRuns.delete(ref);
         }
       }
@@ -280,10 +280,11 @@ export class AutoflowService {
         });
       })
       .finally(() => {
-        // Don't remove from activeRuns here — let reconcile() clean up
-        // This prevents reconcile from immediately re-spawning the same issue
         run.status = run.status === "starting" ? "idle" : run.status;
-        // Trigger reconcile to fill the slot
+        if (!isActivePhase(run.status)) {
+          this.activeRuns.delete(issueRef);
+          this.emitStatusChange();
+        }
         if (this.autoReconcileOnSlotAvailable) void this.reconcile();
       });
   }
@@ -581,9 +582,8 @@ export class AutoflowService {
       // Only pick up issues that can still advance automatically.
       if (issue.state !== "queued" && issue.state !== "selected" && issue.state !== "ready_to_run" && !(explicitTargets && issue.state === "blocked")) continue;
       if (this.activeRuns.has(issue.ref)) continue;
-      // Skip issues that have been flagged as needing input
       const issueStatus = this.issueStatuses.get(issue.ref);
-      if (issueStatus?.phase === "needs_input" && !explicitTargets) continue;
+      if (issueStatus && !explicitTargets) continue;
       candidates.push({
         ref: issue.ref,
         repoKeys: issue.repoKeys.length ? issue.repoKeys : ["flow"],
@@ -658,6 +658,10 @@ function canCloseoutBlockedAutoflow(result: AutoFlowIssueResult): boolean {
 function phaseAfterWorkerAdvance(result: AdvanceIssueResult): AutoflowServicePhase {
   if (result.status === "awaiting_review") return "idle";
   return "needs_input";
+}
+
+function isActivePhase(phase: AutoflowServicePhase): boolean {
+  return phase === "starting" || phase === "running";
 }
 
 function isMissingExternalIssueText(value: string): boolean {

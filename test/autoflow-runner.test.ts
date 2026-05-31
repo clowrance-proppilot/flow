@@ -330,6 +330,220 @@ test("StandaloneAutoflowRunner persists running status for separate status reade
   assert.equal(recordedResult?.status, "succeeded");
 });
 
+test("StandaloneAutoflowRunner persists idle status after non-wait run completes", async () => {
+  const state = new MemoryRunnerState();
+  let resolvePrompt: ((value: AutoflowAgentSessionSnapshot) => void) | undefined;
+  let recordedResult: { issueRef: string; status: string } | undefined;
+  const runtime = {
+    inspectQueue: async () => [{
+      ref: "GH-391",
+      title: "Fix stale Autoflow activeCount after non-wait CLI run completes",
+      repoKeys: ["flow"],
+      state: "queued",
+      metadata: {},
+    }],
+    summarizeHandoff: async () => "handoff",
+    createSession: async (id: string) => ({ id, findings: [], workerResults: [], createdAt: nowIso(), updatedAt: nowIso() }),
+    selectIssue: async () => undefined,
+    diagnoseIssue: async () => ({
+      issueRef: "GH-391",
+      status: "ok",
+      issue: { ref: "GH-391", title: "Fix stale Autoflow activeCount after non-wait CLI run completes", state: "selected", repoKeys: ["flow"] },
+      visibility: {
+        ledger: true,
+        issueTracker: true,
+        repoRouting: true,
+        preparedWorktree: true,
+        codeReview: false,
+        codeReviewRequired: false,
+      },
+      findings: [],
+      nextAction: { type: "advance", summary: "Run Autoflow." },
+    }),
+    autoFlowIssue: async () => ({
+      status: "execution_handoff",
+      message: "Ready for executor.",
+      steps: [],
+      workerResults: [],
+      session: { id: "session", findings: [], workerResults: [], createdAt: nowIso(), updatedAt: nowIso() },
+    }),
+    adoptPendingLiveWorker: async () => ({
+      id: "task-391",
+      issueRef: "GH-391",
+      repoKey: "flow",
+      workJobId: "job-391",
+      prompt: "Implement GH-391.",
+      workspacePath: "/tmp/flow-gh-391",
+    }),
+    recordLocalThreadResult: async (_sessionId: string, result: { issueRef: string; status: string }) => {
+      recordedResult = result;
+      return result;
+    },
+    recordEvidence: async () => undefined,
+    recordDocumentation: async () => undefined,
+    recordPullRequest: async () => undefined,
+    advanceIssue: async () => ({
+      status: "awaiting_review",
+      message: "Ready for review.",
+    }),
+  };
+  const agentSessionDriver = {
+    ...fakeAgentDriver(),
+    async openOrCreateIssueSession() {
+      return { ...fakeAgentDriverSession(), id: "agent-gh-391", status: "active" };
+    },
+    async postPrompt() {
+      return new Promise<AutoflowAgentSessionSnapshot>((resolve) => {
+        resolvePrompt = resolve;
+      });
+    },
+  };
+  const runner = new StandaloneAutoflowRunner({
+    projectId: "flow",
+    state,
+    runtime: runtime as never,
+    agentSessionDriver,
+  });
+  const statusReader = new StandaloneAutoflowRunner({
+    projectId: "flow",
+    state,
+    runtime: runtime as never,
+    agentSessionDriver: fakeAgentDriver(),
+  });
+
+  assert.equal((await runner.tick()).activeCount, 1);
+  let persisted = await statusReader.status();
+  for (let index = 0; index < 50 && persisted.issues["GH-391"]?.phase !== "running"; index += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    persisted = await statusReader.status();
+  }
+  assert.ok(resolvePrompt);
+  assert.equal(persisted.issues["GH-391"]?.phase, "running");
+  resolvePrompt?.({
+    ...fakeAgentDriverSession(),
+    id: "agent-gh-391",
+    workspacePath: "/tmp/flow-gh-391",
+    status: "done",
+    summary: "Implemented GH-391.",
+  });
+
+  persisted = await statusReader.status();
+  for (let index = 0; index < 50 && persisted.issues["GH-391"]?.phase !== "idle"; index += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    persisted = await statusReader.status();
+  }
+
+  assert.equal(persisted.activeCount, 0);
+  assert.equal(persisted.issues["GH-391"]?.phase, "idle");
+  assert.equal(persisted.summary, "Autoflow idle.");
+  assert.equal(recordedResult?.issueRef, "GH-391");
+  assert.equal(recordedResult?.status, "succeeded");
+});
+
+test("StandaloneAutoflowRunner normalizes stale persisted activeCount", async () => {
+  const state = new MemoryRunnerState();
+  await state.setProjectState("flow", "autoflow.status", {
+    enabled: true,
+    maxConcurrency: 5,
+    activeCount: 1,
+    issues: {
+      "GH-217": {
+        phase: "idle",
+        summary: "Ready for review.",
+        updatedAt: nowIso(),
+      },
+    },
+    summary: "Working 1 issue.",
+    updatedAt: nowIso(),
+  });
+  const runner = new StandaloneAutoflowRunner({
+    projectId: "flow",
+    state,
+    runtime: {
+      inspectQueue: async () => [],
+    } as never,
+    agentSessionDriver: fakeAgentDriver(),
+  });
+
+  const status = await runner.status();
+
+  assert.equal(status.activeCount, 0);
+  assert.equal(status.issues["GH-217"]?.phase, "idle");
+  assert.equal(status.summary, "Autoflow idle.");
+});
+
+test("AutoflowService does not immediately re-pick failed issues after slot cleanup", async () => {
+  let prompts = 0;
+  const runtime = {
+    inspectQueue: async () => [{
+      ref: "GH-391",
+      title: "Fix stale Autoflow activeCount after non-wait CLI run completes",
+      repoKeys: ["flow"],
+      state: "queued",
+      metadata: {},
+    }],
+    summarizeHandoff: async () => "handoff",
+    createSession: async (id: string) => ({ id, findings: [], workerResults: [], createdAt: nowIso(), updatedAt: nowIso() }),
+    selectIssue: async () => undefined,
+    diagnoseIssue: async () => ({
+      issueRef: "GH-391",
+      status: "ok",
+      issue: { ref: "GH-391", title: "Fix stale Autoflow activeCount after non-wait CLI run completes", state: "selected", repoKeys: ["flow"] },
+      visibility: {
+        ledger: true,
+        issueTracker: true,
+        repoRouting: true,
+        preparedWorktree: true,
+        codeReview: false,
+        codeReviewRequired: false,
+      },
+      findings: [],
+      nextAction: { type: "advance", summary: "Run Autoflow." },
+    }),
+    autoFlowIssue: async () => ({
+      status: "execution_handoff",
+      message: "Ready for executor.",
+      steps: [],
+      workerResults: [],
+      session: { id: "session", findings: [], workerResults: [], createdAt: nowIso(), updatedAt: nowIso() },
+    }),
+    adoptPendingLiveWorker: async () => ({
+      id: "task-391",
+      issueRef: "GH-391",
+      repoKey: "flow",
+      workJobId: "job-391",
+      prompt: "Implement GH-391.",
+      workspacePath: "/tmp/flow-gh-391",
+    }),
+    recordLocalThreadResult: async (_sessionId: string, result: { issueRef: string; status: string }) => result,
+  };
+  const service = new AutoflowService({
+    projectId: "flow",
+    runtime: runtime as never,
+    agentSessionDriver: {
+      ...fakeAgentDriver(),
+      async postPrompt() {
+        prompts += 1;
+        return {
+          ...fakeAgentDriverSession(),
+          id: "agent-gh-391",
+          status: "failed",
+          error: "Executor failed.",
+          summary: "Executor failed.",
+        };
+      },
+    },
+  });
+
+  assert.equal((await service.reconcile()).activeCount, 1);
+  const status = await service.waitForIdle();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.equal(status.activeCount, 0);
+  assert.equal(status.issues["GH-391"]?.phase, "failed");
+  assert.equal(prompts, 1);
+});
+
 test("AutoflowService sends one commit follow-up when the workspace stays dirty", async () => {
   const messages: string[] = [];
   let gitInspections = 0;
