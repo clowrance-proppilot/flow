@@ -93,6 +93,7 @@ export interface AutoflowCodeReviewCreator {
     headRefName?: string;
     isDraft?: boolean;
     checksPassing?: boolean;
+    checksPending?: boolean;
     reviewDecision?: string;
   }>;
 }
@@ -565,6 +566,7 @@ export class AutoflowService {
       headRefName: pr.headRefName ?? branch,
       isDraft: pr.isDraft === true,
       checksPassing: pr.checksPassing,
+      checksPending: pr.checksPending,
       reviewDecision: pr.reviewDecision,
     });
   }

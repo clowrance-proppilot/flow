@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { GitAdapter } from "./adapters/git.js";
 import { AutoflowService, type AutoflowAgentSessionDriver, type AutoflowCodeReviewCreator, type AutoflowServiceStatus } from "./autoflow-service.js";
+import type { WorkItem } from "./contracts.js";
 import { flowUserStateRoot } from "./flow-layout.js";
 import { createKyselyFlowState, createSqliteSqlStateConfig } from "./sql-state.js";
 import type { FlowWorkRuntime } from "./work-runtime.js";
@@ -34,6 +35,7 @@ export interface StandaloneAutoflowRunnerOptions {
 export class StandaloneAutoflowRunner {
   private readonly projectId: string;
   private readonly state: AutoflowRunnerState;
+  private readonly runtime: FlowWorkRuntime;
   private readonly service: AutoflowService;
   private enabled = true;
   private loaded = false;
@@ -41,6 +43,7 @@ export class StandaloneAutoflowRunner {
   constructor(options: StandaloneAutoflowRunnerOptions) {
     this.projectId = options.projectId;
     this.state = options.state;
+    this.runtime = options.runtime;
     const git = new GitAdapter();
     this.service = new AutoflowService({
       projectId: options.projectId,
@@ -64,7 +67,9 @@ export class StandaloneAutoflowRunner {
   async status(): Promise<AutoflowServiceStatus> {
     await this.load();
     const status = this.service.getStatus();
-    if (!status.enabled || status.activeCount > 0 || Object.keys(status.issues).length > 0) return normalizeAutoflowStatus(status);
+    if (!status.enabled || status.activeCount > 0 || Object.keys(status.issues).length > 0) {
+      return await this.reconcileTerminalPersistedStatus(normalizeAutoflowStatus(status));
+    }
     return await this.readPersistedStatus() ?? status;
   }
 
@@ -103,7 +108,30 @@ export class StandaloneAutoflowRunner {
 
   private async readPersistedStatus(): Promise<AutoflowServiceStatus | undefined> {
     const status = await this.state.getProjectState<AutoflowServiceStatus>(this.projectId, AUTOFLOW_STATUS_STATE_KEY);
-    return isAutoflowServiceStatus(status) ? normalizeAutoflowStatus(status) : undefined;
+    return isAutoflowServiceStatus(status)
+      ? await this.reconcileTerminalPersistedStatus(normalizeAutoflowStatus(status))
+      : undefined;
+  }
+
+  private async reconcileTerminalPersistedStatus(status: AutoflowServiceStatus): Promise<AutoflowServiceStatus> {
+    const inspectIssue = typeof this.runtime.inspectIssue === "function"
+      ? this.runtime.inspectIssue.bind(this.runtime)
+      : undefined;
+    if (!inspectIssue) return status;
+
+    const issues = { ...status.issues };
+    let changed = false;
+    for (const [ref, issueStatus] of Object.entries(issues)) {
+      if (isActiveAutoflowPhase(issueStatus.phase)) continue;
+      const issue = await inspectIssue(ref).catch(() => undefined);
+      if (!issue || !isTerminalWorkflowIssue(issue)) continue;
+      delete issues[ref];
+      changed = true;
+    }
+
+    const normalized = normalizeAutoflowStatus({ ...status, issues });
+    if (changed) await this.state.setProjectState(this.projectId, AUTOFLOW_STATUS_STATE_KEY, normalized);
+    return normalized;
   }
 }
 
@@ -131,6 +159,16 @@ function autoflowStatusSummary(activeCount: number, blockedCount: number): strin
 
 function isActiveAutoflowPhase(phase: string): boolean {
   return phase === "starting" || phase === "running";
+}
+
+function isTerminalWorkflowIssue(issue: WorkItem): boolean {
+  if (issue.state === "done") return true;
+  const metadata = issue.metadata ?? {};
+  return metadata["workflow.closeout.merged"] === true ||
+    metadata.issueStatus === "Closed" ||
+    metadata.jiraStatus === "Closed" ||
+    metadata.issueStatusCategory === "Complete" ||
+    metadata.jiraStatusCategory === "Complete";
 }
 
 function isAutoflowServiceStatus(value: unknown): value is AutoflowServiceStatus {
