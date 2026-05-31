@@ -1,4 +1,4 @@
-import { nowIso, WorkerStatusValue, type WorkerTaskRequest } from "./contracts.js";
+import { createId, nowIso, WorkerStatusValue, type WorkerTaskRequest } from "./contracts.js";
 import type { AdvanceIssueResult, AutoFlowIssueResult, FlowDoctorResult, FlowWorkRuntime, LocalThreadResultInput } from "./work-runtime.js";
 
 export type AutoflowServiceRuntime = Pick<
@@ -75,6 +75,7 @@ export interface AutoflowServiceOptions {
   postPromptTimeoutMs?: number;
   gitInspect?: (path: string) => Promise<{ dirty: boolean; entries: string[] }>;
   autoReconcileOnSlotAvailable?: boolean;
+  onStatusChange?: (status: AutoflowServiceStatus) => void | Promise<void>;
 }
 
 export interface AutoflowCodeReviewCreator {
@@ -117,6 +118,7 @@ export class AutoflowService {
   private readonly postPromptTimeoutMs: number;
   private readonly autoReconcileOnSlotAvailable: boolean;
   private readonly gitInspect?: (path: string) => Promise<{ dirty: boolean; entries: string[] }>;
+  private readonly onStatusChange?: (status: AutoflowServiceStatus) => void | Promise<void>;
   private readonly activeRuns = new Map<string, ActiveRun>();
   private readonly issueStatuses = new Map<string, AutoflowServiceIssueStatus>();
   private reconciling = false;
@@ -131,6 +133,7 @@ export class AutoflowService {
     this.postPromptTimeoutMs = options.postPromptTimeoutMs ?? 10 * 60 * 1000;
     this.autoReconcileOnSlotAvailable = options.autoReconcileOnSlotAvailable ?? true;
     this.gitInspect = options.gitInspect;
+    this.onStatusChange = options.onStatusChange;
   }
 
   getStatus(): AutoflowServiceStatus {
@@ -351,7 +354,12 @@ export class AutoflowService {
       summary: `Autoflow working ${issueRef}.`,
     });
 
-    const completed = await this.completeAgentPrompt(piSession.id, handoff);
+    let completed: AutoflowAgentSessionSnapshot;
+    try {
+      completed = await this.completeAgentPrompt(piSession.id, handoff);
+    } catch (error) {
+      completed = failedAgentSession(piSession, handoff, error);
+    }
     const resultStatus = await this.recordResult(flowSessionId, handoff, completed);
 
     let finalPhase: AutoflowServicePhase = completed.status === "failed" ? "failed" : resultStatus === "blocked" ? "needs_input" : "idle";
@@ -386,6 +394,12 @@ export class AutoflowService {
       ...input,
       updatedAt: nowIso(),
     });
+    this.emitStatusChange();
+  }
+
+  private emitStatusChange(): void {
+    if (!this.onStatusChange) return;
+    void Promise.resolve(this.onStatusChange(this.getStatus())).catch(() => undefined);
   }
 
   private async postPromptWithTimeout(sessionId: string, prompt: string): Promise<AutoflowAgentSessionSnapshot> {
@@ -695,6 +709,30 @@ function doctorBlocksAutoflow(doctor: FlowDoctorResult): boolean {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function failedAgentSession(
+  session: AutoflowAgentSessionSnapshot,
+  handoff: WorkerTaskRequest,
+  error: unknown,
+): AutoflowAgentSessionSnapshot {
+  const message = errorMessage(error);
+  return {
+    ...session,
+    workspacePath: session.workspacePath ?? handoff.workspacePath,
+    status: "failed",
+    error: message,
+    summary: message,
+    timeline: [
+      ...session.timeline,
+      {
+        id: createId("assistant"),
+        role: "assistant",
+        content: `Autoflow failed: ${message}`,
+        createdAt: nowIso(),
+      },
+    ],
+  };
 }
 
 function extractChangedFilesFromTimeline(timeline: AutoflowAgentSessionSnapshot["timeline"]): string[] {

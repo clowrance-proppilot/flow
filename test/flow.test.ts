@@ -2518,6 +2518,47 @@ test("Standalone Autoflow runner starts the next ready issue and records a resul
   assert.match(issueStatus?.summary ?? "", /Pull request is missing/);
 });
 
+test("Standalone Autoflow runner records timed-out worker jobs as terminal", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-autoflow-runner-timeout-"));
+  const ledger = new MemoryWorkflowLedger();
+  const runtime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  await ledger.writeIssue({
+    ref: "GH-379",
+    title: "Fix standalone Autoflow timeout and running-status drift",
+    repoKeys: ["flow"],
+    state: "queued",
+    metadata: {
+      "workflow.repos.flow.worktree_path": root,
+    },
+  });
+  const driver = new PiSessionDriver({
+    runtime,
+    repoRoot: root,
+    flowSessionId: "desktop-project",
+    agent: {
+      async prompt() {
+        return new Promise(() => undefined);
+      },
+    },
+  });
+  const runner = new StandaloneAutoflowRunner({
+    projectId: "project",
+    runtime,
+    state: new MemoryAutoflowRunnerState(),
+    agentSessionDriver: driver,
+    postPromptTimeoutMs: 20,
+  });
+
+  const status = await runner.tick({ wait: true });
+  const jobs = await ledger.listWorkJobs("GH-379");
+  const results = await ledger.listWorkJobResults("GH-379");
+
+  assert.equal(status.issues["GH-379"]?.phase, "failed");
+  assert.equal(jobs.at(-1)?.status, "failed");
+  assert.equal(results.at(-1)?.status, "failed");
+  assert.match(results.at(-1)?.summary ?? "", /timed out/);
+});
+
 test("Autoflow service can be instantiated without Desktop modules", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-autoflow-service-"));
   const runtime = testWorkRuntime({ store: new FlowStore({ root }), ledger: new MemoryWorkflowLedger() });

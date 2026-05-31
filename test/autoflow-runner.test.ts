@@ -146,6 +146,7 @@ test("StandaloneAutoflowRunner can target one issue without broad queue pickup",
 });
 
 test("StandaloneAutoflowRunner times out stuck agent prompts and frees the slot", async () => {
+  let recordedResult: { issueRef: string; status: string; workJobId?: string; blockers?: string[] } | undefined;
   const runner = new StandaloneAutoflowRunner({
     projectId: "flow",
     state: new MemoryRunnerState(),
@@ -190,7 +191,10 @@ test("StandaloneAutoflowRunner times out stuck agent prompts and frees the slot"
         prompt: "Implement GH-278.",
         workspacePath: "/tmp/flow-gh-278",
       }),
-      recordLocalThreadResult: async () => undefined,
+      recordLocalThreadResult: async (_sessionId: string, result: { issueRef: string; status: string; workJobId?: string; blockers?: string[] }) => {
+        recordedResult = result;
+        return result;
+      },
       recordEvidence: async () => undefined,
       recordDocumentation: async () => undefined,
       recordPullRequest: async () => undefined,
@@ -213,6 +217,117 @@ test("StandaloneAutoflowRunner times out stuck agent prompts and frees the slot"
   assert.equal(status.activeCount, 0);
   assert.equal(status.issues["GH-278"]?.phase, "failed");
   assert.match(status.issues["GH-278"]?.summary ?? "", /timed out/);
+  assert.equal(recordedResult?.issueRef, "GH-278");
+  assert.equal(recordedResult?.workJobId, "job-278");
+  assert.equal(recordedResult?.status, "failed");
+  assert.match(recordedResult?.blockers?.join("\n") ?? "", /timed out/);
+});
+
+test("StandaloneAutoflowRunner persists running status for separate status readers", async () => {
+  const state = new MemoryRunnerState();
+  let resolvePrompt: ((value: AutoflowAgentSessionSnapshot) => void) | undefined;
+  let recordedResult: { issueRef: string; status: string } | undefined;
+  const runtime = {
+    inspectQueue: async () => [{
+      ref: "GH-379",
+      title: "Fix standalone Autoflow timeout and running-status drift",
+      repoKeys: ["flow"],
+      state: "queued",
+      metadata: {},
+    }],
+    summarizeHandoff: async () => "handoff",
+    createSession: async (id: string) => ({ id, findings: [], workerResults: [], createdAt: nowIso(), updatedAt: nowIso() }),
+    selectIssue: async () => undefined,
+    diagnoseIssue: async () => ({
+      issueRef: "GH-379",
+      status: "ok",
+      issue: { ref: "GH-379", title: "Fix standalone Autoflow timeout and running-status drift", state: "selected", repoKeys: ["flow"] },
+      visibility: {
+        ledger: true,
+        issueTracker: true,
+        repoRouting: true,
+        preparedWorktree: true,
+        codeReview: false,
+        codeReviewRequired: false,
+      },
+      findings: [],
+      nextAction: { type: "advance", summary: "Run Autoflow." },
+    }),
+    autoFlowIssue: async () => ({
+      status: "execution_handoff",
+      message: "Ready for executor.",
+      steps: [],
+      workerResults: [],
+      session: { id: "session", findings: [], workerResults: [], createdAt: nowIso(), updatedAt: nowIso() },
+    }),
+    adoptPendingLiveWorker: async () => ({
+      id: "task-379",
+      issueRef: "GH-379",
+      repoKey: "flow",
+      workJobId: "job-379",
+      prompt: "Implement GH-379.",
+      workspacePath: "/tmp/flow-gh-379",
+    }),
+    recordLocalThreadResult: async (_sessionId: string, result: { issueRef: string; status: string }) => {
+      recordedResult = result;
+      return result;
+    },
+    recordEvidence: async () => undefined,
+    recordDocumentation: async () => undefined,
+    recordPullRequest: async () => undefined,
+    advanceIssue: async () => ({
+      status: "awaiting_review",
+      message: "Ready for review.",
+    }),
+  };
+  const agentSessionDriver = {
+    ...fakeAgentDriver(),
+    async openOrCreateIssueSession() {
+      return { ...fakeAgentDriverSession(), id: "agent-gh-379", status: "active" };
+    },
+    async postPrompt() {
+      return new Promise<AutoflowAgentSessionSnapshot>((resolve) => {
+        resolvePrompt = resolve;
+      });
+    },
+  };
+  const runner = new StandaloneAutoflowRunner({
+    projectId: "flow",
+    state,
+    runtime: runtime as never,
+    agentSessionDriver,
+  });
+  const statusReader = new StandaloneAutoflowRunner({
+    projectId: "flow",
+    state,
+    runtime: runtime as never,
+    agentSessionDriver: fakeAgentDriver(),
+  });
+
+  const started = await runner.tick();
+  let persisted = await statusReader.status();
+  for (let index = 0; index < 20 && persisted.issues["GH-379"]?.phase !== "running"; index += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    persisted = await statusReader.status();
+  }
+
+  assert.equal(started.activeCount, 1);
+  assert.equal(persisted.activeCount, 1);
+  assert.equal(persisted.issues["GH-379"]?.phase, "running");
+  assert.match(persisted.summary, /Working 1 issue/);
+
+  resolvePrompt?.({
+    ...fakeAgentDriverSession(),
+    id: "agent-gh-379",
+    workspacePath: "/tmp/flow-gh-379",
+    status: "done",
+    summary: "Implemented GH-379.",
+  });
+  const completed = await runner.tick({ wait: true });
+
+  assert.equal(completed.activeCount, 0);
+  assert.equal(recordedResult?.issueRef, "GH-379");
+  assert.equal(recordedResult?.status, "succeeded");
 });
 
 test("AutoflowService sends one commit follow-up when the workspace stays dirty", async () => {
@@ -309,18 +424,7 @@ test("AutoflowService sends one commit follow-up when the workspace stays dirty"
 });
 
 function fakeAgentDriver(): AutoflowAgentSessionDriver {
-  const session: AutoflowAgentSessionSnapshot = {
-    id: "agent-gh-315",
-    workspacePath: "/tmp/flow-gh-315",
-    status: "done",
-    summary: "Implemented GH-315.",
-    timeline: [{
-      id: "assistant-1",
-      role: "assistant",
-      content: "Implemented GH-315 and committed changes.",
-      createdAt: nowIso(),
-    }],
-  };
+  const session = fakeAgentDriverSession();
   return {
     async getSession() {
       return session;
@@ -334,6 +438,21 @@ function fakeAgentDriver(): AutoflowAgentSessionDriver {
     async postPrompt() {
       return session;
     },
+  };
+}
+
+function fakeAgentDriverSession(): AutoflowAgentSessionSnapshot {
+  return {
+    id: "agent-gh-315",
+    workspacePath: "/tmp/flow-gh-315",
+    status: "done",
+    summary: "Implemented GH-315.",
+    timeline: [{
+      id: "assistant-1",
+      role: "assistant",
+      content: "Implemented GH-315 and committed changes.",
+      createdAt: nowIso(),
+    }],
   };
 }
 

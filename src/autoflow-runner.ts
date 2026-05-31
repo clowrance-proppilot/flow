@@ -6,6 +6,7 @@ import { createKyselyFlowState, createSqliteSqlStateConfig } from "./sql-state.j
 import type { FlowWorkRuntime } from "./work-runtime.js";
 
 export const AUTOFLOW_ENABLED_STATE_KEY = "autoflow.enabled";
+export const AUTOFLOW_STATUS_STATE_KEY = "autoflow.status";
 
 export interface AutoflowRunnerState {
   getProjectState<T = unknown>(projectId: string, key: string): Promise<T | undefined>;
@@ -49,6 +50,9 @@ export class StandaloneAutoflowRunner {
       maxConcurrency: options.maxConcurrency,
       postPromptTimeoutMs: options.postPromptTimeoutMs,
       autoReconcileOnSlotAvailable: false,
+      onStatusChange: async (status) => {
+        await this.persistStatus(status);
+      },
       enabled: () => this.enabled,
       gitInspect: async (path) => {
         const status = await git.inspect(path);
@@ -59,21 +63,24 @@ export class StandaloneAutoflowRunner {
 
   async status(): Promise<AutoflowServiceStatus> {
     await this.load();
-    return this.service.getStatus();
+    const status = this.service.getStatus();
+    if (!status.enabled || status.activeCount > 0 || Object.keys(status.issues).length > 0) return status;
+    return await this.readPersistedStatus() ?? status;
   }
 
   async setEnabled(enabled: boolean): Promise<AutoflowServiceStatus> {
     await this.state.setProjectState(this.projectId, AUTOFLOW_ENABLED_STATE_KEY, enabled);
     this.enabled = enabled;
     this.loaded = true;
-    return this.service.getStatus();
+    return await this.persistStatus(this.service.getStatus());
   }
 
   async tick(options: { issueRefs?: string[]; wait?: boolean } = {}): Promise<AutoflowServiceStatus> {
     await this.load();
     const status = await this.service.reconcile({ issueRefs: options.issueRefs });
+    await this.persistStatus(status);
     if (!options.wait) return status;
-    return this.service.waitForIdle();
+    return this.persistStatus(await this.service.waitForIdle());
   }
 
   async sendUserMessage(input: { issueRef: string; sessionId?: string; text: string }) {
@@ -87,4 +94,26 @@ export class StandaloneAutoflowRunner {
     this.enabled = configured !== false;
     this.loaded = true;
   }
+
+  private async persistStatus(status: AutoflowServiceStatus): Promise<AutoflowServiceStatus> {
+    await this.state.setProjectState(this.projectId, AUTOFLOW_STATUS_STATE_KEY, status);
+    return status;
+  }
+
+  private async readPersistedStatus(): Promise<AutoflowServiceStatus | undefined> {
+    const status = await this.state.getProjectState<AutoflowServiceStatus>(this.projectId, AUTOFLOW_STATUS_STATE_KEY);
+    return isAutoflowServiceStatus(status) ? status : undefined;
+  }
+}
+
+function isAutoflowServiceStatus(value: unknown): value is AutoflowServiceStatus {
+  if (!value || typeof value !== "object") return false;
+  const status = value as Partial<AutoflowServiceStatus>;
+  return typeof status.enabled === "boolean" &&
+    typeof status.maxConcurrency === "number" &&
+    typeof status.activeCount === "number" &&
+    Boolean(status.issues) &&
+    typeof status.issues === "object" &&
+    typeof status.summary === "string" &&
+    typeof status.updatedAt === "string";
 }
