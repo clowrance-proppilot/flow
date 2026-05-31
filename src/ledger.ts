@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { appendFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import {
@@ -31,7 +31,10 @@ import {
 } from "./contracts.js";
 import { flowIssueProjectionFileName, flowWorkflowLedgerPath } from "./flow-layout.js";
 import type { WorkflowLedger, WorkflowLedgerMirror } from "./engine/ledger-contracts.js";
+import { SqliteWorkflowLedger } from "./ledger-sqlite.js";
 export type { WorkflowLedger, WorkflowLedgerMirror } from "./engine/ledger-contracts.js";
+export { SqliteWorkflowLedger } from "./ledger-sqlite.js";
+export type { SqliteWorkflowLedgerOptions } from "./ledger-sqlite.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -542,6 +545,11 @@ export interface WorkflowLedgerFactoryOptions {
 
 export function createWorkflowLedger(options: WorkflowLedgerFactoryOptions): WorkflowLedger {
   if (options.adapter === "beads") return new BeadsWorkflowLedger({ cwd: options.cwd });
+  if (options.adapter === "sqlite") {
+    return new SqliteWorkflowLedger({
+      path: options.path ?? join(resolve(options.cwd), ".flow", "ledger", "workflow.db"),
+    });
+  }
   return new JsonlWorkflowLedger({
     path: options.path ?? flowWorkflowLedgerPath(options.cwd),
   });

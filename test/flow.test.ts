@@ -11,6 +11,7 @@ import {
   FlowStore,
   MemoryWorkflowLedger,
   MirroredWorkflowLedger,
+  SqliteWorkflowLedger,
   assessIssue,
   extractAutoReviewFeedback,
   nowIso,
@@ -6027,4 +6028,242 @@ test("Custom topology overrides repo names, paths, branch names, and PR URLs", a
 
   assert.equal(customTopology.isValidRepoKey("my_service"), true);
   assert.equal(customTopology.isValidRepoKey("unknown_repo"), false);
+});
+
+test("SqliteWorkflowLedger supports basic CRUD operations", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-sqlite-ledger-"));
+  const dbPath = join(root, "workflow.db");
+  const ledger = new SqliteWorkflowLedger({ path: dbPath });
+
+  // Test writeIssue and readIssue
+  const issue = await ledger.writeIssue({
+    ref: "ISSUE-1",
+    title: "Test Issue",
+    repoKeys: ["main"],
+    state: "queued",
+    metadata: {},
+  });
+  assert.equal(issue.ref, "ISSUE-1");
+  assert.equal(issue.title, "Test Issue");
+
+  const readIssue = await ledger.readIssue("ISSUE-1");
+  assert.ok(readIssue);
+  assert.equal(readIssue.ref, "ISSUE-1");
+  assert.equal(readIssue.title, "Test Issue");
+
+  // Test listIssues
+  const issues = await ledger.listIssues();
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0].ref, "ISSUE-1");
+
+  // Test ensureIssue
+  const ensured = await ledger.ensureIssue({
+    ref: "ISSUE-2",
+    title: "Ensured Issue",
+    repoKeys: ["main"],
+    state: "queued",
+    metadata: {},
+  });
+  assert.equal(ensured.ref, "ISSUE-2");
+
+  const allIssues = await ledger.listIssues();
+  assert.equal(allIssues.length, 2);
+
+  // Test readIssues
+  const readIssues = await ledger.readIssues(["ISSUE-1", "ISSUE-2"]);
+  assert.equal(readIssues.size, 2);
+  assert.ok(readIssues.has("ISSUE-1"));
+  assert.ok(readIssues.has("ISSUE-2"));
+
+  ledger.close();
+});
+
+test("SqliteWorkflowLedger supports worker runs and results", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-sqlite-worker-"));
+  const dbPath = join(root, "workflow.db");
+  const ledger = new SqliteWorkflowLedger({ path: dbPath });
+
+  await ledger.writeIssue({
+    ref: "ISSUE-10",
+    title: "Worker Test",
+    repoKeys: ["main"],
+    state: "queued",
+    metadata: {},
+  });
+
+  // Test recordWorkerRun
+  const now = nowIso();
+  await ledger.recordWorkerRun({
+    taskId: "task-1",
+    issueRef: "ISSUE-10",
+    repoKey: "main",
+    status: "running",
+    blockers: [],
+    updatedAt: now,
+  });
+
+  const runs = await ledger.listWorkerRuns("ISSUE-10");
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].taskId, "task-1");
+  assert.equal(runs[0].status, "running");
+
+  // Test recordWorkerResult
+  await ledger.recordWorkerResult({
+    taskId: "task-1",
+    issueRef: "ISSUE-10",
+    repoKey: "main",
+    status: "succeeded",
+    summary: "Done",
+    changedFiles: [],
+    testsRun: [],
+    blockers: [],
+    completedAt: now,
+  });
+
+  const results = await ledger.listWorkerResults("ISSUE-10");
+  assert.equal(results.length, 1);
+  assert.equal(results[0].taskId, "task-1");
+  assert.equal(results[0].status, "succeeded");
+
+  // Recording a result also records a run
+  const updatedRuns = await ledger.listWorkerRuns("ISSUE-10");
+  assert.equal(updatedRuns.length, 1);
+  assert.equal(updatedRuns[0].status, "succeeded");
+
+  ledger.close();
+});
+
+test("SqliteWorkflowLedger supports work jobs and job results", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-sqlite-jobs-"));
+  const dbPath = join(root, "workflow.db");
+  const ledger = new SqliteWorkflowLedger({ path: dbPath });
+
+  await ledger.writeIssue({
+    ref: "ISSUE-20",
+    title: "Job Test",
+    repoKeys: ["main"],
+    state: "queued",
+    metadata: {},
+  });
+
+  const now = nowIso();
+
+  // Test recordWorkJob
+  await ledger.recordWorkJob({
+    id: "job-1",
+    issueRef: "ISSUE-20",
+    repoKey: "main",
+    workType: "flow.implement",
+    status: "queued",
+    input: { prompt: "fix it" },
+    requiredCapabilities: [],
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  const jobs = await ledger.listWorkJobs("ISSUE-20");
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].id, "job-1");
+  assert.equal(jobs[0].workType, "flow.implement");
+
+  // Test recordWorkJobResult
+  await ledger.recordWorkJobResult({
+    jobId: "job-1",
+    issueRef: "ISSUE-20",
+    repoKey: "main",
+    workType: "flow.implement",
+    status: "succeeded",
+    summary: "Implemented",
+    evidence: ["npm test"],
+    completedAt: now,
+  });
+
+  const jobResults = await ledger.listWorkJobResults("ISSUE-20");
+  assert.equal(jobResults.length, 1);
+  assert.equal(jobResults[0].jobId, "job-1");
+  assert.equal(jobResults[0].status, "succeeded");
+
+  ledger.close();
+});
+
+test("SqliteWorkflowLedger supports context records", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-sqlite-context-"));
+  const dbPath = join(root, "workflow.db");
+  const ledger = new SqliteWorkflowLedger({ path: dbPath });
+
+  // Test recordContext
+  const thread = await ledger.recordContext({
+    kind: "thread",
+    id: "thread-1",
+    projectId: "project-1",
+    title: "Test Thread",
+    status: "active",
+  });
+  assert.equal(thread.kind, "thread");
+  assert.equal(thread.id, "thread-1");
+
+  const prompt = await ledger.recordContext({
+    kind: "prompt",
+    id: "prompt-1",
+    projectId: "project-1",
+    prompt: "What should we do?",
+    target: "project",
+  });
+  assert.equal(prompt.kind, "prompt");
+
+  // Test readContext
+  const projection = await ledger.readContext({ projectId: "project-1" });
+  assert.equal(projection.threads.length, 1);
+  assert.equal(projection.prompts.length, 1);
+  assert.equal(projection.threads[0].id, "thread-1");
+  assert.equal(projection.prompts[0].id, "prompt-1");
+
+  // Test readContext with scope filtering
+  const filtered = await ledger.readContext({ threadId: "thread-1" });
+  assert.equal(filtered.threads.length, 1);
+  assert.equal(filtered.prompts.length, 0);
+
+  ledger.close();
+});
+
+test("SqliteWorkflowLedger persists data across instances", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-sqlite-persist-"));
+  const dbPath = join(root, "workflow.db");
+
+  // Write with first instance
+  const ledger1 = new SqliteWorkflowLedger({ path: dbPath });
+  await ledger1.writeIssue({
+    ref: "ISSUE-100",
+    title: "Persisted Issue",
+    repoKeys: ["main"],
+    state: "queued",
+    metadata: {},
+  });
+  ledger1.close();
+
+  // Read with second instance
+  const ledger2 = new SqliteWorkflowLedger({ path: dbPath });
+  const issue = await ledger2.readIssue("ISSUE-100");
+  assert.ok(issue);
+  assert.equal(issue.ref, "ISSUE-100");
+  assert.equal(issue.title, "Persisted Issue");
+  ledger2.close();
+});
+
+test("createWorkflowLedger supports sqlite adapter", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-sqlite-factory-"));
+  const ledger = createWorkflowLedger({ cwd: root, adapter: "sqlite" });
+  assert.ok(ledger instanceof SqliteWorkflowLedger);
+
+  await ledger.writeIssue({
+    ref: "ISSUE-200",
+    title: "Factory Issue",
+    repoKeys: ["main"],
+    state: "queued",
+    metadata: {},
+  });
+
+  const issue = await ledger.readIssue("ISSUE-200");
+  assert.ok(issue);
+  assert.equal(issue.ref, "ISSUE-200");
 });
