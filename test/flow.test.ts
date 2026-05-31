@@ -6403,11 +6403,22 @@ test("Work Runtime closeout records evidence, merges approved PR, and verifies J
   const ledger = new MemoryWorkflowLedger();
   const comments: Array<{ key: string; body: string }> = [];
   let merged: { repo: string; number: number; method?: string } | undefined;
+  let pruned: { repoPath: string; worktreePath: string; branch?: string; requireClean?: boolean } | undefined;
   let prMerged = false;
   let jiraReads = 0;
   const workRuntime = testWorkRuntime({
     store: new FlowStore({ root }),
     ledger,
+    projectRoot: root,
+    sourceControl: {
+      async inspect(repoPath) {
+        return { branch: "feature/ISSUE-19-closeout", headSha: "abc123", dirty: false, entries: [], worktreePath: repoPath };
+      },
+      async pruneWorktree(input) {
+        pruned = input;
+        return { removed: true, worktreePath: input.worktreePath, branch: input.branch };
+      },
+    },
     collaboration: {
       async findPullRequests() {
         return [];
@@ -6471,6 +6482,8 @@ test("Work Runtime closeout records evidence, merges approved PR, and verifies J
       prRepo: "app-api",
       prNumber: 19,
       prUrl: "https://github.com/ExampleOrg/app-api/pull/19",
+      "workflow.repos.app_api.branch": "feature/ISSUE-19-closeout",
+      "workflow.repos.app_api.worktree_path": "/repo/app-api/.worktrees/feature-ISSUE-19-closeout",
       evidenceRecorded: true,
       evidenceSummary: "Acceptance criteria passed.",
       evidenceSource: "pixi run pytest tests/test_closeout.py",
@@ -6487,6 +6500,19 @@ test("Work Runtime closeout records evidence, merges approved PR, and verifies J
 
   assert.equal(result.status, "merged_jira_verified");
   assert.deepEqual(merged, { repo: "app-api", number: 19, method: "squash" });
+  assert.deepEqual(pruned, {
+    repoPath: join(root, "app-api").replaceAll("\\", "/"),
+    worktreePath: "/repo/app-api/.worktrees/feature-ISSUE-19-closeout",
+    branch: "feature/ISSUE-19-closeout",
+    requireClean: true,
+  });
+  assert.deepEqual(result.prunedWorktrees, [{
+    repoKey: "app_api",
+    removed: true,
+    reason: undefined,
+    worktreePath: "/repo/app-api/.worktrees/feature-ISSUE-19-closeout",
+    branch: "feature/ISSUE-19-closeout",
+  }]);
   assert.equal(comments.length, 1);
   assert.match(comments[0]?.body ?? "", /Acceptance evidence recorded for PR closeout/);
   assert.equal(result.acceptanceCommentUrl, "https://example.atlassian.net/browse/ISSUE-19?focusedCommentId=20002");
@@ -6497,6 +6523,198 @@ test("Work Runtime closeout records evidence, merges approved PR, and verifies J
   assert.equal(issue?.metadata["workflow.closeout.status"], "merged_jira_verified");
   assert.equal(issue?.metadata["workflow.closeout.jira_verified"], true);
   assert.equal(issue?.metadata["workflow.closeout.merge_commit_sha"], "abc123");
+});
+
+test("Work Runtime advance closes out review-ready PRs without requesting execution", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const ledger = new MemoryWorkflowLedger();
+  let prMerged = false;
+  let pruned = false;
+  const workRuntime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    projectRoot: root,
+    sourceControl: {
+      async inspect(repoPath) {
+        return { branch: "feature/ISSUE-20-closeout", headSha: "def456", dirty: false, entries: [], worktreePath: repoPath };
+      },
+      async pruneWorktree() {
+        pruned = true;
+        return { removed: true, worktreePath: "/repo/app-api/.worktrees/feature-ISSUE-20-closeout", branch: "feature/ISSUE-20-closeout" };
+      },
+    },
+    collaboration: {
+      async findPullRequests() {
+        return [];
+      },
+      async getPullRequest(repo, number) {
+        return {
+          repo,
+          number,
+          title: "Closeout PR",
+          url: `https://github.com/ExampleOrg/${repo}/pull/${number}`,
+          headRefName: "feature/ISSUE-20-closeout",
+          state: prMerged ? "MERGED" : "OPEN",
+          mergedAt: prMerged ? "2026-05-15T15:00:00Z" : undefined,
+          mergeCommitSha: prMerged ? "def456" : undefined,
+          isDraft: false,
+          mergeable: "MERGEABLE",
+          mergeStateStatus: "CLEAN",
+          checksPassing: true,
+          autoReviewStatus: "passed",
+          autoReviewMustFix: false,
+        };
+      },
+      async mergePullRequest(repo, number) {
+        assert.equal(repo, "app-api");
+        assert.equal(number, 20);
+        prMerged = true;
+        return {
+          url: "https://github.com/ExampleOrg/app-api/pull/20",
+          mergedAt: "2026-05-15T15:00:00Z",
+          mergeCommitSha: "def456",
+        };
+      },
+    },
+    issueTracker: {
+      async viewIssue(key) {
+        return {
+          key,
+          summary: "Closeout issue",
+          status: prMerged ? "Closed" : "In Review",
+          statusCategory: prMerged ? "Done" : "In Progress",
+          labels: [],
+        };
+      },
+      async postIssueComment(_key, body) {
+        return { body };
+      },
+    },
+  });
+  const session = await workRuntime.createSession("session-advance-closeout");
+  await workRuntime.selectIssue(session.id, {
+    ref: "ISSUE-20",
+    title: "Advance closeout",
+    repoKeys: ["app_api"],
+    state: "awaiting_review",
+    metadata: {
+      prRepo: "app-api",
+      prNumber: 20,
+      prUrl: "https://github.com/ExampleOrg/app-api/pull/20",
+      prIsDraft: false,
+      prChecksPassing: true,
+      prAutoReviewStatus: "passed",
+      "workflow.repos.app_api.branch": "feature/ISSUE-20-closeout",
+      "workflow.repos.app_api.worktree_path": "/repo/app-api/.worktrees/feature-ISSUE-20-closeout",
+      evidenceRecorded: true,
+      evidenceSummary: "Acceptance criteria passed.",
+      evidenceSource: "npm test",
+      documentationRecorded: true,
+      documentationDisposition: "not_needed",
+      documentationSummary: "No docs needed.",
+    },
+  });
+  await workRuntime.recordLocalThreadResult(session.id, {
+    issueRef: "ISSUE-20",
+    repoKey: "app_api",
+    status: "succeeded",
+    summary: "Implemented closeout work.",
+    changedFiles: ["src/work-runtime.ts"],
+    testsRun: ["npm test"],
+  });
+
+  const advanced = await workRuntime.advanceIssue(session.id);
+
+  assert.equal(advanced.session.pendingConfirmation, undefined);
+  assert.equal(advanced.issue?.state, "done");
+  assert.match(advanced.message, /closeout completed/);
+  assert.equal(pruned, true);
+});
+
+test("Work Runtime records preserved worktrees when closeout prune refuses dirty work", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    sourceControl: {
+      async inspect(repoPath) {
+        return { branch: "feature/ISSUE-21-closeout", headSha: "abc123", dirty: true, entries: [" M src/app.ts"], worktreePath: repoPath };
+      },
+      async pruneWorktree(input) {
+        return { removed: false, reason: "worktree is dirty", worktreePath: input.worktreePath, branch: input.branch };
+      },
+    },
+    collaboration: {
+      async findPullRequests() {
+        return [];
+      },
+      async getPullRequest(repo, number) {
+        return {
+          repo,
+          number,
+          title: "Already merged",
+          url: `https://github.com/ExampleOrg/${repo}/pull/${number}`,
+          headRefName: "feature/ISSUE-21-closeout",
+          state: "MERGED",
+          mergedAt: "2026-05-15T15:00:00Z",
+          mergeCommitSha: "abc123",
+          isDraft: false,
+          checksPassing: true,
+          autoReviewStatus: "passed",
+          autoReviewMustFix: false,
+        };
+      },
+      async mergePullRequest() {
+        throw new Error("already merged PR should not be merged again");
+      },
+    },
+    issueTracker: {
+      async viewIssue(key) {
+        return {
+          key,
+          summary: "Closeout issue",
+          status: "Closed",
+          statusCategory: "Done",
+          labels: [],
+        };
+      },
+      async postIssueComment(_key, body) {
+        return { body };
+      },
+    },
+  });
+  const session = await workRuntime.createSession("session-closeout-dirty-worktree");
+  await workRuntime.selectIssue(session.id, {
+    ref: "ISSUE-21",
+    title: "Dirty closeout",
+    repoKeys: ["app_api"],
+    state: "awaiting_review",
+    metadata: {
+      prRepo: "app-api",
+      prNumber: 21,
+      prUrl: "https://github.com/ExampleOrg/app-api/pull/21",
+      "workflow.repos.app_api.branch": "feature/ISSUE-21-closeout",
+      "workflow.repos.app_api.worktree_path": "/repo/app-api/.worktrees/feature-ISSUE-21-closeout",
+      evidenceRecorded: true,
+      evidenceSummary: "Acceptance criteria passed.",
+      evidenceSource: "npm test",
+      documentationRecorded: true,
+      documentationDisposition: "not_needed",
+      documentationSummary: "No docs needed.",
+    },
+  });
+
+  const result = await workRuntime.closeoutAfterApproval(session.id, {
+    jiraPollAttempts: 1,
+    jiraPollIntervalMs: 0,
+  });
+
+  assert.equal(result.status, "already_merged_jira_verified");
+  assert.equal(result.prunedWorktrees?.[0]?.removed, false);
+  assert.equal(result.prunedWorktrees?.[0]?.reason, "worktree is dirty");
+  const issue = await ledger.readIssue("ISSUE-21");
+  assert.match(String(issue?.metadata["workflow.closeout.pruned_worktrees"]), /worktree is dirty/);
 });
 
 test("Work Runtime records provider escalation as blocked workflow metadata", async () => {

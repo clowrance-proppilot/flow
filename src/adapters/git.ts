@@ -1,11 +1,12 @@
 import { execFile } from "node:child_process";
 import { access, mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import type {
   SourceControlProvider,
   UnifiedDiff,
+  UnifiedWorktreePruneResult,
   UnifiedWorkspaceStatus,
 } from "./provider-contracts.js";
 
@@ -109,6 +110,47 @@ export class GitAdapter implements SourceControlProvider {
       stat: joinNonEmpty([committedStat, workingStat]),
     };
   }
+
+  async pruneWorktree(options: { repoPath: string; worktreePath: string; branch?: string; requireClean?: boolean }): Promise<UnifiedWorktreePruneResult> {
+    if (pathContains(options.worktreePath, process.cwd())) {
+      return {
+        removed: false,
+        reason: "worktree is current process directory",
+        worktreePath: options.worktreePath,
+        branch: options.branch,
+      };
+    }
+    const status = await this.inspect(options.worktreePath);
+    if (options.branch && status.branch !== options.branch) {
+      return {
+        removed: false,
+        reason: `branch mismatch: expected ${options.branch}, got ${status.branch || "detached"}`,
+        worktreePath: options.worktreePath,
+        branch: status.branch,
+      };
+    }
+    if (options.requireClean !== false && status.dirty) {
+      return {
+        removed: false,
+        reason: "worktree is dirty",
+        worktreePath: options.worktreePath,
+        branch: status.branch,
+      };
+    }
+    await execFileAsync("git", ["-C", options.repoPath, "worktree", "remove", options.worktreePath], {
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    return {
+      removed: true,
+      worktreePath: options.worktreePath,
+      branch: status.branch,
+    };
+  }
+}
+
+function pathContains(parent: string, child: string): boolean {
+  const relativePath = relative(resolve(parent), resolve(child));
+  return relativePath === "" || (!relativePath.startsWith("..") && !relativePath.startsWith("/") && !relativePath.startsWith("\\"));
 }
 
 async function gitOutput(repoPath: string, args: string[]): Promise<string> {

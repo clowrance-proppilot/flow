@@ -51,6 +51,13 @@ export interface UnifiedWorkspaceStatus {
   worktreePath?: string;
 }
 
+export interface UnifiedWorktreePruneResult {
+  removed: boolean;
+  reason?: string;
+  worktreePath: string;
+  branch?: string;
+}
+
 export interface TriageMissingSection {
   section: string;
   severity: "required" | "recommended";
@@ -188,4 +195,5 @@ export interface SourceControlProvider {
   inspectWorkspace(repoPath: string): Promise<UnifiedWorkspaceStatus>;
   prepareWorktree?(options: { repoPath: string; worktreePath: string; branch: string; baseRef?: string }): Promise<UnifiedWorkspaceStatus>;
   diffWorkspace?(options: { repoPath: string; baseRef?: string; headRef?: string }): Promise<UnifiedDiff>;
+  pruneWorktree?(options: { repoPath: string; worktreePath: string; branch?: string; requireClean?: boolean }): Promise<UnifiedWorktreePruneResult>;
 }
