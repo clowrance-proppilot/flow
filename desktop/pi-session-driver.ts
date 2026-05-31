@@ -521,7 +521,6 @@ function issuePrompt(issue: WorkItem, input: { prompt: string; workspacePath?: s
     "You are working in Flow Desktop on the selected issue below.",
     "Use this issue context as the source of truth for the current turn.",
     "",
-    issueContext(issue),
     input.workspacePath ? `Workspace: ${input.workspacePath}` : "Workspace: pending routing",
     "",
     "User request:",
