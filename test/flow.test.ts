@@ -1036,6 +1036,69 @@ test("reviewCodeReview runtime method returns pull request metadata when present
   assert.equal(result.pullRequest?.autoReviewNeedsConfirmation, false);
 });
 
+test("reviewCodeReview runtime method posts provider-neutral review comment when requested", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-review-cr-post-"));
+  const ledger = new MemoryWorkflowLedger();
+  const prUrl = "https://github.com/example/repo/pull/42";
+  let posted: { repo: string; id: string | number; body: string } | undefined;
+  await ledger.writeIssue({
+    ref: "FLOW-CR-3",
+    title: "Code review post test",
+    repoKeys: ["main"],
+    state: "awaiting_review",
+    metadata: {
+      prUrl,
+      prNumber: 42,
+      prState: "OPEN",
+      prIsDraft: false,
+      prChecksPassing: true,
+      prReviewDecision: "APPROVED",
+      prMergeable: "MERGEABLE",
+    },
+  });
+  const runtime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    issueTracker: new LocalIssueTrackerAdapter({ ledger, projectName: "Flow" }),
+    collaboration: {
+      capabilities: { requiresCodeReview: false, canMarkReady: true, canPostComments: true, canMerge: true },
+      async findCodeReviews() {
+        return [];
+      },
+      async getCodeReviewDiff(repo, id) {
+        return { files: ["src/review.ts"], patch: `diff --git a/src/review.ts b/src/review.ts` };
+      },
+      async postReviewComment(repo, id, body) {
+        posted = { repo, id, body };
+        return { url: `https://github.com/example/repo/pull/${id}#issuecomment-1`, body };
+      },
+    },
+  });
+  await runtime.createSession("review-cr-post-session");
+  await runtime.selectIssue("review-cr-post-session", {
+    ref: "FLOW-CR-3",
+    title: "Code review post test",
+    repoKeys: ["main"],
+    state: "selected",
+    metadata: {
+      prUrl,
+      prNumber: 42,
+      prState: "OPEN",
+      prIsDraft: false,
+      prChecksPassing: true,
+      prReviewDecision: "APPROVED",
+      prMergeable: "MERGEABLE",
+    },
+  });
+
+  const result = await runtime.reviewCodeReview("review-cr-post-session", "FLOW-CR-3", { post: true });
+
+  assert.equal(posted?.repo, "repo");
+  assert.equal(posted?.id, 42);
+  assert.match(posted?.body ?? "", /<!-- flow-pr-review -->/);
+  assert.equal(result.postedComment?.url, "https://github.com/example/repo/pull/42#issuecomment-1");
+});
+
 test("Flow config bootstrap can keep repo-local config in local git exclude", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-bootstrap-untracked-"));
   await execFileAsync("git", ["init"], { cwd: root });
