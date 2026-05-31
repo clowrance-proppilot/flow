@@ -446,9 +446,7 @@ export class GhGitHubIssueTrackerAdapter implements IssueTrackerProvider {
 
   async createIssue(input: { issueType: string; title?: string; summary: string; description?: string }): Promise<UnifiedIssue> {
     const issueTitle = input.title?.trim() || input.summary;
-    const issueBody = input.title?.trim()
-      ? input.summary
-      : input.description ?? "";
+    const issueBody = githubIssueCreateBody(input);
     const args = [
       "issue",
       "create",
@@ -556,6 +554,10 @@ export class GhGitHubIssueTrackerAdapter implements IssueTrackerProvider {
     }
     return `${this.owner}/${this.repo}`;
   }
+}
+
+export function githubIssueCreateBody(input: { summary: string; description?: string }): string {
+  return input.description?.trim() || input.summary;
 }
 
 async function withPerfLog<T>(label: string, operation: () => Promise<T>, defaultThresholdMs = 1000): Promise<T> {
