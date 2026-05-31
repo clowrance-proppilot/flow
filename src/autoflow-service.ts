@@ -742,6 +742,11 @@ function doctorBlocksAutoflow(doctor: FlowDoctorResult): boolean {
     "Acceptance evidence is missing.",
     "Documentation disposition is missing.",
     "Pull request is missing.",
+    "Pull request has merge conflicts.",
+    "Pull request checks are not passing.",
+    "Pull request does not follow the repo template.",
+    "Auto review has must-fix feedback.",
+    "Auto review checks failed.",
   ]);
   return blockerSummaries.some((summary) => !autoflowCanAdvance.has(summary));
 }
