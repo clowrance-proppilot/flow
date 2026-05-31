@@ -94,6 +94,7 @@ function App() {
   const subscribedSessionId = useRef("");
   const sendingRef = useRef(false);
   const issueSelectionRequest = useRef(0);
+  const [refreshBackoff, setRefreshBackoff] = useState({ consecutiveFailures: 0, lastFailureTime: 0 });
   const pendingSelectionRef = useRef<string | null>(null);
 
   const activeProject = projects.find((project) => project.id === activeProjectId);
@@ -145,12 +146,27 @@ function App() {
 
   useEffect(() => {
     void refresh(true);
-    const interval = window.setInterval(() => void refresh(false), refreshIntervals.dashboardMs);
+
+    // Calculate interval based on backoff state
+    const baseDelay = refreshIntervals.dashboardMs;
+    const maxDelay = 60000; // 1 minute max
+    const delay = refreshBackoff.consecutiveFailures > 0
+      ? Math.min(baseDelay * Math.pow(2, refreshBackoff.consecutiveFailures - 1), maxDelay)
+      : baseDelay;
+
+    // If we're in backoff, calculate remaining delay from last failure
+    let actualDelay = delay;
+    if (refreshBackoff.consecutiveFailures > 0 && refreshBackoff.lastFailureTime > 0) {
+      const elapsed = Date.now() - refreshBackoff.lastFailureTime;
+      actualDelay = Math.max(0, delay - elapsed);
+    }
+
+    const interval = window.setTimeout(() => void refresh(false), actualDelay);
     return () => {
-      window.clearInterval(interval);
+      window.clearTimeout(interval);
       eventSourceRef.current?.close();
     };
-  }, [refreshIntervals.dashboardMs]);
+  }, [refreshBackoff.consecutiveFailures, refreshBackoff.lastFailureTime, refreshIntervals.dashboardMs]);
 
   useEffect(() => {
     if (!selectedIssueRef || selectedSessionId) return;
@@ -216,7 +232,14 @@ function App() {
       });
       setStatus("ok");
       hasLoaded.current = true;
+      // Reset backoff on success
+      setRefreshBackoff({ consecutiveFailures: 0, lastFailureTime: 0 });
     } catch {
+      // Increment backoff on failure
+      setRefreshBackoff((prev) => ({
+        consecutiveFailures: prev.consecutiveFailures + 1,
+        lastFailureTime: Date.now(),
+      }));
       setStatus("error");
       if (!hasLoaded.current) setError("Unable to load Flow desktop context.");
     } finally {
