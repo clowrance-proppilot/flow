@@ -12,6 +12,7 @@ const cliShim = join(flowRoot, ".tmp", "test", "src", "flow.js");
 const defaultTestFiles = [
   "test/flow.test.ts",
   "test/autoflow-runner.test.ts",
+  "test/autoflow-issue-script.test.mjs",
   "test/dashboard-state.test.ts",
   "test/sql-state.test.ts",
   "test/sql-store.test.ts",
