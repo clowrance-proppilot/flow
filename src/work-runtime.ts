@@ -312,6 +312,7 @@ export interface CloseoutAfterApprovalResult {
   blockers: string[];
   acceptanceCommentUrl?: string;
   merge?: PullRequestMergeResult;
+  prunedWorktrees?: Array<{ repoKey: string; removed: boolean; reason?: string; worktreePath: string; branch?: string }>;
   jiraStatusBefore?: string;
   jiraStatusAfter?: string;
 }
@@ -1694,6 +1695,18 @@ export class FlowWorkRuntime {
     });
 
     if (assessment.reviewReady) {
+      const review = reviewMetadata(issue);
+      if (this.codeReviewRequired() && review?.prUrl) {
+        const closeout = await this.closeoutAfterApproval(sessionId, { issueRef: issue.ref });
+        if (closeout.status !== "blocked") {
+          return {
+            status: "awaiting_review",
+            session: await this.requireSession(sessionId),
+            issue: closeout.issue,
+            message: `${issue.ref} closeout completed with status ${closeout.status}.`,
+          };
+        }
+      }
       await this.ledger.writeIssue({ ...issue, state: "awaiting_review" });
       const message = this.codeReviewRequired()
         ? `${issue.ref} is review-ready in Readiness assessment.`
@@ -2579,6 +2592,7 @@ export class FlowWorkRuntime {
 
     const jiraAfter = await this.waitForJiraCloseout(issue.ref, options);
     const jiraVerified = isJiraCloseoutStatus(jiraAfter);
+    const prunedWorktrees = await this.pruneMergedIssueWorktrees(evidenceIssue);
     const status = alreadyMerged
       ? jiraVerified ? "already_merged_jira_verified" : "already_merged_jira_pending"
       : jiraVerified ? "merged_jira_verified" : "merged_jira_pending";
@@ -2601,6 +2615,7 @@ export class FlowWorkRuntime {
         "workflow.closeout.jira_status_before": jiraBefore.status ?? "",
         "workflow.closeout.jira_status_after": jiraAfter.status ?? "",
         "workflow.closeout.jira_verified": jiraVerified,
+        "workflow.closeout.pruned_worktrees": JSON.stringify(prunedWorktrees),
         "workflow.closeout.checked_at": writtenAt,
       },
     });
@@ -2611,7 +2626,7 @@ export class FlowWorkRuntime {
       message: jiraVerified
         ? `Merged ${pr.url} and verified Jira moved to ${jiraAfter.status ?? "a closeout status"}.`
         : `Merged ${pr.url}; Jira has not moved from ${jiraAfter.status ?? "current status"} yet.`,
-      payload: { status, pr, merge, jiraBefore, jiraAfter, acceptanceCommentUrl, writtenAt },
+      payload: { status, pr, merge, jiraBefore, jiraAfter, acceptanceCommentUrl, prunedWorktrees, writtenAt },
     });
     return {
       status,
@@ -2620,9 +2635,35 @@ export class FlowWorkRuntime {
       blockers: jiraVerified ? [] : ["Jira did not move to Ready for QA or Done after merge."],
       acceptanceCommentUrl,
       merge,
+      prunedWorktrees,
       jiraStatusBefore: jiraBefore.status,
       jiraStatusAfter: jiraAfter.status,
     };
+  }
+
+  private async pruneMergedIssueWorktrees(issue: WorkItem): Promise<Array<{ repoKey: string; removed: boolean; reason?: string; worktreePath: string; branch?: string }>> {
+    if (!this.sourceControl.pruneWorktree) return [];
+    const results: Array<{ repoKey: string; removed: boolean; reason?: string; worktreePath: string; branch?: string }> = [];
+    for (const repoKey of issue.repoKeys) {
+      const worktreePath = worktreePathForRepo(issue, repoKey);
+      const branch = existingString(issue.metadata[`workflow.repos.${repoKey}.branch`]) ?? existingString(issue.metadata.branch);
+      if (!worktreePath || !branch) continue;
+      const repoPath = this.topology.repoPath(this.projectRoot, repoKey);
+      const result = await this.sourceControl.pruneWorktree({
+        repoPath,
+        worktreePath,
+        branch,
+        requireClean: true,
+      });
+      results.push({
+        repoKey,
+        removed: result.removed,
+        reason: result.reason,
+        worktreePath: result.worktreePath,
+        branch: result.branch,
+      });
+    }
+    return results;
   }
 
   async recordReviewConfirmation(
@@ -3642,7 +3683,9 @@ function pullRequestCloseoutBlockers(issue: WorkItem, pr: PullRequestStatus): st
   if (isPullRequestStatusMerged(pr)) return [];
   const blockers: string[] = [];
   if (pr.isDraft) blockers.push("Pull request is still draft.");
-  if (pr.reviewDecision !== "APPROVED") blockers.push("Pull request approval review is missing.");
+  if (pr.reviewDecision === "CHANGES_REQUESTED" || pr.reviewDecision === "REVIEW_REQUIRED") {
+    blockers.push("Pull request approval review is missing.");
+  }
   if (pr.checksPassing !== true) blockers.push("Pull request checks are not passing.");
   if (isPullRequestConflicted(pr)) blockers.push("Pull request is not mergeable.");
   if (pr.templateMissingHeadings && pr.templateMissingHeadings.length > 0) {
