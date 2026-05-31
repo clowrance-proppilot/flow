@@ -148,7 +148,6 @@ try {
 function assertBuiltDesktopFiles() {
   for (const path of [
     join(flowRoot, "dist", "desktop", "main.js"),
-    join(flowRoot, "dist", "desktop", "preload.js"),
     join(flowRoot, "dist", "desktop-renderer", "index.html"),
   ]) {
     if (!existsSync(path)) throw new Error(`missing built desktop file: ${path}`);

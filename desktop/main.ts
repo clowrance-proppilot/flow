@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from "electron";
+import { app, BrowserWindow } from "electron";
 import { join, resolve, dirname } from "node:path";
 import { existsSync, watch, type FSWatcher } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -205,7 +205,6 @@ function createWindow(port: number): BrowserWindow {
     show: false,
     title: "Flow",
     webPreferences: {
-      preload: join(import.meta.dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -229,16 +228,6 @@ app.whenReady().then(async () => {
 
   const port = await startDashboardServer(flowRoot);
   console.log(`[flow-desktop] dashboard server on http://127.0.0.1:${port}`);
-
-  // --- IPC handlers for future thread/session features ---
-  ipcMain.handle("flow:ping", () => "flow desktop ready");
-
-  ipcMain.handle("flow:openExternal", async (_event, url: string) => {
-    const parsed = new URL(url);
-    if (["http:", "https:"].includes(parsed.protocol)) {
-      await shell.openExternal(url);
-    }
-  });
 
   mainWindow = createWindow(port);
   enableRendererAutoReload(flowRoot);
