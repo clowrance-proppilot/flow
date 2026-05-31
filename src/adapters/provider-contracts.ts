@@ -161,6 +161,14 @@ export interface IssueTrackerProvider {
 export interface CodeCollaborationProvider {
   readonly capabilities: CollaborationCapabilities;
   findCodeReviews(repo: string, branchName?: string): Promise<UnifiedCodeReview[]>;
+  createCodeReview?(input: {
+    repo: string;
+    title: string;
+    body: string;
+    sourceBranch: string;
+    targetBranch: string;
+    draft?: boolean;
+  }): Promise<UnifiedCodeReview>;
   getCodeReview?(repo: string, id: string | number): Promise<UnifiedCodeReview | undefined>;
   markReadyForReview?(repo: string, id: string | number): Promise<UnifiedCodeReview | undefined>;
   postReviewComment?(repo: string, id: string | number, body: string): Promise<{ url?: string; body: string }>;

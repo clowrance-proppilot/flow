@@ -10,7 +10,7 @@ import { createConfiguredWorkRuntime } from "../src/runtime-factory.js";
 import { GitAdapter } from "../src/adapters/git.js";
 import { DesktopActionRouter } from "./action-router.js";
 import { PiAgentOrchestrator } from "./pi-agent-orchestrator.js";
-import { PiSessionDriver } from "./pi-session-driver.js";
+import { PiSessionDriver } from "../src/pi-session-driver.js";
 import { DesktopProjectRegistry, type DesktopProjectRecord } from "./project-registry.js";
 import { DesktopPromptRouter, type DesktopAgentSessionAdapter } from "./prompt-router.js";
 import { registerProjectRoutes } from "./project-routes.js";

@@ -13,6 +13,7 @@ rmSync(outDir, { recursive: true, force: true });
 buildFlow();
 await runTests([
   join(outDir, "test", "flow.test.js"),
+  join(outDir, "test", "autoflow-runner.test.js"),
   join(outDir, "test", "dashboard-state.test.js"),
   join(outDir, "test", "sql-state.test.js"),
   join(outDir, "test", "sql-store.test.js"),

@@ -1,11 +1,16 @@
 #!/usr/bin/env node
 
+import { join } from "node:path";
 import {
   bootstrapFlowConfig,
+  createKyselyFlowState,
+  createSqliteSqlStateConfig,
+  flowUserStateRoot,
   GhGitHubAdapter,
   IssueStateValue,
   flowLayout,
   migrateFlowConfig,
+  StandaloneAutoflowRunner,
   terminalWorkerStatusValues,
   type AcceptanceCriterionEvidence,
   validateFlowConfig,
@@ -21,6 +26,7 @@ import {
 import { repoRoot } from "./flow-runtime.js";
 import { JsonCliError, runJsonCli } from "./json-cli.js";
 import { createConfiguredWorkRuntime } from "./runtime-factory.js";
+import { PiSessionDriver } from "./pi-session-driver.js";
 
 const configValidation = await validateFlowConfig({ projectRoot: repoRoot });
 const configuredRuntime = createConfiguredWorkRuntime({ projectRoot: repoRoot, flowConfig: configValidation.config });
@@ -28,6 +34,7 @@ const flowConfig = configuredRuntime.flowConfig;
 const defaultSessionId = configString(flowConfig?.runtime, "defaultSessionId") ?? "cli";
 const workflowLedger = configuredRuntime.workflowLedger;
 const configuredIssueTracker = configuredRuntime.issueTracker;
+let cachedAutoflowRunner: StandaloneAutoflowRunner | undefined;
 const rawWorkRuntimeMethods = [
   "inspectDashboardQueue",
   "inspectQueue",
@@ -90,9 +97,10 @@ async function routeFlowRequest(request: Record<string, unknown>): Promise<unkno
   if (op === "ledger") return handleLedgerRequest(request);
   if (op === "issue") return handleIssueRequest(request);
   if (op === "workflow") return handleWorkflowRequest(request);
+  if (op === "autoflow") return handleAutoflowRequest(request);
   if (op === "runtime") return dispatch(requireString(request, "method"), paramsFromRequest(request));
   throw new JsonCliError("BAD_OP", `Unsupported Flow op: ${op}`, {
-    details: { supportedOps: ["manifest", "state", "queue", "backlog", "bootstrap", "config", "ledger", "issue", "workflow", "runtime"] },
+    details: { supportedOps: ["manifest", "state", "queue", "backlog", "bootstrap", "config", "ledger", "issue", "workflow", "autoflow", "runtime"] },
   });
 }
 
@@ -333,6 +341,77 @@ async function handleWorkflowRequest(request: Record<string, unknown>): Promise<
   }
 }
 
+async function handleAutoflowRequest(request: Record<string, unknown>): Promise<unknown> {
+  const mode = optionalString(request, "mode") ?? "status";
+  const runner = standaloneAutoflowRunner();
+  switch (mode) {
+    case "status":
+      return runner.status();
+    case "enable":
+      return runner.setEnabled(true);
+    case "disable":
+      return runner.setEnabled(false);
+    case "tick":
+      return runner.tick({ issueRefs: autoflowIssueRefs(request), wait: request.wait === true });
+    case "run":
+      return runner.tick({ issueRefs: autoflowIssueRefs(request), wait: true });
+    default:
+      throw badMode("autoflow", mode, ["status", "enable", "disable", "tick", "run"]);
+  }
+}
+
+function autoflowIssueRefs(request: Record<string, unknown>): string[] | undefined {
+  const refs = [
+    optionalString(request, "id"),
+    ...asStringArray(request.ids) ?? [],
+  ].filter((ref): ref is string => Boolean(ref));
+  return refs.length ? refs : undefined;
+}
+
+function standaloneAutoflowRunner(): StandaloneAutoflowRunner {
+  if (cachedAutoflowRunner) return cachedAutoflowRunner;
+  const state = createKyselyFlowState({
+    root: flowUserStateRoot(repoRoot),
+    dialectConfig: createSqliteSqlStateConfig({ path: join(flowUserStateRoot(repoRoot), "flow-state.db") }),
+  });
+  const projectId = configString(flowConfig?.project, "name") ?? "default";
+  const piSessionDriver = new PiSessionDriver({
+    runtime,
+    repoRoot,
+    flowSessionId: `autoflow-${projectId.toLowerCase()}`,
+  });
+  cachedAutoflowRunner = new StandaloneAutoflowRunner({
+    projectId,
+    runtime,
+    state,
+    agentSessionDriver: piSessionDriver,
+    codeReviewCreator: configuredRuntime.collaboration?.createCodeReview
+      ? {
+        async createPullRequest(input) {
+          const review = await configuredRuntime.collaboration.createCodeReview?.({
+            repo: input.repo,
+            title: input.title,
+            body: input.body,
+            sourceBranch: input.headRefName,
+            targetBranch: input.baseRefName,
+          });
+          if (!review) throw new Error("Code review creation is not configured.");
+          return {
+            repo: review.repo,
+            number: Number(review.id),
+            url: review.url,
+            headRefName: review.sourceBranch,
+            isDraft: review.isDraft,
+            checksPassing: review.checksPassing,
+            reviewDecision: review.reviewDecision,
+          };
+        },
+      }
+      : undefined,
+  });
+  return cachedAutoflowRunner;
+}
+
 function flowManifest(target?: string) {
   if (!target) {
     return {
@@ -349,7 +428,7 @@ function flowManifest(target?: string) {
         body: ["flow '{\"op\":\"state\"}'", "printf '%s\\n' '{\"op\":\"state\"}' | flow"],
       },
       detail: { op: "manifest", target: "<op>" },
-      targets: ["workflow", "issue", "runtime", "config", "layout"],
+      targets: ["workflow", "issue", "autoflow", "runtime", "config", "layout"],
       ops: {
         manifest: "Get compact or targeted capability metadata.",
         state: "Read current Flow state, optionally scoped by id.",
@@ -360,6 +439,7 @@ function flowManifest(target?: string) {
         ledger: "Verify workflow ledger.",
         issue: "Inspect, create, select, or adopt issue/workspace state through the configured issue tracker.",
         workflow: "Advance, audit, autoflow, record, or observe workflow state.",
+        autoflow: "Run or inspect standalone Autoflow outside Desktop.",
         runtime: "Call a raw Work Runtime method by name.",
       },
     };
@@ -403,6 +483,23 @@ function flowManifest(target?: string) {
       id: "Required issue/work item id for existing work items; create/intake/adoptBranch may omit id to allocate one. Triage mode does not require id.",
     };
   }
+  if (target === "autoflow") {
+    return {
+      target,
+      modes: ["status", "enable", "disable", "tick", "run"],
+      examples: [
+        { op: "autoflow", mode: "status" },
+        { op: "autoflow", mode: "tick" },
+        { op: "autoflow", mode: "run", id: "FLOW-123" },
+        { op: "autoflow", mode: "disable" },
+        { op: "autoflow", mode: "enable" },
+      ],
+      id: "Optional issue/work item id for targeted tick or run. Use ids for a bounded batch.",
+      state: {
+        enabled: "Stored in Flow SQL project state under autoflow.enabled.",
+      },
+    };
+  }
   if (target === "runtime") {
     return {
       target,
@@ -433,7 +530,7 @@ function flowManifest(target?: string) {
     error: {
       code: "UNKNOWN_MANIFEST_TARGET",
       message: `Unknown manifest target: ${target}`,
-      targets: ["workflow", "issue", "runtime", "config", "layout"],
+      targets: ["workflow", "issue", "autoflow", "runtime", "config", "layout"],
     },
   };
 }

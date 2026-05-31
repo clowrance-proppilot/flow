@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { IssueStateValue, type WorkItem } from "../src/contracts.js";
-import type { FlowWorkRuntime } from "../src/work-runtime.js";
+import { IssueStateValue, type WorkItem } from "./contracts.js";
+import type { FlowWorkRuntime } from "./work-runtime.js";
 import { PiSdkSessionRunner } from "./pi-sdk-runner.js";
 import type { SessionDriverEvent, SessionEventListener, SessionRef, SessionSnapshot, Unsubscribe, WorkspaceRef } from "./session-driver.js";
 
