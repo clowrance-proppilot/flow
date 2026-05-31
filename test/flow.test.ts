@@ -543,6 +543,38 @@ test("Configured SQL workflow ledger imports existing JSONL records idempotently
   assert.match(await readFile(jsonlPath, "utf8"), /FLOW-MIG-1/);
 });
 
+test("Configured runtime can select Postgres SQL workflow ledger from urlSecret", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-postgres-ledger-config-"));
+  const original = process.env.FLOW_TEST_DATABASE_URL;
+  const config = flowConfigSchema.parse({
+    version: "1",
+    project: { name: "Postgres Ledger Fixture" },
+    topology: {
+      repos: {
+        main: { name: "flow", baseBranch: "main" },
+      },
+    },
+    issueTracker: { type: "local" },
+    collaboration: { type: "none" },
+    sourceControl: { type: "git" },
+    ledger: { type: "sql", dialect: "postgres", urlSecret: "FLOW_TEST_DATABASE_URL" },
+    runtime: { store: { type: "sqlite" } },
+  });
+  delete process.env.FLOW_TEST_DATABASE_URL;
+  assert.throws(
+    () => createConfiguredWorkRuntime({ projectRoot: root, flowConfig: config }),
+    /Postgres SQL workflow ledger requires/,
+  );
+
+  process.env.FLOW_TEST_DATABASE_URL = "postgres://flow@example.local/flow";
+  const configured = createConfiguredWorkRuntime({ projectRoot: root, flowConfig: config });
+  assert.equal(configured.workflowLedgerPath, "<postgres>");
+  await (configured.workflowLedger as { close?(): Promise<void> }).close?.();
+
+  if (original === undefined) delete process.env.FLOW_TEST_DATABASE_URL;
+  else process.env.FLOW_TEST_DATABASE_URL = original;
+});
+
 test("Flow CLI core works with only git available on PATH", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-git-only-"));
   await execFileAsync("git", ["init"], { cwd: root });

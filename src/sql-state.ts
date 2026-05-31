@@ -1,7 +1,8 @@
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
-import { Kysely, SqliteDialect, type Dialect } from "kysely";
+import { Kysely, PostgresDialect, SqliteDialect, type Dialect } from "kysely";
+import pg from "pg";
 
 import {
   type FlowContextProjection,
@@ -437,6 +438,12 @@ export function createKyselyFlowState(options: { root?: string; dialectConfig: S
   return new KyselyFlowState({
     root: options.root,
     dialect: options.dialectConfig.dialect,
+  });
+}
+
+export function createPostgresDialect(connectionString: string): Dialect {
+  return new PostgresDialect({
+    pool: new pg.Pool({ connectionString }),
   });
 }
 
