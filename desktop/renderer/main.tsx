@@ -17,6 +17,7 @@ import { projectThemeFor } from "../../src/theme/project-theme";
 import { actionPayload, formatActionSummary, pendingConfirmationFromActionResult } from "./action-format";
 import { errorMessage, fetchJson } from "./api";
 import { activityFromPiEvent, activityFromPiSession, conversationFromPiSession, seedConversation } from "./conversation";
+import { desktopRefreshIntervalsFromSettings } from "./refresh-settings";
 import {
   contextLine,
   isExceptionalStatus,
@@ -97,6 +98,11 @@ function App() {
 
   const activeProject = projects.find((project) => project.id === activeProjectId);
   const selectedIssue = issues.find((issue) => issue.ref === selectedIssueRef);
+  const refreshIntervals = useMemo(() => desktopRefreshIntervalsFromSettings(context.desktop), [
+    context.desktop?.autoflowStatusRefreshIntervalMs,
+    context.desktop?.dashboardRefreshIntervalMs,
+    context.desktop?.refreshIntervalMs,
+  ]);
 
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -139,12 +145,12 @@ function App() {
 
   useEffect(() => {
     void refresh(true);
-    const interval = window.setInterval(() => void refresh(false), 5000);
+    const interval = window.setInterval(() => void refresh(false), refreshIntervals.dashboardMs);
     return () => {
       window.clearInterval(interval);
       eventSourceRef.current?.close();
     };
-  }, []);
+  }, [refreshIntervals.dashboardMs]);
 
   useEffect(() => {
     if (!selectedIssueRef || selectedSessionId) return;
@@ -154,11 +160,11 @@ function App() {
   useEffect(() => {
     if (!activeProjectId) return;
     void refreshAutoflowStatus();
-    const interval = window.setInterval(() => void refreshAutoflowStatus(), 5000);
+    const interval = window.setInterval(() => void refreshAutoflowStatus(), refreshIntervals.autoflowStatusMs);
     return () => {
       window.clearInterval(interval);
     };
-  }, [activeProjectId]);
+  }, [activeProjectId, refreshIntervals.autoflowStatusMs]);
 
   useEffect(() => {
     if (!selectedIssueRef) return;

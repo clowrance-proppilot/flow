@@ -82,6 +82,11 @@ export type ContextProjection = {
     summary?: string;
     updatedAt?: string;
   }>;
+  desktop?: {
+    refreshIntervalMs?: number;
+    dashboardRefreshIntervalMs?: number;
+    autoflowStatusRefreshIntervalMs?: number;
+  };
 };
 
 export type ConversationItem = {

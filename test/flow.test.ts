@@ -87,6 +87,7 @@ import { DesktopProjectRegistry } from "../desktop/project-registry.js";
 import type { DesktopProjectRecord } from "../desktop/project-registry.js";
 import type { DesktopProjectSurface } from "../desktop/route-types.js";
 import { DesktopPromptRouter } from "../desktop/prompt-router.js";
+import { defaultDesktopRefreshIntervals, desktopRefreshIntervalsFromSettings } from "../desktop/renderer/refresh-settings.js";
 import { projectThemeFor } from "../src/theme/project-theme.js";
 
 const execFileAsync = promisify(execFile);
@@ -2063,6 +2064,27 @@ test("Desktop Autoflow reconcile runs orchestrator for queued work", async () =>
   assert.deepEqual(summary, { enabledProjects: 1, pendingProjects: 1, reconciledProjects: 1 });
   assert.equal(reconcileCalls, 1);
   assert.equal(nextAutoflowReconcileDelay(summary), desktopAutoflowReconcileIntervals.activeMs);
+});
+
+test("Desktop refresh intervals use defaults and settings overrides", () => {
+  assert.deepEqual(desktopRefreshIntervalsFromSettings(), defaultDesktopRefreshIntervals);
+  assert.deepEqual(desktopRefreshIntervalsFromSettings({ refreshIntervalMs: 12_000 }), {
+    dashboardMs: 12_000,
+    autoflowStatusMs: 12_000,
+  });
+  assert.deepEqual(desktopRefreshIntervalsFromSettings({
+    refreshIntervalMs: 12_000,
+    dashboardRefreshIntervalMs: 7_500,
+    autoflowStatusRefreshIntervalMs: 30_000,
+  }), {
+    dashboardMs: 7_500,
+    autoflowStatusMs: 30_000,
+  });
+  assert.deepEqual(desktopRefreshIntervalsFromSettings({
+    refreshIntervalMs: -1,
+    dashboardRefreshIntervalMs: Number.NaN,
+    autoflowStatusRefreshIntervalMs: 0,
+  }), defaultDesktopRefreshIntervals);
 });
 
 test("Pi session driver starts issue-linked sessions and records FlowSessionLink", async () => {
