@@ -93,6 +93,7 @@ function App() {
   const subscribedSessionId = useRef("");
   const sendingRef = useRef(false);
   const issueSelectionRequest = useRef(0);
+  const pendingSelectionRef = useRef<string | null>(null);
 
   const activeProject = projects.find((project) => project.id === activeProjectId);
   const selectedIssue = issues.find((issue) => issue.ref === selectedIssueRef);
@@ -199,10 +200,14 @@ function App() {
         setConversation(seedConversation(contextPayload.context, nextProjectId));
       }
       setSelectedIssueRef((current) => {
+        if (pendingSelectionRef.current) return pendingSelectionRef.current;
         if (current && nextIssues.some((issue) => issue.ref === current)) return current;
         return "";
       });
-      setExpandedIssueRef((current) => current && nextIssues.some((issue) => issue.ref === current) ? current : "");
+      setExpandedIssueRef((current) => {
+        if (pendingSelectionRef.current) return pendingSelectionRef.current;
+        return current && nextIssues.some((issue) => issue.ref === current) ? current : "";
+      });
       setStatus("ok");
       hasLoaded.current = true;
     } catch {
@@ -218,6 +223,7 @@ function App() {
     setError("");
     try {
       await fetchJson(`/api/projects/${encodeURIComponent(projectId)}/active`, { method: "POST" });
+      pendingSelectionRef.current = null;
       setSelectedIssueRef("");
       setSelectedSessionId("");
       setSessionIdByIssueRef({});
@@ -271,6 +277,7 @@ function App() {
       setActiveProjectId(result.activeProjectId || result.project.id);
       setNewProjectRoot("");
       setNewProjectOpen(false);
+      pendingSelectionRef.current = null;
       setSelectedIssueRef("");
       setSelectedSessionId("");
       setSessionIdByIssueRef({});
@@ -481,6 +488,7 @@ function App() {
   async function selectIssueThread(issueRef: string): Promise<void> {
     const requestId = issueSelectionRequest.current + 1;
     issueSelectionRequest.current = requestId;
+    pendingSelectionRef.current = issueRef;
     eventSourceRef.current?.close();
     eventSourceRef.current = null;
     subscribedSessionId.current = "";
@@ -499,6 +507,7 @@ function App() {
 
   function returnToMonitor(): void {
     issueSelectionRequest.current += 1;
+    pendingSelectionRef.current = null;
     eventSourceRef.current?.close();
     eventSourceRef.current = null;
     subscribedSessionId.current = "";
@@ -524,7 +533,10 @@ function App() {
     } catch {
       if (issueSelectionRequest.current === requestId) setError("Unable to open issue thread.");
     } finally {
-      if (issueSelectionRequest.current === requestId) setConversationLoading(false);
+      if (issueSelectionRequest.current === requestId) {
+        pendingSelectionRef.current = null;
+        setConversationLoading(false);
+      }
     }
   }
 
