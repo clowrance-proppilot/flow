@@ -43,9 +43,17 @@ import {
   canClaimWork,
   canCompleteWork,
   canResolveBlocker,
+  existingString,
   flowConfigSchema,
+  mapWithConcurrency,
   loadFlowConfig,
   migrateFlowConfig,
+  metadataBoolean,
+  metadataNumber,
+  metadataStringArray,
+  metadataValueEquals,
+  normalizeRepoKey,
+  normalizeRepoKeys,
   validateFlowConfig,
   createConfiguredWorkRuntime,
   createId,
@@ -213,6 +221,14 @@ function projectedWorkSubject(overrides: Partial<ProjectedWorkSubject> = {}): Pr
     handoffs: [],
     ...overrides,
   };
+}
+
+async function waitForCondition(condition: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (condition()) return;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 1));
+  }
+  assert.fail("Timed out waiting for condition.");
 }
 
 test("Flow layout paths resolve under the project root", () => {
@@ -394,6 +410,96 @@ test("Work state policy resolves only existing unresolved blockers", () => {
     accepted: false,
     blockers: ["Blocker ask-resolved is already resolved."],
   });
+});
+
+test("Runtime utils normalize repo keys and remove duplicates", () => {
+  assert.equal(normalizeRepoKey("web-app"), "web_app");
+  assert.equal(normalizeRepoKey("Flow App/API"), "Flow_App_API");
+  assert.equal(normalizeRepoKey("already_valid_123"), "already_valid_123");
+
+  assert.deepEqual(normalizeRepoKeys([" web-app ", "web_app", "", "api/service", "api_service"]), ["web_app", "api_service"]);
+});
+
+test("Runtime utils return only existing non-empty strings", () => {
+  assert.equal(existingString("value"), "value");
+  assert.equal(existingString(""), undefined);
+  assert.equal(existingString(123), undefined);
+  assert.equal(existingString(null), undefined);
+});
+
+test("Runtime utils parse metadata booleans", () => {
+  assert.equal(metadataBoolean(true), true);
+  assert.equal(metadataBoolean("true"), true);
+  assert.equal(metadataBoolean("1"), true);
+  assert.equal(metadataBoolean(false), false);
+  assert.equal(metadataBoolean("false"), false);
+  assert.equal(metadataBoolean("0"), false);
+  assert.equal(metadataBoolean("yes"), undefined);
+});
+
+test("Runtime utils parse metadata numbers", () => {
+  assert.equal(metadataNumber(12), 12);
+  assert.equal(metadataNumber("12.5"), 12.5);
+  assert.equal(metadataNumber(""), 0);
+  assert.equal(metadataNumber("not-a-number"), undefined);
+  assert.equal(metadataNumber(Number.POSITIVE_INFINITY), undefined);
+});
+
+test("Runtime utils parse metadata string arrays", () => {
+  assert.deepEqual(metadataStringArray(["one", 2, "", false]), ["one", "2", "false"]);
+  assert.deepEqual(metadataStringArray('["one","two",""]'), ["one", "two"]);
+  assert.deepEqual(metadataStringArray("one, two, , three"), ["one", "two", "three"]);
+  assert.equal(metadataStringArray(""), undefined);
+  assert.equal(metadataStringArray("{\"not\":\"array\"}"), undefined);
+  assert.equal(metadataStringArray(123), undefined);
+});
+
+test("Runtime utils compare metadata values", () => {
+  assert.equal(metadataValueEquals("same", "same"), true);
+  assert.equal(metadataValueEquals(1, "1"), false);
+  assert.equal(metadataValueEquals(["a", "b"], ["a", "b"]), true);
+  assert.equal(metadataValueEquals(["a", "b"], ["b", "a"]), false);
+  assert.equal(metadataValueEquals(undefined, []), true);
+});
+
+test("Runtime utils mapWithConcurrency preserves result order and limits active work", async () => {
+  const started: number[] = [];
+  const release: Array<(() => void) | undefined> = [];
+  const work = mapWithConcurrency([10, 20, 30], 2, async (item, index) => {
+    started.push(index);
+    await new Promise<void>((resolvePromise) => {
+      release[index] = resolvePromise;
+    });
+    return item * 2;
+  });
+
+  await waitForCondition(() => started.length === 2);
+  assert.deepEqual(started, [0, 1]);
+
+  release[0]?.();
+  await waitForCondition(() => started.length === 3);
+  assert.deepEqual(started, [0, 1, 2]);
+
+  release[1]?.();
+  release[2]?.();
+  assert.deepEqual(await work, [20, 40, 60]);
+});
+
+test("Runtime utils mapWithConcurrency handles empty input and coerces low concurrency to one worker", async () => {
+  assert.deepEqual(await mapWithConcurrency([], 3, async (item: number) => item), []);
+
+  let active = 0;
+  let maxActive = 0;
+  const results = await mapWithConcurrency([1, 2, 3], 0, async (item) => {
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 1));
+    active -= 1;
+    return item + 1;
+  });
+
+  assert.deepEqual(results, [2, 3, 4]);
+  assert.equal(maxActive, 1);
 });
 
 test("Typed work contracts and registry validate supported jobs", () => {
