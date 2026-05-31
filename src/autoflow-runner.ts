@@ -64,7 +64,7 @@ export class StandaloneAutoflowRunner {
   async status(): Promise<AutoflowServiceStatus> {
     await this.load();
     const status = this.service.getStatus();
-    if (!status.enabled || status.activeCount > 0 || Object.keys(status.issues).length > 0) return status;
+    if (!status.enabled || status.activeCount > 0 || Object.keys(status.issues).length > 0) return normalizeAutoflowStatus(status);
     return await this.readPersistedStatus() ?? status;
   }
 
@@ -96,14 +96,41 @@ export class StandaloneAutoflowRunner {
   }
 
   private async persistStatus(status: AutoflowServiceStatus): Promise<AutoflowServiceStatus> {
-    await this.state.setProjectState(this.projectId, AUTOFLOW_STATUS_STATE_KEY, status);
-    return status;
+    const normalized = normalizeAutoflowStatus(status);
+    await this.state.setProjectState(this.projectId, AUTOFLOW_STATUS_STATE_KEY, normalized);
+    return normalized;
   }
 
   private async readPersistedStatus(): Promise<AutoflowServiceStatus | undefined> {
     const status = await this.state.getProjectState<AutoflowServiceStatus>(this.projectId, AUTOFLOW_STATUS_STATE_KEY);
-    return isAutoflowServiceStatus(status) ? status : undefined;
+    return isAutoflowServiceStatus(status) ? normalizeAutoflowStatus(status) : undefined;
   }
+}
+
+function normalizeAutoflowStatus(status: AutoflowServiceStatus): AutoflowServiceStatus {
+  const issues = Object.fromEntries(
+    Object.entries(status.issues).map(([ref, issue]) => [ref, { ...issue }]),
+  );
+  const activeCount = Object.values(issues).filter((issue) => isActiveAutoflowPhase(issue.phase)).length;
+  const blockedCount = Object.values(issues).filter((issue) => issue.phase === "needs_input").length;
+  return {
+    ...status,
+    activeCount: status.enabled ? activeCount : 0,
+    issues,
+    summary: status.enabled ? autoflowStatusSummary(activeCount, blockedCount) : "Autoflow is paused.",
+  };
+}
+
+function autoflowStatusSummary(activeCount: number, blockedCount: number): string {
+  if (activeCount === 0 && blockedCount === 0) return "Autoflow idle.";
+  if (activeCount === 0) return `${blockedCount} issue${blockedCount === 1 ? "" : "s"} need${blockedCount === 1 ? "s" : ""} input.`;
+  let summary = `Working ${activeCount} issue${activeCount === 1 ? "" : "s"}.`;
+  if (blockedCount > 0) summary += ` ${blockedCount} need${blockedCount === 1 ? "s" : ""} input.`;
+  return summary;
+}
+
+function isActiveAutoflowPhase(phase: string): boolean {
+  return phase === "starting" || phase === "running";
 }
 
 function isAutoflowServiceStatus(value: unknown): value is AutoflowServiceStatus {
