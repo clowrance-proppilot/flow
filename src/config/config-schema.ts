@@ -5,6 +5,25 @@ export const adapterSelectionConfigSchema = z.object({
   type: z.string().min(1),
 }).catchall(z.unknown());
 
+export const sqlLedgerConfigSchema = z.object({
+  type: z.literal("sql"),
+  dialect: z.enum(["sqlite", "postgres"]),
+  path: z.string().min(1).optional(),
+  urlSecret: z.string().min(1).optional(),
+  connectionString: z.string().min(1).optional(),
+}).refine(
+  (config) => {
+    if (config.dialect === "sqlite") return !!config.path;
+    if (config.dialect === "postgres") return !!(config.connectionString || config.urlSecret);
+    return false;
+  },
+  {
+    message: "SQLite dialect requires 'path'; Postgres dialect requires 'connectionString' or 'urlSecret'.",
+  },
+);
+
+export const ledgerConfigSchema = z.union([adapterSelectionConfigSchema, sqlLedgerConfigSchema]);
+
 export const repoConfigSchema = z.object({
   name: z.string().min(1),
   baseBranch: z.string().min(1).optional(),
@@ -85,7 +104,7 @@ export const flowConfigSchema = z.object({
   issueTracker: adapterSelectionConfigSchema.optional(),
   collaboration: adapterSelectionConfigSchema.optional(),
   sourceControl: adapterSelectionConfigSchema.optional(),
-  ledger: adapterSelectionConfigSchema.optional(),
+  ledger: ledgerConfigSchema.optional(),
   runtime: runtimeConfigSchema.optional(),
   workTypes: z.array(workTypeConfigSchema).optional(),
   executors: z.array(executorConfigSchema).optional(),
@@ -204,3 +223,5 @@ export type ExecutorConfig = z.infer<typeof executorConfigSchema>;
 export type RuntimeStoreConfig = z.infer<typeof runtimeStoreConfigSchema>;
 export type RuntimeConfig = z.infer<typeof runtimeConfigSchema>;
 export type FlowConfig = z.infer<typeof flowConfigSchema>;
+export type SqlLedgerConfig = z.infer<typeof sqlLedgerConfigSchema>;
+export type LedgerConfig = z.infer<typeof ledgerConfigSchema>;

@@ -9,7 +9,7 @@ import { createFlowStore, type FlowStoreBackend } from "./store.js";
 import { FlowWorkRuntime } from "./work-runtime.js";
 import { createWorkflowLedger, type WorkflowLedger } from "./ledger.js";
 import { flowRuntimePath, flowWorkflowLedgerPath, resolveFlowPath } from "./flow-layout.js";
-import { createKyselyFlowState, createSqliteSqlStateConfig } from "./sql-state.js";
+import { createKyselyFlowState, createSqliteSqlStateConfig, createPostgresSqlStateConfig, createPostgresDialect } from "./sql-state.js";
 
 export interface ConfiguredWorkRuntimeOptions {
   projectRoot: string;
@@ -69,17 +69,33 @@ function createConfiguredWorkflowLedger(
   const type = configString(ledger, "type");
   if (type === "sql") {
     const dialect = configString(ledger, "dialect") ?? "sqlite";
-    if (dialect !== "sqlite") {
-      throw new Error(`Unsupported SQL workflow ledger dialect: ${dialect}.`);
+    if (dialect === "sqlite") {
+      const path = resolveSqlWorkflowLedgerPath(projectRoot, flowConfig);
+      return {
+        workflowLedgerPath: path,
+        workflowLedger: createKyselyFlowState({
+          root: projectRoot,
+          dialectConfig: createSqliteSqlStateConfig({ path }),
+        }),
+      };
     }
-    const path = resolveSqlWorkflowLedgerPath(projectRoot, flowConfig);
-    return {
-      workflowLedgerPath: path,
-      workflowLedger: createKyselyFlowState({
-        root: projectRoot,
-        dialectConfig: createSqliteSqlStateConfig({ path }),
-      }),
-    };
+    if (dialect === "postgres") {
+      const connectionString = configString(ledger, "connectionString");
+      const urlSecret = configString(ledger, "urlSecret");
+      const resolvedConnectionString = connectionString ?? (urlSecret ? process.env[urlSecret] : undefined);
+      if (!resolvedConnectionString) {
+        throw new Error("Postgres SQL state requires a connection string. Set connectionString in config or pass the environment variable referenced by urlSecret.");
+      }
+      const dialectConfig = createPostgresSqlStateConfig({ connectionString: resolvedConnectionString, dialect: createPostgresDialect(resolvedConnectionString) });
+      return {
+        workflowLedgerPath: "<postgres>",
+        workflowLedger: createKyselyFlowState({
+          root: projectRoot,
+          dialectConfig,
+        }),
+      };
+    }
+    throw new Error(`Unsupported SQL workflow ledger dialect: ${dialect}.`);
   }
   const workflowLedgerPath = resolveWorkflowLedgerPath(projectRoot, flowConfig);
   return {

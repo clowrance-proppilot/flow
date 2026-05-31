@@ -1,7 +1,8 @@
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
-import { Kysely, SqliteDialect, type Dialect } from "kysely";
+import { Kysely, SqliteDialect, PostgresDialect, type Dialect } from "kysely";
+import pg from "pg";
 
 import {
   type FlowContextProjection,
@@ -108,9 +109,13 @@ export function createSqliteSqlStateConfig(options: SqliteSqlStateOptions): SqlS
 }
 
 export function createPostgresSqlStateConfig(options: PostgresSqlStateOptions = {}): SqlStateDialectConfig {
+  const connectionString = options.connectionString ?? process.env.FLOW_LEDGER_DATABASE_URL;
+  if (!options.dialect && !connectionString) {
+    throw new Error("Postgres SQL state requires a connection string or a pre-built dialect. Set FLOW_LEDGER_DATABASE_URL or pass connectionString.");
+  }
   return {
     kind: "postgres",
-    connectionString: options.connectionString,
+    connectionString,
     dialect: options.dialect,
   };
 }
@@ -445,6 +450,11 @@ function createNodeSqliteDialect(path: string): Dialect {
   return new SqliteDialect({
     database: async () => new NodeSqliteDatabase(path),
   });
+}
+
+export function createPostgresDialect(connectionString: string): Dialect {
+  const pool = new pg.Pool({ connectionString });
+  return new PostgresDialect({ pool });
 }
 
 class NodeSqliteDatabase {
