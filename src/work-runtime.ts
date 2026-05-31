@@ -4272,10 +4272,7 @@ function buildWorkerPrompt(issue: WorkItem, repoKey: string): string {
   return [
     "Use Flow to work this prompt.",
     "",
-    `Issue: ${issue.ref}`,
-    `Title: ${issue.title}`,
     `Repo key: ${repoKey}`,
-    issue.summary ? `Context: ${issue.summary}` : undefined,
     workspacePath ? `Prepared workspace: ${workspacePath}` : undefined,
     branch ? `Branch: ${branch}` : undefined,
     "",
@@ -4291,8 +4288,6 @@ function buildReviewRemediationWorkerPrompt(
   return [
     "Use Flow to work this prompt.",
     "",
-    `Issue: ${issue.ref}`,
-    `Title: ${issue.title}`,
     `Repo key: ${repoKey}`,
     worktreePathForRepo(issue, repoKey) ? `Prepared workspace: ${worktreePathForRepo(issue, repoKey)}` : undefined,
     branchForRepo(issue, repoKey) ? `Branch: ${branchForRepo(issue, repoKey)}` : undefined,

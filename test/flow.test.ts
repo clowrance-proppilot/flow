@@ -1600,6 +1600,8 @@ test("Pi session driver queues follow-up prompts while a run is active", async (
   assert.equal(prompts.length, 2);
   assert.match(prompts[0], /First prompt/);
   assert.match(prompts[1], /Second prompt/);
+  assert.doesNotMatch(prompts[0], /Issue: GH-168/);
+  assert.match(started.timeline.find((item) => item.role === "system")?.content ?? "", /Issue: GH-168/);
 });
 
 test("Pi session driver persists issue-linked session state for reopen", async () => {
