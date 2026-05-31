@@ -1623,6 +1623,39 @@ test("Flow CLI review command rejects invalid target", async () => {
   }
 });
 
+test("Flow CLI workflow command rejects autoflow mode", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-workflow-autoflow-reject-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  const flowCli = join(process.cwd(), ".tmp", "test", "src", "flow.js");
+
+  try {
+    const { stdout } = await execFileAsync(process.execPath, [flowCli, JSON.stringify({
+      op: "workflow",
+      mode: "autoflow",
+      id: "FLOW-1",
+    })], {
+      cwd: root,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+    const parsed = JSON.parse(stdout) as { ok?: boolean; error?: { code?: string; details?: { supportedModes?: string[] } } };
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.error?.code, "BAD_MODE");
+    assert.ok(parsed.error?.details?.supportedModes?.includes("advance"));
+    assert.ok(parsed.error?.details?.supportedModes?.includes("doctor"));
+    assert.ok(!parsed.error?.details?.supportedModes?.includes("autoflow"));
+  } catch (error) {
+    const failed = error as { stdout?: string };
+    if (failed.stdout) {
+      const parsed = JSON.parse(failed.stdout) as { ok?: boolean; error?: { code?: string; details?: { supportedModes?: string[] } } };
+      assert.equal(parsed.ok, false);
+      assert.equal(parsed.error?.code, "BAD_MODE");
+      assert.ok(!parsed.error?.details?.supportedModes?.includes("autoflow"));
+    } else {
+      throw error;
+    }
+  }
+});
+
 test("reviewLocal runtime method returns complete readiness state", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-review-local-runtime-"));
   const ledger = new MemoryWorkflowLedger();

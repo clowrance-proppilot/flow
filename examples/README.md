@@ -46,5 +46,6 @@ flow '{"op":"queue"}'
 | `config`    | Validate or explain Flow config                    |
 | `ledger`    | Verify workflow ledger                             |
 | `issue`     | Inspect, create, select, or adopt issue/workspace  |
-| `workflow`  | Advance, audit, autoflow, record, or observe       |
+| `workflow`  | Advance, audit, record, or observe                  |
+| `autoflow`  | Run or inspect standalone Autoflow lifecycle        |
 | `runtime`   | Call a raw Work Runtime method by name             |
