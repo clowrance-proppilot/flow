@@ -490,6 +490,59 @@ test("Configured runtime uses Kysely SQLite for SQL workflow ledger", async () =
   await (reloaded.workflowLedger as { close?(): Promise<void> }).close?.();
 });
 
+test("Configured SQL workflow ledger imports existing JSONL records idempotently", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-sql-ledger-migrate-"));
+  const jsonlPath = join(root, ".flow", "ledger", "workflow.jsonl");
+  await mkdir(dirname(jsonlPath), { recursive: true });
+  const completedAt = nowIso();
+  const issue = {
+    ref: "FLOW-MIG-1",
+    title: "Migrate JSONL",
+    repoKeys: ["main"],
+    state: "queued",
+    metadata: {},
+  };
+  const workerResult = {
+    taskId: "task-migrate-1",
+    issueRef: "FLOW-MIG-1",
+    repoKey: "main",
+    executor: "live_agent_thread",
+    status: "succeeded",
+    summary: "Imported.",
+    changedFiles: ["src/runtime-factory.ts"],
+    testsRun: ["npm test"],
+    blockers: [],
+    completedAt,
+  };
+  await writeFile(jsonlPath, [
+    JSON.stringify({ kind: "issue", value: issue }),
+    JSON.stringify({ kind: "workerResult", value: workerResult }),
+    "",
+  ].join("\n"), "utf8");
+  const config = flowConfigSchema.parse({
+    version: "1",
+    project: { name: "SQL Migration Fixture" },
+    topology: {
+      repos: {
+        main: { name: "flow", baseBranch: "main" },
+      },
+    },
+    issueTracker: { type: "local" },
+    collaboration: { type: "none" },
+    sourceControl: { type: "git" },
+    ledger: { type: "sql", dialect: "sqlite", path: ".flow/ledger/workflow.db" },
+    runtime: { store: { type: "sqlite" } },
+  });
+
+  const configured = createConfiguredWorkRuntime({ projectRoot: root, flowConfig: config });
+  assert.equal((await configured.workflowLedger.readIssue("FLOW-MIG-1"))?.title, "Migrate JSONL");
+  assert.equal((await configured.workflowLedger.listWorkerResults("FLOW-MIG-1")).length, 1);
+
+  const reloaded = createConfiguredWorkRuntime({ projectRoot: root, flowConfig: config });
+  assert.equal((await reloaded.workflowLedger.listWorkerResults("FLOW-MIG-1")).length, 1);
+  assert.match(await readFile(jsonlPath, "utf8"), /FLOW-MIG-1/);
+});
+
 test("Flow CLI core works with only git available on PATH", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-git-only-"));
   await execFileAsync("git", ["init"], { cwd: root });

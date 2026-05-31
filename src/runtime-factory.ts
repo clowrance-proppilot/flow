@@ -7,7 +7,7 @@ import { configToProjectTopology, configToWorkTypeRegistry } from "./config/conf
 import { assessIssue } from "./readiness.js";
 import { createFlowStore, type FlowStoreBackend } from "./store.js";
 import { FlowWorkRuntime } from "./work-runtime.js";
-import { createWorkflowLedger, type WorkflowLedger } from "./ledger.js";
+import { createWorkflowLedger, MigratingWorkflowLedger, type WorkflowLedger } from "./ledger.js";
 import { flowRuntimePath, flowWorkflowLedgerPath, resolveFlowPath } from "./flow-layout.js";
 import { createKyselyFlowState, createSqliteSqlStateConfig } from "./sql-state.js";
 
@@ -75,9 +75,12 @@ function createConfiguredWorkflowLedger(
     const path = resolveSqlWorkflowLedgerPath(projectRoot, flowConfig);
     return {
       workflowLedgerPath: path,
-      workflowLedger: createKyselyFlowState({
-        root: projectRoot,
-        dialectConfig: createSqliteSqlStateConfig({ path }),
+      workflowLedger: new MigratingWorkflowLedger({
+        sourcePath: resolveWorkflowLedgerPath(projectRoot, flowConfig),
+        target: createKyselyFlowState({
+          root: projectRoot,
+          dialectConfig: createSqliteSqlStateConfig({ path }),
+        }),
       }),
     };
   }
