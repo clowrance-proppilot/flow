@@ -25,21 +25,26 @@ type PiSdkSession = {
   dispose?: () => void | Promise<void>;
 };
 
+export const FLOW_PI_AGENT_TOOLS = Object.freeze(["read", "bash", "edit", "write", "grep", "find", "ls"]);
+
 export interface PiSdkSessionRunnerOptions {
   loadModule?: () => Promise<PiSdkModule>;
+  tools?: readonly string[];
 }
 
 export class PiSdkSessionRunner implements PiAgentRunner {
   private readonly loadModule: () => Promise<PiSdkModule>;
   private readonly useChildProcess: boolean;
+  private readonly tools: readonly string[];
 
   constructor(options: PiSdkSessionRunnerOptions = {}) {
     this.loadModule = options.loadModule ?? loadPiSdkModule;
     this.useChildProcess = !options.loadModule && typeof process.versions.electron === "string";
+    this.tools = options.tools ?? FLOW_PI_AGENT_TOOLS;
   }
 
   async prompt(input: PiAgentPromptInput): Promise<PiAgentPromptResult> {
-    if (this.useChildProcess) return promptWithNodeChild(input);
+    if (this.useChildProcess) return promptWithNodeChild(input, this.tools);
 
     const pi = await this.loadModule();
     if (!pi.createAgentSession || !pi.SessionManager) {
@@ -50,7 +55,11 @@ export class PiSdkSessionRunner implements PiAgentRunner {
     const sessionManager = input.sessionFile && existsSync(input.sessionFile)
       ? pi.SessionManager.open(input.sessionFile, undefined, cwd)
       : pi.SessionManager.create(cwd);
-    const { session, modelFallbackMessage } = await pi.createAgentSession({ cwd, sessionManager });
+    const { session, modelFallbackMessage } = await pi.createAgentSession({
+      cwd,
+      sessionManager,
+      tools: [...this.tools],
+    });
     const timeline: PiTimelineItem[] = [];
     let assistantText = "";
     const unsubscribe = session.subscribe?.((event) => {
@@ -116,7 +125,7 @@ async function loadPiSdkModule(): Promise<PiSdkModule> {
   }
 }
 
-async function promptWithNodeChild(input: PiAgentPromptInput): Promise<PiAgentPromptResult> {
+async function promptWithNodeChild(input: PiAgentPromptInput, tools: readonly string[]): Promise<PiAgentPromptResult> {
   const cwd = input.workspacePath || input.repoRoot;
   const child = spawn(process.env.FLOW_NODE_BIN || "node", ["--input-type=module", "--eval", childRunnerSource()], {
     cwd,
@@ -138,7 +147,7 @@ async function promptWithNodeChild(input: PiAgentPromptInput): Promise<PiAgentPr
     for (const line of lines) handleChildEventLine(line, input);
   });
   child.stderr.on("data", (chunk) => { stderr += chunk; });
-  child.stdin.end(`${JSON.stringify(input)}\n`, "utf8");
+  child.stdin.end(`${JSON.stringify({ ...input, tools: [...tools] })}\n`, "utf8");
 
   const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
     child.on("exit", (code, signal) => resolve({ code, signal }));
@@ -155,7 +164,7 @@ async function promptWithNodeChild(input: PiAgentPromptInput): Promise<PiAgentPr
   return parsed;
 }
 
-function childRunnerSource(): string {
+export function childRunnerSource(): string {
   return String.raw`
 import { existsSync } from "node:fs";
 
@@ -170,7 +179,8 @@ try {
   const sessionManager = input.sessionFile && existsSync(input.sessionFile)
     ? pi.SessionManager.open(input.sessionFile, undefined, cwd)
     : pi.SessionManager.create(cwd);
-  const { session, modelFallbackMessage } = await pi.createAgentSession({ cwd, sessionManager });
+  const tools = Array.isArray(input.tools) ? input.tools.filter((tool) => typeof tool === "string") : undefined;
+  const { session, modelFallbackMessage } = await pi.createAgentSession({ cwd, sessionManager, tools });
   const timeline = [];
   let assistantText = "";
   const unsubscribe = session.subscribe?.((event) => {
