@@ -16,6 +16,7 @@ export interface StandaloneAutoflowRunnerOptions {
   agentSessionDriver: AutoflowAgentSessionDriver;
   codeReviewCreator?: AutoflowCodeReviewCreator;
   maxConcurrency?: number;
+  postPromptTimeoutMs?: number;
 }
 
 export class StandaloneAutoflowRunner {
@@ -35,6 +36,7 @@ export class StandaloneAutoflowRunner {
       agentSessionDriver: options.agentSessionDriver,
       codeReviewCreator: options.codeReviewCreator,
       maxConcurrency: options.maxConcurrency,
+      postPromptTimeoutMs: options.postPromptTimeoutMs,
       autoReconcileOnSlotAvailable: false,
       enabled: () => this.enabled,
       gitInspect: async (path) => {

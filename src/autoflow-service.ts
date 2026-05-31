@@ -72,6 +72,7 @@ export interface AutoflowServiceOptions {
   codeReviewCreator?: AutoflowCodeReviewCreator;
   enabled?: () => boolean;
   maxConcurrency?: number;
+  postPromptTimeoutMs?: number;
   gitInspect?: (path: string) => Promise<{ dirty: boolean; entries: string[] }>;
   autoReconcileOnSlotAvailable?: boolean;
 }
@@ -111,6 +112,7 @@ export class AutoflowService {
   private readonly codeReviewCreator?: AutoflowCodeReviewCreator;
   private readonly enabled: () => boolean;
   private readonly maxConcurrency: number;
+  private readonly postPromptTimeoutMs: number;
   private readonly autoReconcileOnSlotAvailable: boolean;
   private readonly gitInspect?: (path: string) => Promise<{ dirty: boolean; entries: string[] }>;
   private readonly activeRuns = new Map<string, ActiveRun>();
@@ -124,6 +126,7 @@ export class AutoflowService {
     this.codeReviewCreator = options.codeReviewCreator;
     this.enabled = options.enabled ?? (() => true);
     this.maxConcurrency = options.maxConcurrency ?? 5;
+    this.postPromptTimeoutMs = options.postPromptTimeoutMs ?? 10 * 60 * 1000;
     this.autoReconcileOnSlotAvailable = options.autoReconcileOnSlotAvailable ?? true;
     this.gitInspect = options.gitInspect;
   }
@@ -346,7 +349,7 @@ export class AutoflowService {
       summary: `Autoflow working ${issueRef}.`,
     });
 
-    const completed = await this.agentSessionDriver.postPrompt(piSession.id, handoff.prompt);
+    const completed = await this.postPromptWithTimeout(piSession.id, handoff.prompt);
     const resultStatus = await this.recordResult(flowSessionId, handoff, completed);
 
     let finalPhase: AutoflowServicePhase = completed.status === "failed" ? "failed" : resultStatus === "blocked" ? "needs_input" : "idle";
@@ -381,6 +384,25 @@ export class AutoflowService {
       ...input,
       updatedAt: nowIso(),
     });
+  }
+
+  private async postPromptWithTimeout(sessionId: string, prompt: string): Promise<AutoflowAgentSessionSnapshot> {
+    const timeoutMs = this.postPromptTimeoutMs;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<AutoflowAgentSessionSnapshot>((_resolve, reject) => {
+      timeout = setTimeout(() => {
+        reject(new Error(`Autoflow agent postPrompt timed out after ${timeoutMs}ms.`));
+      }, timeoutMs);
+      timeout.unref?.();
+    });
+    try {
+      return await Promise.race([
+        this.agentSessionDriver.postPrompt(sessionId, prompt),
+        timeoutPromise,
+      ]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
   }
 
   private async recordResult(flowSessionId: string, handoff: WorkerTaskRequest & { workJobId: string }, session: AutoflowAgentSessionSnapshot): Promise<"succeeded" | "blocked" | "failed"> {

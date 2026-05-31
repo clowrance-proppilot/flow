@@ -144,6 +144,76 @@ test("StandaloneAutoflowRunner can target one issue without broad queue pickup",
   assert.equal(queueReads, 0);
 });
 
+test("StandaloneAutoflowRunner times out stuck agent prompts and frees the slot", async () => {
+  const runner = new StandaloneAutoflowRunner({
+    projectId: "flow",
+    state: new MemoryRunnerState(),
+    runtime: {
+      inspectQueue: async () => [{
+        ref: "GH-278",
+        title: "Add timeout to Pi agent postPrompt",
+        repoKeys: ["flow"],
+        state: "queued",
+        metadata: {},
+      }],
+      summarizeHandoff: async () => "handoff",
+      createSession: async (id: string) => ({ id, findings: [], workerResults: [], createdAt: nowIso(), updatedAt: nowIso() }),
+      selectIssue: async () => undefined,
+      diagnoseIssue: async () => ({
+        issueRef: "GH-278",
+        status: "ok",
+        issue: { ref: "GH-278", title: "Add timeout to Pi agent postPrompt", state: "selected", repoKeys: ["flow"] },
+        visibility: {
+          ledger: true,
+          issueTracker: true,
+          repoRouting: true,
+          preparedWorktree: true,
+          codeReview: false,
+          codeReviewRequired: false,
+        },
+        findings: [],
+        nextAction: { type: "advance", summary: "Run Autoflow." },
+      }),
+      autoFlowIssue: async () => ({
+        status: "execution_handoff",
+        message: "Ready for executor.",
+        steps: [],
+        workerResults: [],
+        session: { id: "session", findings: [], workerResults: [], createdAt: nowIso(), updatedAt: nowIso() },
+      }),
+      adoptPendingLiveWorker: async () => ({
+        id: "task-278",
+        issueRef: "GH-278",
+        repoKey: "flow",
+        workJobId: "job-278",
+        prompt: "Implement GH-278.",
+        workspacePath: "/tmp/flow-gh-278",
+      }),
+      recordLocalThreadResult: async () => undefined,
+      recordEvidence: async () => undefined,
+      recordDocumentation: async () => undefined,
+      recordPullRequest: async () => undefined,
+      advanceIssue: async () => ({
+        status: "awaiting_review",
+        message: "Ready for review.",
+      }),
+    } as never,
+    agentSessionDriver: {
+      ...fakeAgentDriver(),
+      async postPrompt() {
+        return new Promise(() => undefined);
+      },
+    },
+    postPromptTimeoutMs: 20,
+  });
+
+  const status = await runner.tick({ wait: true });
+
+  assert.equal(status.activeCount, 0);
+  assert.equal(status.issues["GH-278"]?.phase, "failed");
+  assert.match(status.issues["GH-278"]?.summary ?? "", /timed out/);
+});
+
 function fakeAgentDriver(): AutoflowAgentSessionDriver {
   const session: AutoflowAgentSessionSnapshot = {
     id: "agent-gh-315",
