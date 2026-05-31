@@ -2266,6 +2266,13 @@ test("Local thread executor advertises capabilities and returns a reportable han
   assert.deepEqual(progress, ["Local thread executor prepared a handoff request."]);
 });
 
+function expectRecord(value: unknown): Record<string, unknown> {
+  assert.equal(typeof value, "object");
+  assert.notEqual(value, null);
+  assert.equal(Array.isArray(value), false);
+  return value as Record<string, unknown>;
+}
+
 test("Work envelopes parse YAML frontmatter and preserve Markdown body", () => {
   const envelope = parseWorkEnvelope(`---
 workType: flow.remediate
@@ -2288,6 +2295,75 @@ Address only the unresolved review blockers.
   assert.equal(envelope.executionMode, "local_thread");
   assert.equal(envelope.metadata.prNumber, 2914);
   assert.match(envelope.body, /Address only the unresolved review blockers/);
+});
+
+test("Work envelopes parse nested metadata, arrays, booleans, nulls, and quoted scalars", () => {
+  const envelope = parseWorkEnvelope(`---
+workType: flow.implement
+issueRef: ISSUE-125
+repoKey: app_api
+executionMode: background
+metadata:
+  review:
+    required: true
+    owner: "agent:pi"
+    blocker: null
+  tags: ["coverage", 'edge:case', true, null, 42]
+---
+
+Implement the nested metadata case.
+`);
+
+  const review = expectRecord(envelope.metadata.review);
+  assert.equal(review.required, true);
+  assert.equal(review.owner, "agent:pi");
+  assert.equal(review.blocker, null);
+  assert.deepEqual(envelope.metadata.tags, ["coverage", "edge:case", true, null, 42]);
+});
+
+test("Work envelopes reject malformed frontmatter lines without a colon", () => {
+  assert.throws(
+    () => parseWorkEnvelope(`---
+workType: flow.implement
+issueRef ISSUE-126
+repoKey: app_api
+---
+
+Body.
+`),
+    /Invalid work envelope frontmatter line: issueRef ISSUE-126/,
+  );
+});
+
+test("Work envelopes reject an empty body after valid frontmatter", () => {
+  assert.throws(
+    () => parseWorkEnvelope(`---
+workType: flow.implement
+issueRef: ISSUE-127
+repoKey: app_api
+executionMode: background
+---
+`),
+    /expected string to have >=1 characters/,
+  );
+});
+
+test("Work envelopes preserve quoted strings with special characters", () => {
+  const envelope = parseWorkEnvelope(`---
+workType: flow.remediate
+issueRef: ISSUE-128
+repoKey: public_api
+executionMode: local_thread
+metadata:
+  command: "npm run test:fast -- test/work-envelope.test.ts"
+  path: 'src/work-envelope.ts:42'
+---
+
+Handle quoted punctuation.
+`);
+
+  assert.equal(envelope.metadata.command, "npm run test:fast -- test/work-envelope.test.ts");
+  assert.equal(envelope.metadata.path, "src/work-envelope.ts:42");
 });
 
 test("Work Runtime submits work envelopes idempotently", async () => {
