@@ -2,7 +2,6 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, normalize } from "node:path";
 import { run } from "node:test";
-import { pathToFileURL } from "node:url";
 import { fileURLToPath } from "node:url";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -16,6 +15,9 @@ const defaultTestFiles = [
   "test/dashboard-state.test.ts",
   "test/sql-state.test.ts",
   "test/sql-store.test.ts",
+  "test/readiness.test.ts",
+  "test/work-runtime-autoflow.test.ts",
+  "test/adapter-triage.test.ts",
 ];
 
 writeCliShim();
@@ -24,7 +26,7 @@ await runTests(resolveTestFiles(process.argv.slice(2)));
 function writeCliShim() {
   mkdirSync(dirname(cliShim), { recursive: true });
   const sourceCli = join(flowRoot, "src", "flow.ts");
-  const tsxRegister = pathToFileURL(join(flowRoot, "node_modules", "tsx", "dist", "esm", "index.mjs")).href;
+  const tsxRegister = import.meta.resolve("tsx/esm");
   writeFileSync(
     cliShim,
     `#!/usr/bin/env node

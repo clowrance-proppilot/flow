@@ -4320,6 +4320,7 @@ function buildWorkerPrompt(issue: WorkItem, repoKey: string): string {
     branch ? `Branch: ${branch}` : undefined,
     "",
     "Instructions: Make the code changes, run tests, commit with a descriptive message, and push the branch.",
+    ...workerPromptGuardrails(),
   ].filter(Boolean).join("\n");
 }
 
@@ -4342,7 +4343,19 @@ function buildReviewRemediationWorkerPrompt(
         finding.detail ? finding.detail : undefined,
       ].filter(Boolean).join("\n")
     ),
+    ...workerPromptGuardrails(),
   ].filter(Boolean).join("\n");
+}
+
+function workerPromptGuardrails(): string[] {
+  return [
+    "",
+    "Agent guardrails:",
+    "- Work the task directly as the executor; do not delegate to another agent or advisor process.",
+    "- Use `rg` (ripgrep) to search files before reading them in full.",
+    "- Never read a file over 50 KB in one pass when a targeted search or line-range read gives the same answer.",
+    "- When working on tests, check the domain-specific test file (e.g. `test/readiness.test.ts`, `test/work-runtime-autoflow.test.ts`, `test/adapter-triage.test.ts`) rather than reading the full monolithic test file.",
+  ];
 }
 
 function buildLegacyLiveWorkerHandoffPrompt(
