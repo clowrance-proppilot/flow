@@ -96,6 +96,8 @@ export interface AutoflowCodeReviewCreator {
   }>;
 }
 
+const COMMIT_FOLLOW_UP_PROMPT = "You have uncommitted changes. Commit them with a descriptive message and push to the branch.";
+
 interface ActiveRun {
   promise: Promise<void>;
   status: AutoflowServicePhase;
@@ -349,7 +351,7 @@ export class AutoflowService {
       summary: `Autoflow working ${issueRef}.`,
     });
 
-    const completed = await this.postPromptWithTimeout(piSession.id, handoff.prompt);
+    const completed = await this.completeAgentPrompt(piSession.id, handoff);
     const resultStatus = await this.recordResult(flowSessionId, handoff, completed);
 
     let finalPhase: AutoflowServicePhase = completed.status === "failed" ? "failed" : resultStatus === "blocked" ? "needs_input" : "idle";
@@ -403,6 +405,27 @@ export class AutoflowService {
     } finally {
       if (timeout) clearTimeout(timeout);
     }
+  }
+
+  private async completeAgentPrompt(
+    sessionId: string,
+    handoff: WorkerTaskRequest & { workJobId: string },
+  ): Promise<AutoflowAgentSessionSnapshot> {
+    const completed = await this.postPromptWithTimeout(sessionId, handoff.prompt);
+    if (!this.gitInspect || completed.status === "failed") return completed;
+    const workspacePath = completed.workspacePath ?? handoff.workspacePath;
+    if (!workspacePath) return completed;
+    let status: { dirty: boolean; entries: string[] };
+    try {
+      status = await this.gitInspect(workspacePath);
+    } catch {
+      return completed;
+    }
+    if (!status.dirty) return completed;
+    return this.agentSessionDriver.sendUserMessage(sessionId, {
+      text: COMMIT_FOLLOW_UP_PROMPT,
+      mode: "followUp",
+    });
   }
 
   private async recordResult(flowSessionId: string, handoff: WorkerTaskRequest & { workJobId: string }, session: AutoflowAgentSessionSnapshot): Promise<"succeeded" | "blocked" | "failed"> {

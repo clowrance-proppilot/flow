@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  AutoflowService,
   StandaloneAutoflowRunner,
   nowIso,
   type AutoflowAgentSessionDriver,
@@ -214,6 +215,99 @@ test("StandaloneAutoflowRunner times out stuck agent prompts and frees the slot"
   assert.match(status.issues["GH-278"]?.summary ?? "", /timed out/);
 });
 
+test("AutoflowService sends one commit follow-up when the workspace stays dirty", async () => {
+  const messages: string[] = [];
+  let gitInspections = 0;
+  const runtime = {
+    inspectQueue: async () => [{
+      ref: "GH-280",
+      title: "Add follow-up prompt flow for commit verification",
+      repoKeys: ["flow"],
+      state: "queued",
+      metadata: {},
+    }],
+    summarizeHandoff: async () => "handoff",
+    createSession: async (id: string) => ({ id, findings: [], workerResults: [], createdAt: nowIso(), updatedAt: nowIso() }),
+    selectIssue: async () => undefined,
+    diagnoseIssue: async () => ({
+      issueRef: "GH-280",
+      status: "ok",
+      issue: { ref: "GH-280", title: "Add follow-up prompt flow for commit verification", state: "selected", repoKeys: ["flow"] },
+      visibility: {
+        ledger: true,
+        issueTracker: true,
+        repoRouting: true,
+        preparedWorktree: true,
+        codeReview: false,
+        codeReviewRequired: false,
+      },
+      findings: [],
+      nextAction: { type: "advance", summary: "Run Autoflow." },
+    }),
+    autoFlowIssue: async () => ({
+      status: "execution_handoff",
+      message: "Ready for executor.",
+      steps: [],
+      workerResults: [],
+      session: { id: "session", findings: [], workerResults: [], createdAt: nowIso(), updatedAt: nowIso() },
+    }),
+    adoptPendingLiveWorker: async () => ({
+      id: "task-280",
+      issueRef: "GH-280",
+      repoKey: "flow",
+      workJobId: "job-280",
+      prompt: "Implement GH-280.",
+      workspacePath: "/tmp/flow-gh-280",
+    }),
+    recordLocalThreadResult: async (_sessionId: string, result: { issueRef: string; status: string; blockers: string[] }) => {
+      assert.equal(result.issueRef, "GH-280");
+      assert.equal(result.status, "succeeded");
+      assert.deepEqual(result.blockers, []);
+      return result;
+    },
+    recordEvidence: async () => undefined,
+    recordDocumentation: async () => undefined,
+    recordPullRequest: async () => undefined,
+    advanceIssue: async () => ({
+      status: "awaiting_review",
+      message: "Ready for review.",
+    }),
+  };
+  const service = new AutoflowService({
+    projectId: "flow",
+    runtime: runtime as never,
+    agentSessionDriver: {
+      async getSession() {
+        return committedSession();
+      },
+      async openOrCreateIssueSession() {
+        return dirtySession();
+      },
+      async postPrompt() {
+        return dirtySession();
+      },
+      async sendUserMessage(_sessionId: string, input: { text: string }) {
+        messages.push(input.text);
+        return committedSession();
+      },
+    },
+    gitInspect: async (path: string) => {
+      gitInspections += 1;
+      assert.equal(path, "/tmp/flow-gh-280");
+      return { dirty: true, entries: ["M src/autoflow-service.ts"] };
+    },
+    autoReconcileOnSlotAvailable: false,
+  });
+
+  const started = await service.reconcile();
+  assert.equal(started.activeCount, 1);
+  const status = await service.waitForIdle();
+
+  assert.equal(status.issues["GH-280"]?.phase, "idle");
+  assert.equal(gitInspections, 1);
+  assert.deepEqual(messages, ["You have uncommitted changes. Commit them with a descriptive message and push to the branch."]);
+});
+
 function fakeAgentDriver(): AutoflowAgentSessionDriver {
   const session: AutoflowAgentSessionSnapshot = {
     id: "agent-gh-315",
@@ -240,5 +334,46 @@ function fakeAgentDriver(): AutoflowAgentSessionDriver {
     async postPrompt() {
       return session;
     },
+  };
+}
+
+function dirtySession(): AutoflowAgentSessionSnapshot {
+  return {
+    id: "agent-gh-280",
+    workspacePath: "/tmp/flow-gh-280",
+    status: "done",
+    timeline: [{
+      id: "tool-edit",
+      role: "tool",
+      toolName: "apply_patch",
+      content: "edited",
+      diff: { path: "src/autoflow-service.ts" },
+      createdAt: nowIso(),
+    }],
+  };
+}
+
+function committedSession(): AutoflowAgentSessionSnapshot {
+  return {
+    id: "agent-gh-280",
+    workspacePath: "/tmp/flow-gh-280",
+    status: "done",
+    summary: "Committed and pushed GH-280.",
+    timeline: [
+      {
+        id: "tool-edit",
+        role: "tool",
+        toolName: "apply_patch",
+        content: "edited",
+        diff: { path: "src/autoflow-service.ts" },
+        createdAt: nowIso(),
+      },
+      {
+        id: "assistant-commit",
+        role: "assistant",
+        content: "Committed and pushed GH-280.",
+        createdAt: nowIso(),
+      },
+    ],
   };
 }
