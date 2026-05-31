@@ -599,7 +599,12 @@ export class AutoflowService {
       if (!issue) continue;
       if (candidates.length >= limit) break;
       // Only pick up issues that can still advance automatically.
-      if (issue.state !== "queued" && issue.state !== "selected" && issue.state !== "ready_to_run" && !(explicitTargets && issue.state === "blocked")) continue;
+      if (
+        issue.state !== "queued" &&
+        issue.state !== "selected" &&
+        issue.state !== "ready_to_run" &&
+        !(explicitTargets && (issue.state === "blocked" || issue.state === "awaiting_review"))
+      ) continue;
       if (this.activeRuns.has(issue.ref)) continue;
       const issueStatus = this.issueStatuses.get(issue.ref);
       if (issueStatus && !explicitTargets) continue;
