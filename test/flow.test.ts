@@ -43,6 +43,7 @@ import {
   classifyProviderCliError,
   triageIssues as triageIssuesEngine,
   type CreateIssueOptions,
+  type WorkItem,
 } from "../src/index.js";
 import type { ProjectTopology } from "../src/project-topology.js";
 import { normalizePullRequest, parseGitHubIssues, parsePullRequests } from "../src/adapters/github.js";
@@ -531,6 +532,85 @@ test("Flow CLI core works with only git available on PATH", async () => {
   const viewed = await callFlow({ op: "issue", mode: "view", id: issue.ref });
   assert.equal(viewed.ref, issue.ref);
   assert.equal(viewed.title, "Git-only Flow core");
+});
+
+test("Flow CLI honors FLOW_ROOT when invoked from another directory", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-root-env-"));
+  const otherCwd = await mkdtemp(join(tmpdir(), "flow-root-env-cwd-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  const flowBin = join(process.cwd(), "bin", "flow");
+
+  const callFlow = async (body: Record<string, unknown>) => {
+    const { stdout } = await execFileAsync(process.execPath, [flowBin, JSON.stringify(body)], {
+      cwd: otherCwd,
+      env: { ...process.env, FLOW_ROOT: root },
+      maxBuffer: 20 * 1024 * 1024,
+    });
+    const parsed = JSON.parse(stdout) as { ok?: boolean; result?: unknown; error?: unknown };
+    if (parsed.ok === false) throw new Error(`Flow CLI failed: ${JSON.stringify(parsed.error)}`);
+    return parsed.result as Record<string, unknown>;
+  };
+
+  await callFlow({ op: "bootstrap", storage: "repo-tracked" });
+  const explained = await callFlow({ op: "config", mode: "explain" });
+
+  assert.equal(explained.path, flowConfigPath(root));
+});
+
+test("Flow CLI can record evidence and documentation in one workflow call", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-record-acceptance-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  const flowCli = join(process.cwd(), ".tmp", "test", "src", "flow.js");
+
+  const callFlow = async (body: Record<string, unknown>) => {
+    const { stdout } = await execFileAsync(process.execPath, [flowCli, JSON.stringify(body)], {
+      cwd: root,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+    const parsed = JSON.parse(stdout) as { ok?: boolean; result?: unknown; error?: unknown };
+    if (parsed.ok === false) throw new Error(`Flow CLI failed: ${JSON.stringify(parsed.error)}`);
+    return parsed.result as Record<string, unknown>;
+  };
+
+  await callFlow({ op: "bootstrap", storage: "repo-tracked" });
+  const issueRequest = {
+    op: "issue",
+    mode: "create",
+    summary: "Record acceptance",
+    issueType: "Task",
+  };
+  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true });
+  const reviewJob = intake.reviewJob as { id: string; issueRef: string; repoKey: string; workType: string };
+  await callFlow({
+    op: "runtime",
+    method: "recordWorkJobResult",
+    params: {
+      result: {
+        jobId: reviewJob.id,
+        issueRef: reviewJob.issueRef,
+        repoKey: reviewJob.repoKey,
+        workType: reviewJob.workType,
+        status: "succeeded",
+        summary: "Executor approved issue intake.",
+        evidence: ["CLI test executor review."],
+        completedAt: nowIso(),
+      },
+    },
+  });
+  const issue = await callFlow(issueRequest) as { ref: string };
+
+  const result = await callFlow({
+    op: "workflow",
+    mode: "recordAcceptance",
+    id: issue.ref,
+    evidenceSummary: "npm test passed",
+    documentationSummary: "No docs needed for CLI acceptance metadata.",
+    disposition: "not_needed",
+    criteria: ["tests"],
+  }) as { evidence: WorkItem; documentation: WorkItem };
+
+  assert.equal(result.evidence.metadata.evidenceSummary, "npm test passed");
+  assert.equal(result.documentation.metadata.documentationDisposition, "not_needed");
 });
 
 test("Flow workflow doctor strict mode exits nonzero when readiness is not ok", async () => {

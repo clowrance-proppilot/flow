@@ -233,10 +233,10 @@ async function handleWorkflowRequest(request: Record<string, unknown>): Promise<
   const activeSessionId = sessionId(request);
   await ensureSession(activeSessionId);
   const issueRef = optionalString(request, "id");
-  if (["advance", "autoflow", "doctor", "audit", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation", "observe"].includes(mode)) {
+  if (["advance", "autoflow", "doctor", "audit", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation", "recordAcceptance", "observe"].includes(mode)) {
     requireValue(issueRef, "id");
   }
-  if (issueRef && ["advance", "autoflow", "doctor", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation"].includes(mode)) {
+  if (issueRef && ["advance", "autoflow", "doctor", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation", "recordAcceptance"].includes(mode)) {
     await runtime.selectIssue(activeSessionId, await queueIssue(issueRef));
   }
   switch (mode) {
@@ -306,13 +306,30 @@ async function handleWorkflowRequest(request: Record<string, unknown>): Promise<
         disposition: parseDocumentationDisposition(request.disposition),
         summary: requireString(request, "summary"),
       });
+    case "recordAcceptance": {
+      const evidenceSummary = optionalString(request, "evidenceSummary") ?? requireString(request, "summary");
+      const evidenceSource = optionalString(request, "source") ?? "local";
+      const documentationSummary = optionalString(request, "documentationSummary") ?? requireString(request, "summary");
+      const evidence = await runtime.recordEvidence(activeSessionId, {
+        issueRef: requireValue(issueRef, "issueRef"),
+        summary: evidenceSummary,
+        source: evidenceSource,
+        criteria: parseEvidenceCriteria(request.criteria, evidenceSummary, evidenceSource),
+      });
+      const documentation = await runtime.recordDocumentation(activeSessionId, {
+        issueRef: requireValue(issueRef, "issueRef"),
+        disposition: parseDocumentationDisposition(request.disposition),
+        summary: documentationSummary,
+      });
+      return { evidence, documentation };
+    }
     case "observe":
       return runtime.observeFlowSubject({
         type: optionalString(request, "type") ?? "issue",
         ref: requireValue(issueRef, "ref"),
       });
     default:
-      throw badMode("workflow", mode, ["advance", "audit", "autoflow", "doctor", "handoff", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation", "observe"]);
+      throw badMode("workflow", mode, ["advance", "audit", "autoflow", "doctor", "handoff", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation", "recordAcceptance", "observe"]);
   }
 }
 
@@ -350,11 +367,12 @@ function flowManifest(target?: string) {
   if (target === "workflow") {
     return {
       target,
-      modes: ["advance", "audit", "autoflow", "doctor", "handoff", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation", "observe"],
+      modes: ["advance", "audit", "autoflow", "doctor", "handoff", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation", "recordAcceptance", "observe"],
       examples: [
         { op: "workflow", mode: "audit", id: "FLOW-123" },
         { op: "workflow", mode: "autoflow", id: "FLOW-123", limit: 20 },
         { op: "workflow", mode: "recordEvidence", id: "FLOW-123", summary: "npm test passed", criteria: ["tests"] },
+        { op: "workflow", mode: "recordAcceptance", id: "FLOW-123", summary: "npm test passed", criteria: ["tests"], disposition: "not_needed" },
       ],
       id: "Required issue/work item id for issue-scoped workflow modes.",
     };
