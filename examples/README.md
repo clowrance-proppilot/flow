@@ -27,6 +27,17 @@ flow '{"op":"queue"}'
 - [workflow-lifecycle.ts](./workflow-lifecycle.ts) - Programmatic usage
 - [error-handling.md](./error-handling.md) - Error response patterns
 
+## Example Configurations
+
+The `.flow/` directory contains example configurations for different use cases:
+
+- [minimal.yaml](.flow/minimal.yaml) - Bare minimum config for local development
+- [local-only.yaml](.flow/local-only.yaml) - Local issue tracker, no external services
+- [github-issues.yaml](.flow/github-issues.yaml) - GitHub Issues as issue tracker
+- [multi-repo.yaml](.flow/multi-repo.yaml) - Multi-repo topology with multiple repositories
+- [custom-work-types.yaml](.flow/custom-work-types.yaml) - Custom work type definitions
+- [config.yaml](.flow/config.yaml) - Full example with Jira + GitHub integration
+
 ## Protocol Rules
 
 1. **One JSON body in, one JSON document out**
