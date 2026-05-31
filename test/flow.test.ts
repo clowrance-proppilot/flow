@@ -64,6 +64,7 @@ import {
   LocalIssueTrackerAdapter,
   NoopCodeCollaborationAdapter,
   AutoflowService,
+  StandaloneAutoflowRunner,
   ReconciliationEngine,
   ProviderAdapterError,
   classifyProviderCliError,
@@ -85,7 +86,6 @@ import {
   nextAutoflowReconcileDelay,
   runEnabledProjectAutoflowReconcile,
 } from "../desktop/autoflow-reconcile.js";
-import { PiAgentOrchestrator } from "../desktop/pi-agent-orchestrator.js";
 import { PiSessionDriver } from "../src/pi-session-driver.js";
 import { FLOW_PI_AGENT_TOOLS, PiSdkSessionRunner, childRunnerSource } from "../src/pi-sdk-runner.js";
 import { DesktopProjectRegistry } from "../desktop/project-registry.js";
@@ -93,6 +93,7 @@ import type { DesktopProjectRecord } from "../desktop/project-registry.js";
 import type { DesktopProjectSurface } from "../desktop/route-types.js";
 import { DesktopPromptRouter } from "../desktop/prompt-router.js";
 import { defaultDesktopRefreshIntervals, desktopRefreshIntervalsFromSettings } from "../desktop/renderer/refresh-settings.js";
+import { registerWorkRoutes } from "../desktop/work-routes.js";
 import { registerStaticRoutes } from "../desktop/static-routes.js";
 import { projectThemeFor } from "../src/theme/project-theme.js";
 
@@ -104,7 +105,6 @@ function desktopProjectRecordStub(input: Partial<DesktopProjectRecord>): Desktop
     name: input.name ?? input.id ?? "project",
     configPath: input.configPath ?? "/tmp/project/.flow/config.yaml",
     valid: input.valid ?? true,
-    autoflowEnabled: input.autoflowEnabled ?? true,
     addedAt: input.addedAt ?? "2026-05-31T00:00:00.000Z",
     lastOpenedAt: input.lastOpenedAt ?? "2026-05-31T00:00:00.000Z",
     icon: input.icon,
@@ -115,12 +115,26 @@ function desktopProjectRecordStub(input: Partial<DesktopProjectRecord>): Desktop
 function desktopProjectRegistryStub(projects: DesktopProjectRecord[]): DesktopProjectRegistry {
   return {
     listProjects: async () => projects,
+    activeProject: async () => projects.find((project) => project.valid) ?? projects[0],
   } as unknown as DesktopProjectRegistry;
+}
+
+class MemoryAutoflowRunnerState {
+  private readonly values = new Map<string, unknown>();
+
+  async getProjectState<T = unknown>(projectId: string, key: string): Promise<T | undefined> {
+    return this.values.get(`${projectId}:${key}`) as T | undefined;
+  }
+
+  async setProjectState(projectId: string, key: string, value: unknown): Promise<void> {
+    this.values.set(`${projectId}:${key}`, value);
+  }
 }
 
 function desktopProjectSurfaceStub(
   queue: Pick<WorkItem, "ref" | "state">[],
-  reconcile: () => void | Promise<void> = () => {},
+  tick: () => void | Promise<void> = () => {},
+  autoflowEnabled = true,
 ): DesktopProjectSurface {
   return {
     configured: {
@@ -128,8 +142,26 @@ function desktopProjectSurfaceStub(
         inspectQueue: async () => queue,
       },
     },
-    piAgentOrchestrator: {
-      reconcile,
+    autoflowRunner: {
+      status: async () => ({
+        enabled: autoflowEnabled,
+        maxConcurrency: 5,
+        activeCount: 0,
+        issues: {},
+        summary: autoflowEnabled ? "Autoflow idle." : "Autoflow is paused.",
+        updatedAt: nowIso(),
+      }),
+      tick: async () => {
+        await tick();
+        return {
+          enabled: autoflowEnabled,
+          maxConcurrency: 5,
+          activeCount: 0,
+          issues: {},
+          summary: "Autoflow idle.",
+          updatedAt: nowIso(),
+        };
+      },
     },
   } as unknown as DesktopProjectSurface;
 }
@@ -1839,7 +1871,7 @@ test("Desktop project registry tracks active Flow projects from config roots", a
   assert.equal((await registry.activeProject())?.id, project.id);
 });
 
-test("Desktop project registry can store project toggle state in SQLite", async () => {
+test("Desktop project registry can store active project state in SQLite", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-desktop-project-db-"));
   await execFileAsync("git", ["init"], { cwd: root });
   await bootstrapFlowConfig({ projectRoot: root, storage: "repo-tracked" });
@@ -1848,13 +1880,11 @@ test("Desktop project registry can store project toggle state in SQLite", async 
   const registry = new DesktopProjectRegistry({ dbPath });
 
   const project = await registry.addProject(root);
-  const disabled = await registry.setProjectAutoflow(project.id, false);
   const reloaded = new DesktopProjectRegistry({ dbPath });
   const active = await reloaded.activeProject();
 
-  assert.equal(disabled.autoflowEnabled, false);
   assert.equal(active?.id, project.id);
-  assert.equal(active?.autoflowEnabled, false);
+  assert.equal(active?.root, root);
 });
 
 test("Project theme generates stable colors and initials", () => {
@@ -2088,48 +2118,84 @@ test("Desktop action router runs Autoflow as the primary issue action", async ()
   assert.equal(projection.artifacts[0].metadata.action, "autoflow");
 });
 
-test("Desktop Autoflow reconcile skips disabled projects before loading surfaces", async () => {
+test("Desktop Autoflow reconcile skips invalid projects and honors disabled runner state", async () => {
   let surfaceLoads = 0;
   const registry = desktopProjectRegistryStub([
     desktopProjectRecordStub({ id: "invalid", valid: false }),
-    desktopProjectRecordStub({ id: "disabled", autoflowEnabled: false }),
+    desktopProjectRecordStub({ id: "disabled" }),
   ]);
 
   const summary = await runEnabledProjectAutoflowReconcile(registry, async () => {
     surfaceLoads++;
-    return desktopProjectSurfaceStub([]);
+    return desktopProjectSurfaceStub([], undefined, false);
   });
 
   assert.deepEqual(summary, { enabledProjects: 0, pendingProjects: 0, reconciledProjects: 0 });
-  assert.equal(surfaceLoads, 0);
+  assert.equal(surfaceLoads, 1);
   assert.equal(nextAutoflowReconcileDelay(summary), desktopAutoflowReconcileIntervals.idleMs);
 });
 
-test("Desktop Autoflow reconcile checks queue before running orchestrator", async () => {
-  let reconcileCalls = 0;
+test("Desktop Autoflow reconcile checks queue before ticking runner", async () => {
+  let tickCalls = 0;
   const summary = await runEnabledProjectAutoflowReconcile(
     desktopProjectRegistryStub([desktopProjectRecordStub({ id: "enabled" })]),
     async () => desktopProjectSurfaceStub([], () => {
-      reconcileCalls++;
+      tickCalls++;
     }),
   );
 
   assert.deepEqual(summary, { enabledProjects: 1, pendingProjects: 0, reconciledProjects: 0 });
-  assert.equal(reconcileCalls, 0);
+  assert.equal(tickCalls, 0);
 });
 
-test("Desktop Autoflow reconcile runs orchestrator for queued work", async () => {
-  let reconcileCalls = 0;
+test("Desktop Autoflow reconcile ticks runner for queued work", async () => {
+  let tickCalls = 0;
   const summary = await runEnabledProjectAutoflowReconcile(
     desktopProjectRegistryStub([desktopProjectRecordStub({ id: "enabled" })]),
     async () => desktopProjectSurfaceStub([{ ref: "GH-260", state: "queued" }], () => {
-      reconcileCalls++;
+      tickCalls++;
     }),
   );
 
   assert.deepEqual(summary, { enabledProjects: 1, pendingProjects: 1, reconciledProjects: 1 });
-  assert.equal(reconcileCalls, 1);
+  assert.equal(tickCalls, 1);
   assert.equal(nextAutoflowReconcileDelay(summary), desktopAutoflowReconcileIntervals.activeMs);
+});
+
+test("Desktop Autoflow routes call the shared runner surface", async () => {
+  let tickCalls = 0;
+  const app = express();
+  const project = desktopProjectRecordStub({ id: "enabled" });
+  registerWorkRoutes(
+    app,
+    {
+      projectRegistry: desktopProjectRegistryStub([project]),
+      projectSurface: async () => desktopProjectSurfaceStub([{ ref: "GH-385", state: "queued" }], () => {
+        tickCalls++;
+      }),
+    },
+    {
+      promptRouter: {} as never,
+      actionRouter: {} as never,
+    },
+    express.json(),
+  );
+  const server = await listenExpress(app);
+  try {
+    const statusResponse = await fetch(`${server.url}/api/autoflow/status`);
+    const statusPayload = await statusResponse.json() as { ok?: boolean; status?: { enabled?: boolean; summary?: string } };
+    const tickResponse = await fetch(`${server.url}/api/autoflow/tick`, { method: "POST" });
+    const tickPayload = await tickResponse.json() as { ok?: boolean; status?: { enabled?: boolean } };
+
+    assert.equal(statusPayload.ok, true);
+    assert.equal(statusPayload.status?.enabled, true);
+    assert.equal(statusPayload.status?.summary, "Autoflow idle.");
+    assert.equal(tickPayload.ok, true);
+    assert.equal(tickPayload.status?.enabled, true);
+    assert.equal(tickCalls, 1);
+  } finally {
+    await server.close();
+  }
 });
 
 test("Desktop refresh intervals use defaults and settings overrides", () => {
@@ -2378,8 +2444,8 @@ test("Pi session driver records clear failure when pi runtime fails", async () =
   assert.equal(linksPayload.links[0].status, "failed");
 });
 
-test("Pi agent orchestrator starts the next ready issue and records a result", async () => {
-  const root = await mkdtemp(join(tmpdir(), "flow-pi-orchestrator-"));
+test("Standalone Autoflow runner starts the next ready issue and records a result", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-autoflow-runner-"));
   const ledger = new MemoryWorkflowLedger();
   const runtime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
   await ledger.writeIssue({
@@ -2425,13 +2491,14 @@ test("Pi agent orchestrator starts the next ready issue and records a result", a
       },
     },
   });
-  const orchestrator = new PiAgentOrchestrator({
+  const runner = new StandaloneAutoflowRunner({
     projectId: "project",
     runtime,
-    piSessionDriver: driver,
+    state: new MemoryAutoflowRunnerState(),
+    agentSessionDriver: driver,
   });
 
-  await orchestrator.reconcile();
+  await runner.tick();
   for (let index = 0; index < 100; index += 1) {
     if ((await ledger.listWorkerResults("GH-56")).length) break;
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -2442,11 +2509,11 @@ test("Pi agent orchestrator starts the next ready issue and records a result", a
   assert.equal(results[0].status, "succeeded");
   assert.match(results[0].summary, /Implemented by Pi/);
   for (let index = 0; index < 100; index += 1) {
-    const issueStatus = orchestrator.getStatus().issues["GH-56"];
+    const issueStatus = (await runner.status()).issues["GH-56"];
     if (issueStatus?.phase === "needs_input") break;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  const issueStatus = orchestrator.getStatus().issues["GH-56"];
+  const issueStatus = (await runner.status()).issues["GH-56"];
   assert.equal(issueStatus?.phase, "needs_input");
   assert.match(issueStatus?.summary ?? "", /Pull request is missing/);
 });
@@ -2479,8 +2546,8 @@ test("Autoflow service can be instantiated without Desktop modules", async () =>
   assert.equal(status.summary, "Autoflow is paused.");
 });
 
-test("Pi agent orchestrator sends follow-up messages to running sessions", async () => {
-  const root = await mkdtemp(join(tmpdir(), "flow-pi-orchestrator-followup-"));
+test("Standalone Autoflow runner sends follow-up messages to running sessions", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-autoflow-runner-followup-"));
   const ledger = new MemoryWorkflowLedger();
   const runtime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
   await ledger.writeIssue({
@@ -2509,18 +2576,19 @@ test("Pi agent orchestrator sends follow-up messages to running sessions", async
   });
   const started = await driver.startSession("GH-57");
   started.status = "running";
-  const orchestrator = new PiAgentOrchestrator({
+  const runner = new StandaloneAutoflowRunner({
     projectId: "project",
     runtime,
-    piSessionDriver: driver,
+    state: new MemoryAutoflowRunnerState(),
+    agentSessionDriver: driver,
   });
 
-  await orchestrator.sendUserMessage({ issueRef: "GH-57", sessionId: started.id, text: "More detail." });
+  await runner.sendUserMessage({ issueRef: "GH-57", sessionId: started.id, text: "More detail." });
   assert.deepEqual(modes, ["followUp"]);
 });
 
-test("Pi agent orchestrator doctors stale external issues instead of starting Pi", async () => {
-  const root = await mkdtemp(join(tmpdir(), "flow-pi-orchestrator-stale-"));
+test("Standalone Autoflow runner doctors stale external issues instead of starting Pi", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-autoflow-runner-stale-"));
   const ledger = new MemoryWorkflowLedger();
   const runtime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
   await ledger.writeIssue({
@@ -2544,20 +2612,21 @@ test("Pi agent orchestrator doctors stale external issues instead of starting Pi
   doctorRuntime.diagnoseIssue = async () => {
     throw new Error("GraphQL: Could not resolve to an issue or pull request with the number of 58. (repository.issue)");
   };
-  const orchestrator = new PiAgentOrchestrator({
+  const runner = new StandaloneAutoflowRunner({
     projectId: "project",
     runtime: doctorRuntime,
-    piSessionDriver: driver,
+    state: new MemoryAutoflowRunnerState(),
+    agentSessionDriver: driver,
   });
 
-  await orchestrator.reconcile();
+  await runner.tick();
   for (let index = 0; index < 20; index += 1) {
-    const issueStatus = orchestrator.getStatus().issues["GH-58"];
+    const issueStatus = (await runner.status()).issues["GH-58"];
     if (issueStatus?.phase === "needs_input") break;
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
 
-  const status = orchestrator.getStatus();
+  const status = await runner.status();
   const issueStatus = status.issues["GH-58"];
   assert.equal(status.summary, "1 issue needs input.");
   assert.equal(issueStatus?.phase, "needs_input");

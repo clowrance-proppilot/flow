@@ -1,11 +1,8 @@
 #!/usr/bin/env node
 
-import { join } from "node:path";
 import {
   bootstrapFlowConfig,
-  createKyselyFlowState,
-  createSqliteSqlStateConfig,
-  flowUserStateRoot,
+  createDefaultAutoflowRunnerState,
   GhGitHubAdapter,
   flowLayout,
   migrateFlowConfig,
@@ -385,10 +382,6 @@ function autoflowIssueRefs(request: Record<string, unknown>): string[] | undefin
 
 function standaloneAutoflowRunner(): StandaloneAutoflowRunner {
   if (cachedAutoflowRunner) return cachedAutoflowRunner;
-  const state = createKyselyFlowState({
-    root: flowUserStateRoot(repoRoot),
-    dialectConfig: createSqliteSqlStateConfig({ path: join(flowUserStateRoot(repoRoot), "flow-state.db") }),
-  });
   const projectId = configString(flowConfig?.project, "name") ?? "default";
   const piSessionDriver = new PiSessionDriver({
     runtime,
@@ -398,7 +391,7 @@ function standaloneAutoflowRunner(): StandaloneAutoflowRunner {
   cachedAutoflowRunner = new StandaloneAutoflowRunner({
     projectId,
     runtime,
-    state,
+    state: createDefaultAutoflowRunnerState(repoRoot),
     agentSessionDriver: piSessionDriver,
     codeReviewCreator: configuredRuntime.collaboration?.createCodeReview
       ? {

@@ -31,10 +31,12 @@ export function registerProjectRoutes(server: Express, context: RouteContext, js
       };
       try {
         const surface = await projectSurface(project);
+        const autoflowStatus = await surface.autoflowRunner.status();
         const payload = await surface.dashboardState.payload({ limit: 50 });
         const summary = summarizeProjectIssues(payload.issues);
         return {
           ...publicProject,
+          autoflowEnabled: autoflowStatus.enabled,
           attentionCount: summary.blocked + summary.needsInput,
           statusCounts: summary,
         };
@@ -108,9 +110,12 @@ export function registerProjectRoutes(server: Express, context: RouteContext, js
   server.post("/api/projects/:projectId/autoflow", jsonBody, async (req, res) => {
     try {
       const enabled = req.body?.enabled !== false;
-      const project = await projectRegistry.setProjectAutoflow(String(req.params.projectId ?? ""), enabled);
-      invalidateProjectSurface?.(project.id);
-      res.json({ ok: true, project });
+      const projectId = String(req.params.projectId ?? "");
+      const project = (await projectRegistry.listProjects()).find((candidate) => candidate.id === projectId);
+      if (!project) throw new Error(`Unknown Flow project ${projectId}.`);
+      const surface = await projectSurface(project);
+      const status = await surface.autoflowRunner.setEnabled(enabled);
+      res.json({ ok: true, project: { ...project, autoflowEnabled: status.enabled } });
     } catch (error) {
       console.error("[flow-desktop] set project autoflow failed:", error);
       res.status(404).json({ ok: false, error: message(error) });

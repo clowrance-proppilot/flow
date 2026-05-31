@@ -124,7 +124,7 @@ export function registerWorkRoutes(
     try {
       const project = await requireActiveProject(projectRegistry);
       const surface = await projectSurface(project);
-      res.json({ ok: true, status: surface.piAgentOrchestrator.getStatus() });
+      res.json({ ok: true, status: await surface.autoflowRunner.status() });
     } catch (error) {
       console.error("[flow-desktop] autoflow status failed:", error);
       res.status(400).json({ ok: false, error: message(error) });
@@ -135,7 +135,7 @@ export function registerWorkRoutes(
     try {
       const project = await requireActiveProject(projectRegistry);
       const surface = await projectSurface(project);
-      const status = await surface.piAgentOrchestrator.reconcile();
+      const status = await surface.autoflowRunner.tick();
       res.json({ ok: true, status });
     } catch (error) {
       console.error("[flow-desktop] autoflow tick failed:", error);
@@ -204,7 +204,7 @@ export function registerWorkRoutes(
       }
       const prompt = typeof req.body?.prompt === "string" ? req.body.prompt : "";
       const current = await surface.piSessionDriver.getSession(sessionId);
-      const session = await surface.piAgentOrchestrator.sendUserMessage({
+      const session = await surface.autoflowRunner.sendUserMessage({
         issueRef: current.issueRef,
         sessionId,
         text: prompt,

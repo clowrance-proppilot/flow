@@ -9,7 +9,7 @@ import { validateFlowConfig } from "../src/config/config-loader.js";
 import { createConfiguredWorkRuntime } from "../src/runtime-factory.js";
 import { GitAdapter } from "../src/adapters/git.js";
 import { DesktopActionRouter } from "./action-router.js";
-import { PiAgentOrchestrator } from "./pi-agent-orchestrator.js";
+import { createDefaultAutoflowRunnerState, StandaloneAutoflowRunner } from "../src/autoflow-runner.js";
 import { PiSessionDriver } from "../src/pi-session-driver.js";
 import { DesktopProjectRegistry, type DesktopProjectRecord } from "./project-registry.js";
 import { DesktopPromptRouter, type DesktopAgentSessionAdapter } from "./prompt-router.js";
@@ -95,11 +95,11 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
       configured,
       dashboardState,
       piSessionDriver,
-      piAgentOrchestrator: new PiAgentOrchestrator({
+      autoflowRunner: new StandaloneAutoflowRunner({
         projectId: project.id,
         runtime: configured.runtime,
-        piSessionDriver,
-        enabled: () => project.autoflowEnabled !== false,
+        state: createDefaultAutoflowRunnerState(project.root),
+        agentSessionDriver: piSessionDriver,
         gitInspect: async (path: string) => {
           const status = await git.inspect(path);
           return { dirty: status.dirty, entries: status.entries };
@@ -119,7 +119,7 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
       const session = input.sessionId
         ? await surface.piSessionDriver.getSession(input.sessionId).catch(() => undefined)
         : undefined;
-      void surface.piAgentOrchestrator.sendUserMessage({
+      void surface.autoflowRunner.sendUserMessage({
         issueRef: input.issueRef,
         sessionId: session?.id,
         text: input.prompt,

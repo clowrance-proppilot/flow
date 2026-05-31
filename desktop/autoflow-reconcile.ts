@@ -24,10 +24,10 @@ export async function runEnabledProjectAutoflowReconcile(
   projectSurface: ProjectSurfaceLoader,
 ): Promise<AutoflowReconcileSummary> {
   const projects = await projectRegistry.listProjects();
-  const enabledProjects = projects.filter(projectHasDesktopAutoflowEnabled);
-  const summaries = await Promise.all(enabledProjects.map((project) => reconcileProjectIfQueued(project, projectSurface)));
+  const validProjects = projects.filter((project) => project.valid);
+  const summaries = await Promise.all(validProjects.map((project) => reconcileProjectIfQueued(project, projectSurface)));
   return {
-    enabledProjects: enabledProjects.length,
+    enabledProjects: summaries.filter((summary) => summary.enabled).length,
     pendingProjects: summaries.filter((summary) => summary.pending).length,
     reconciledProjects: summaries.filter((summary) => summary.reconciled).length,
   };
@@ -39,19 +39,17 @@ export function nextAutoflowReconcileDelay(summary: AutoflowReconcileSummary): n
     : desktopAutoflowReconcileIntervals.idleMs;
 }
 
-function projectHasDesktopAutoflowEnabled(project: DesktopProjectRecord): boolean {
-  return project.valid && project.autoflowEnabled !== false;
-}
-
 async function reconcileProjectIfQueued(
   project: DesktopProjectRecord,
   projectSurface: ProjectSurfaceLoader,
-): Promise<{ pending: boolean; reconciled: boolean }> {
+): Promise<{ enabled: boolean; pending: boolean; reconciled: boolean }> {
   const surface = await projectSurface(project);
+  const status = await surface.autoflowRunner.status();
+  if (!status.enabled) return { enabled: false, pending: false, reconciled: false };
   const pending = await projectHasQueuedAutoflowWork(surface);
-  if (!pending) return { pending, reconciled: false };
-  await surface.piAgentOrchestrator.reconcile();
-  return { pending, reconciled: true };
+  if (!pending) return { enabled: true, pending, reconciled: false };
+  await surface.autoflowRunner.tick();
+  return { enabled: true, pending, reconciled: true };
 }
 
 async function projectHasQueuedAutoflowWork(surface: DesktopProjectSurface): Promise<boolean> {

@@ -41,8 +41,8 @@ import type {
   DashboardIssue,
   DashboardPayload,
   DesktopAction,
+  AutoflowRunnerStatus,
   PendingConfirmationState,
-  PiAgentOrchestratorStatus,
   PiActivityState,
   PiSessionEvent,
   PiSessionSnapshot,
@@ -67,7 +67,7 @@ function App() {
   const [activeSessionStatus, setActiveSessionStatus] = useState<"idle" | "running" | "failed">("idle");
   const [piActivity, setPiActivity] = useState<PiActivityState | null>(null);
   const [autoflowActivity, setAutoflowActivity] = useState<AutoflowActivityState | null>(null);
-  const [autoflowStatus, setAutoflowStatus] = useState<PiAgentOrchestratorStatus | null>(null);
+  const [autoflowStatus, setAutoflowStatus] = useState<AutoflowRunnerStatus | null>(null);
   const [activeStatus, setActiveStatus] = useState<WorkStatusFilter>("active");
   const [query, setQuery] = useState("");
   const [prompt, setPrompt] = useState("");
@@ -303,7 +303,7 @@ function App() {
 
   async function refreshAutoflowStatus(): Promise<void> {
     try {
-      const result = await fetchJson<{ ok?: boolean; status: PiAgentOrchestratorStatus }>("/api/autoflow/status");
+      const result = await fetchJson<{ ok?: boolean; status: AutoflowRunnerStatus }>("/api/autoflow/status");
       setAutoflowStatus(result.status);
       setAutoflowActivity(activityFromAutoflowStatus(result.status));
     } catch {
@@ -1150,7 +1150,7 @@ function StatusSummary({
   );
 }
 
-function activityFromAutoflowStatus(status: PiAgentOrchestratorStatus): AutoflowActivityState {
+function activityFromAutoflowStatus(status: AutoflowRunnerStatus): AutoflowActivityState {
   if (!status.enabled) {
     return { phase: "idle", label: "Autoflow paused", detail: "Project automation is off.", updatedAt: status.updatedAt };
   }
@@ -1210,7 +1210,7 @@ function AutoflowHealth({
 }: {
   enabled: boolean;
   activity: AutoflowActivityState | null;
-  autoflowStatus?: PiAgentOrchestratorStatus | null;
+  autoflowStatus?: AutoflowRunnerStatus | null;
 }) {
   const stateClass = enabled ? activity?.phase ?? "idle" : "paused";
   const label = activity?.label ?? (enabled ? "Autoflow watching" : "Autoflow paused");
