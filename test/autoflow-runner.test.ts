@@ -477,15 +477,20 @@ test("StandaloneAutoflowRunner drops persisted statuses for terminal workflow is
   await state.setProjectState("flow", "autoflow.status", {
     enabled: true,
     maxConcurrency: 5,
-    activeCount: 0,
+    activeCount: 1,
     issues: {
       "GH-239": {
         phase: "needs_input",
         summary: "Hand off PR review remediation for GH-239 in flow.",
         updatedAt: nowIso(),
       },
+      "GH-240": {
+        phase: "running",
+        summary: "Autoflow working GH-240.",
+        updatedAt: nowIso(),
+      },
     },
-    summary: "1 issue needs input.",
+    summary: "Working 1 issue. 1 needs input.",
     updatedAt: nowIso(),
   });
   const runner = new StandaloneAutoflowRunner({
@@ -493,9 +498,9 @@ test("StandaloneAutoflowRunner drops persisted statuses for terminal workflow is
     state,
     runtime: {
       inspectQueue: async () => [],
-      inspectIssue: async () => ({
-        ref: "GH-239",
-        title: "Expand CONTRIBUTING.md with development setup guide",
+      inspectIssue: async (ref: string) => ({
+        ref,
+        title: ref,
         repoKeys: ["flow"],
         state: "done",
         metadata: {
@@ -512,6 +517,7 @@ test("StandaloneAutoflowRunner drops persisted statuses for terminal workflow is
 
   assert.equal(status.activeCount, 0);
   assert.equal(status.issues["GH-239"], undefined);
+  assert.equal(status.issues["GH-240"], undefined);
   assert.equal(status.summary, "Autoflow idle.");
 });
 
@@ -747,7 +753,7 @@ test("AutoflowService polls pending pull request checks through closeout", async
     agentSessionDriver: fakeAgentDriver(),
     autoReconcileOnSlotAvailable: false,
     pendingCheckPollAttempts: 2,
-    pendingCheckPollIntervalMs: 0,
+    pendingCheckPollIntervalMs: 1,
   });
 
   assert.equal((await service.reconcile()).activeCount, 1);
