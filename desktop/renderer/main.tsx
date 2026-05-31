@@ -40,6 +40,7 @@ import type {
   DashboardIssue,
   DashboardPayload,
   DesktopAction,
+  IssueType,
   PendingConfirmationState,
   PiAgentOrchestratorStatus,
   PiActivityState,
@@ -49,6 +50,7 @@ import type {
   StatusKind,
   WorkStatusFilter,
 } from "./types";
+import { ISSUE_TYPES } from "./types";
 import "./styles.css";
 
 type AutoflowActivityState = PiActivityState & { issueRef?: string };
@@ -75,6 +77,9 @@ function App() {
   const [newProjectRoot, setNewProjectRoot] = useState("");
   const [newIssueTitle, setNewIssueTitle] = useState("");
   const [newIssueDescription, setNewIssueDescription] = useState("");
+  const [newIssueType, setNewIssueType] = useState<IssueType>("Bug");
+  const [newIssueRepoKeys, setNewIssueRepoKeys] = useState<string[]>([]);
+  const [availableRepoKeys, setAvailableRepoKeys] = useState<string[]>([]);
   const [creatingIssue, setCreatingIssue] = useState(false);
   const [addingProject, setAddingProject] = useState(false);
   const [conversation, setConversation] = useState<ConversationItem[]>([]);
@@ -183,6 +188,7 @@ function App() {
           project?: ProjectRecord;
           dashboard?: DashboardPayload;
           context?: ContextProjection;
+          repoKeys?: string[];
         }>("/api/context"),
       ]);
       const nextProjects = projectsPayload.projects ?? [];
@@ -195,6 +201,12 @@ function App() {
       setIssues(nextIssues);
       setSnapshotLabel((contextPayload.dashboard?.snapshot?.freshnessLabel || "not loaded").replace(/^Snapshot\s+/i, ""));
       setContext(contextPayload.context ?? {});
+      if (contextPayload.repoKeys?.length) {
+        setAvailableRepoKeys(contextPayload.repoKeys);
+        if (newIssueRepoKeys.length === 0) {
+          setNewIssueRepoKeys(contextPayload.repoKeys);
+        }
+      }
       if (!sendingRef.current && (initial || !hasLoaded.current)) {
         setConversation(seedConversation(contextPayload.context, nextProjectId));
       }
@@ -308,21 +320,24 @@ function App() {
     setCreatingIssue(true);
     setError("");
     try {
+      const selectedRepoKeys = newIssueRepoKeys.length > 0 ? newIssueRepoKeys : availableRepoKeys;
+      const branchKind = newIssueType.toLowerCase();
       const result = await fetchJson<{ ok?: boolean; issue: CreatedIssue }>("/api/issues", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          issueType: "Bug",
+          issueType: newIssueType,
           title,
           summary: title,
           description: newIssueDescription.trim() || undefined,
-          repoKeys: ["flow"],
-          branchKind: "bug",
+          repoKeys: selectedRepoKeys,
+          branchKind,
           select: true,
         }),
       });
       setNewIssueTitle("");
       setNewIssueDescription("");
+      setNewIssueType("Bug");
       setNewIssueOpen(false);
       if (result.issue?.ref) {
         const created: DashboardIssue = {
@@ -330,7 +345,7 @@ function App() {
           title: result.issue.title || title,
           workStatus: "Queued",
           statusLabel: "Open",
-          repositories: ["flow"],
+          repositories: selectedRepoKeys,
           evidenceStatus: "Needed",
           documentationStatus: "Needed",
           updatedLabel: "now",
@@ -767,6 +782,44 @@ function App() {
               rows={3}
               disabled={creatingIssue}
             />
+            <div className="new-issue-selects">
+              <label className="new-issue-select-label">
+                <span>Type</span>
+                <select
+                  value={newIssueType}
+                  onChange={(event) => setNewIssueType(event.target.value as IssueType)}
+                  disabled={creatingIssue}
+                >
+                  {ISSUE_TYPES.map((type) => (
+                    <option key={type} value={type}>{type}</option>
+                  ))}
+                </select>
+              </label>
+              {availableRepoKeys.length > 1 ? (
+                <label className="new-issue-select-label">
+                  <span>Repos</span>
+                  <div className="new-issue-repo-checkboxes">
+                    {availableRepoKeys.map((repoKey) => (
+                      <label key={repoKey} className="new-issue-repo-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={newIssueRepoKeys.includes(repoKey)}
+                          onChange={(event) => {
+                            if (event.target.checked) {
+                              setNewIssueRepoKeys((current) => [...current, repoKey]);
+                            } else {
+                              setNewIssueRepoKeys((current) => current.filter((key) => key !== repoKey));
+                            }
+                          }}
+                          disabled={creatingIssue}
+                        />
+                        <span>{repoKey}</span>
+                      </label>
+                    ))}
+                  </div>
+                </label>
+              ) : null}
+            </div>
             <div className="new-issue-actions">
               <button type="button" onClick={() => setNewIssueOpen(false)} disabled={creatingIssue}>Cancel</button>
               <button type="submit" disabled={creatingIssue || !newIssueTitle.trim()}>

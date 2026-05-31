@@ -120,7 +120,8 @@ export function registerProjectRoutes(server: Express, context: RouteContext, js
       const ledgerContext = surface.configured.workflowLedger.readContext
         ? await surface.configured.workflowLedger.readContext({ projectId: project.id })
         : undefined;
-      res.json({ ok: true, project, dashboard, context: ledgerContext });
+      const repoKeys = Object.keys(surface.configured.flowConfig?.topology?.repos ?? {});
+      res.json({ ok: true, project, dashboard, context: ledgerContext, repoKeys });
     } catch (error) {
       res.status(503).json({ ok: false, error: message(error) });
     }
