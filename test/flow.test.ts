@@ -75,6 +75,7 @@ import { normalizePullRequest, parseGitHubIssues, parsePullRequests } from "../s
 import { currentUserBacklogJql, currentUserOpenSprintJql, parseJiraCommentUrl, parseJiraIssue, parseJiraSearch } from "../src/adapters/jira.js";
 import { DesktopActionRouter, isDesktopAction } from "../desktop/action-router.js";
 import { desktopActionValues } from "../desktop/action-types.js";
+import { LruMap } from "../desktop/lru-map.js";
 import {
   desktopAutoflowReconcileIntervals,
   nextAutoflowReconcileDelay,
@@ -2085,6 +2086,24 @@ test("Desktop refresh intervals use defaults and settings overrides", () => {
     dashboardRefreshIntervalMs: Number.NaN,
     autoflowStatusRefreshIntervalMs: 0,
   }), defaultDesktopRefreshIntervals);
+});
+
+test("Desktop LruMap evicts least recently used entries", () => {
+  const cache = new LruMap<string, number>(2);
+  cache.set("a", 1);
+  cache.set("b", 2);
+
+  assert.equal(cache.get("a"), 1);
+  cache.set("c", 3);
+
+  assert.equal(cache.has("a"), true);
+  assert.equal(cache.has("b"), false);
+  assert.equal(cache.has("c"), true);
+  assert.equal(cache.size, 2);
+});
+
+test("Desktop LruMap rejects empty cache sizes", () => {
+  assert.throws(() => new LruMap<string, number>(0), /maxSize must be at least 1/);
 });
 
 test("Pi session driver starts issue-linked sessions and records FlowSessionLink", async () => {
