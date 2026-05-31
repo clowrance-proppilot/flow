@@ -7297,6 +7297,43 @@ test("Work Runtime reconciliation refreshes existing PR metadata when draft stat
   assert.equal(issue.metadata.prNumber, 18);
 });
 
+test("Work Runtime advance sends merge-conflict resolution handoff with a specific prompt", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-merge-conflict-prompt-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  const session = await workRuntime.createSession("session-merge-conflict-prompt");
+  await workRuntime.selectIssue(session.id, {
+    ref: "ISSUE-19",
+    title: "Resolve merge conflicts",
+    repoKeys: ["app_api"],
+    state: "ready_to_run",
+    metadata: {
+      prUrl: "https://github.com/ExampleOrg/app-api/pull/19",
+      prIsDraft: false,
+      prMergeable: "CONFLICTING",
+      prMergeStateStatus: "DIRTY",
+      prChecksPassing: true,
+      "workflow.repos.app_api.worktree_path": "/tmp/app-api-worktree",
+    },
+  });
+
+  const pending = await workRuntime.advanceIssue(session.id);
+
+  assert.equal(pending.status, "needs_confirmation");
+  assert.equal(pending.session.pendingConfirmation?.action, "request_execution");
+  assert.equal(pending.session.pendingConfirmation?.summary, "Hand off PR merge-conflict resolution for ISSUE-19 in app_api.");
+  const confirmationId = pending.session.pendingConfirmation?.id;
+  assert.ok(confirmationId);
+  const approved = await workRuntime.advanceIssue(session.id, confirmationId);
+
+  assert.equal(approved.status, "execution_handoff");
+  assert.match(approved.handoffRequest?.prompt ?? "", /Prompt: resolve the merge conflicts on this pull request/);
+  assert.match(approved.handoffRequest?.prompt ?? "", /Pull request has merge conflicts/);
+  const jobs = await ledger.listWorkJobs("ISSUE-19");
+  assert.equal(jobs.length, 1);
+  assert.equal(approved.handoffRequest?.workJobId, jobs[0].id);
+});
+
 test("Work Runtime reconciliation completes active undraft worker when GitHub shows PR ready", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
   const ledger = new MemoryWorkflowLedger();
