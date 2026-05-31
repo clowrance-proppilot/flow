@@ -21,8 +21,8 @@ export function Sidebar(props: {
   ];
 
   return (
-    <aside className="flex min-h-0 flex-col border-b border-[var(--th-border)] bg-[var(--th-surface)] p-3 lg:border-b-0 lg:border-r lg:p-4">
-      <label className="relative mb-3 lg:mb-4">
+    <aside className="flex min-h-0 flex-col border-b border-[var(--th-border)] bg-[var(--th-surface)] p-3.5 sm:p-4 md:border-b-0 md:border-r lg:p-5">
+      <label className="relative mb-3.5 sm:mb-4">
         <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--th-fg-muted)]" />
         <input
           type="search"
@@ -36,7 +36,7 @@ export function Sidebar(props: {
       </label>
 
       <SectionLabel>Work Status</SectionLabel>
-      <div className="mb-3 grid grid-cols-2 gap-1.5 sm:grid-cols-[repeat(auto-fit,minmax(7.5rem,1fr))] lg:mb-4 lg:grid-cols-1">
+      <div className="mb-3.5 grid grid-cols-2 gap-1.5 sm:grid-cols-[repeat(auto-fit,minmax(7.5rem,1fr))] sm:mb-4 md:grid-cols-1">
         {statusFilters.map((filter) => (
           <button
             key={filter.id}
@@ -44,7 +44,7 @@ export function Sidebar(props: {
             data-mirror-control="status-filter"
             onClick={() => props.onStatusChange(filter.id)}
             className={cx(
-              "status-filter grid min-h-9 min-w-0 grid-cols-[0.5rem_minmax(0,1fr)_auto] items-center gap-1.5 overflow-hidden rounded-md border px-1.5 text-left text-[0.74rem] font-semibold sm:gap-2 sm:px-2 sm:text-[0.8rem]",
+              "status-filter grid min-h-9 min-w-0 grid-cols-[0.5rem_minmax(0,1fr)_auto] items-center gap-1.5 overflow-hidden rounded-md border px-2 text-left text-[0.76rem] font-semibold sm:gap-2 sm:px-2.5 sm:text-[0.8rem]",
               workStatusThemeClass(filter.id === "all" ? "all" : filter.label),
               props.activeStatus === filter.id && "is-active",
             )}
