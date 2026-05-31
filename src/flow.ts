@@ -289,6 +289,7 @@ async function handleWorkflowRequest(request: Record<string, unknown>): Promise<
         headRefName: optionalString(request, "headRefName"),
         isDraft: Boolean(request.isDraft),
         checksPassing: typeof request.checksPassing === "boolean" ? request.checksPassing : undefined,
+        checksPending: typeof request.checksPending === "boolean" ? request.checksPending : undefined,
         reviewDecision: optionalString(request, "reviewDecision"),
       });
     case "recordEvidence": {
@@ -826,6 +827,7 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
         headRefName: typeof params.headRefName === "string" ? params.headRefName : undefined,
         isDraft: Boolean(params.isDraft),
         checksPassing: typeof params.checksPassing === "boolean" ? params.checksPassing : undefined,
+        checksPending: typeof params.checksPending === "boolean" ? params.checksPending : undefined,
         reviewDecision: typeof params.reviewDecision === "string" ? params.reviewDecision : undefined,
       });
     case "diagnoseIssue":

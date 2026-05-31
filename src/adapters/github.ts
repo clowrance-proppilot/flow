@@ -33,6 +33,7 @@ export interface PullRequestStatus {
   reviewDecision?: string;
   templateMissingHeadings?: string[];
   checksPassing?: boolean;
+  checksPending?: boolean;
   autoReviewStatus?: "passed" | "failed" | "pending" | "missing";
   autoReviewMustFix?: boolean;
   autoReviewMustFixDetail?: string;
@@ -706,6 +707,7 @@ function parseSinglePullRequest(value: unknown, repo: string, requiredTemplateHe
     reviewDecision: typeof record.reviewDecision === "string" ? record.reviewDecision : undefined,
     templateMissingHeadings: templateMissingHeadings.length ? templateMissingHeadings : undefined,
     checksPassing: checksPassing(record.statusCheckRollup),
+    checksPending: checksPending(record.statusCheckRollup),
     autoReviewStatus: autoReviewStatus(record.statusCheckRollup),
     reviewCommentCount: reviewComments.count || undefined,
     reviewCommentAuthors: reviewComments.authors.length ? reviewComments.authors : undefined,
@@ -793,11 +795,21 @@ function normalizeHeading(value: string): string {
 function checksPassing(value: unknown): boolean | undefined {
   const checks = latestChecksByName(value);
   if (checks.length === 0) return undefined;
+  if (checksPending(value)) return undefined;
   return checks.every((item) => {
     const record = item as Record<string, unknown>;
     const status = String(record.status ?? "");
     const conclusion = String(record.conclusion ?? "");
     return status === "COMPLETED" && ["SUCCESS", "SKIPPED", "NEUTRAL"].includes(conclusion);
+  });
+}
+
+function checksPending(value: unknown): boolean | undefined {
+  const checks = latestChecksByName(value);
+  if (checks.length === 0) return undefined;
+  return checks.some((item) => {
+    const record = item as Record<string, unknown>;
+    return String(record.status ?? "") !== "COMPLETED";
   });
 }
 
@@ -888,6 +900,7 @@ export function normalizePullRequest(pr: PullRequestStatus): UnifiedCodeReview {
     isClosed: pr.state?.toUpperCase() === "CLOSED",
     mergeableState: pr.mergeable === "MERGEABLE" ? "clean" : pr.mergeable === "CONFLICTING" ? "conflicting" : "unknown",
     checksPassing: pr.checksPassing,
+    checksPending: pr.checksPending,
     state: pr.state,
     reviewDecision: pr.reviewDecision,
     templateMissingHeadings: pr.templateMissingHeadings ?? [],

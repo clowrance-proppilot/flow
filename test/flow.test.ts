@@ -6788,6 +6788,52 @@ test("Work Runtime doctor prioritizes present review comments before approval wa
   );
 });
 
+test("Work Runtime doctor waits for pending pull request checks", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  const session = await workRuntime.createSession("session-doctor-pending-checks");
+  await workRuntime.selectIssue(session.id, {
+    ref: "GH-239",
+    title: "Expand CONTRIBUTING.md with development setup guide",
+    repoKeys: ["flow"],
+    state: "awaiting_review",
+    metadata: {
+      "workflow.repos.flow.worktree_path": "/repo/flow/.worktrees/feature-gh-239",
+      prUrl: "https://github.com/camden-lowrance/flow/pull/393",
+      prIsDraft: false,
+      prChecksPending: true,
+      prAutoReviewStatus: "missing",
+      evidenceRecorded: true,
+      documentationRecorded: true,
+    },
+  });
+  await ledger.recordWorkerResult({
+    taskId: "worker-gh-239",
+    issueRef: "GH-239",
+    repoKey: "flow",
+    status: "succeeded",
+    summary: "Updated CONTRIBUTING.md.",
+    changedFiles: ["CONTRIBUTING.md"],
+    testsRun: ["npm test"],
+    blockers: [],
+    completedAt: nowIso(),
+  });
+
+  const result = await workRuntime.diagnoseIssue(session.id);
+
+  assert.equal(result.status, "blocked");
+  assert.equal(result.nextAction.type, "wait_for_checks");
+  assert.equal(
+    result.findings.some((finding) => finding.summary === "Pull request checks are still running."),
+    true,
+  );
+  assert.equal(
+    result.findings.some((finding) => finding.summary === "Pull request checks are not passing."),
+    false,
+  );
+});
+
 test("Work Runtime doctor preserves awaiting review issue state", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
   const ledger = new MemoryWorkflowLedger();

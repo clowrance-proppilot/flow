@@ -472,6 +472,49 @@ test("StandaloneAutoflowRunner normalizes stale persisted activeCount", async ()
   assert.equal(status.summary, "Autoflow idle.");
 });
 
+test("StandaloneAutoflowRunner drops persisted statuses for terminal workflow issues", async () => {
+  const state = new MemoryRunnerState();
+  await state.setProjectState("flow", "autoflow.status", {
+    enabled: true,
+    maxConcurrency: 5,
+    activeCount: 0,
+    issues: {
+      "GH-239": {
+        phase: "needs_input",
+        summary: "Hand off PR review remediation for GH-239 in flow.",
+        updatedAt: nowIso(),
+      },
+    },
+    summary: "1 issue needs input.",
+    updatedAt: nowIso(),
+  });
+  const runner = new StandaloneAutoflowRunner({
+    projectId: "flow",
+    state,
+    runtime: {
+      inspectQueue: async () => [],
+      inspectIssue: async () => ({
+        ref: "GH-239",
+        title: "Expand CONTRIBUTING.md with development setup guide",
+        repoKeys: ["flow"],
+        state: "done",
+        metadata: {
+          issueStatus: "Closed",
+          issueStatusCategory: "Complete",
+          "workflow.closeout.merged": true,
+        },
+      }),
+    } as never,
+    agentSessionDriver: fakeAgentDriver(),
+  });
+
+  const status = await runner.status();
+
+  assert.equal(status.activeCount, 0);
+  assert.equal(status.issues["GH-239"], undefined);
+  assert.equal(status.summary, "Autoflow idle.");
+});
+
 test("AutoflowService does not immediately re-pick failed issues after slot cleanup", async () => {
   let prompts = 0;
   const runtime = {

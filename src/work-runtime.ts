@@ -412,6 +412,7 @@ export interface FlowReviewCodeReviewResult {
     state?: string;
     isDraft: boolean;
     checksPassing?: boolean;
+    checksPending?: boolean;
     reviewDecision?: string;
     mergeable?: string;
     mergedAt?: string;
@@ -1563,7 +1564,7 @@ export class FlowWorkRuntime {
       blocking: findings.some((finding) => finding.blocking) || blockers.length > 0,
       codeReviewRequired,
       collaboration: collaborationType,
-      pullRequest: { url: review.prUrl, state: review.state, isDraft: review.isDraft, checksPassing: review.checksPassing, reviewDecision: review.reviewDecision, mergeable: review.mergeable, mergedAt: review.mergedAt, autoReviewStatus: review.autoReviewStatus, autoReviewMustFix: review.autoReviewMustFix, autoReviewNeedsConfirmation: review.autoReviewNeedsConfirmation, humanReviewRequired: review.humanReviewRequired, reviewCommentCount: review.reviewCommentCount, reviewCommentAuthors: review.reviewCommentAuthors },
+      pullRequest: { url: review.prUrl, state: review.state, isDraft: review.isDraft, checksPassing: review.checksPassing, checksPending: review.checksPending, reviewDecision: review.reviewDecision, mergeable: review.mergeable, mergedAt: review.mergedAt, autoReviewStatus: review.autoReviewStatus, autoReviewMustFix: review.autoReviewMustFix, autoReviewNeedsConfirmation: review.autoReviewNeedsConfirmation, humanReviewRequired: review.humanReviewRequired, reviewCommentCount: review.reviewCommentCount, reviewCommentAuthors: review.reviewCommentAuthors },
       blockers,
       postedComment,
     };
@@ -2841,6 +2842,7 @@ export class FlowWorkRuntime {
       headRefName?: string;
       isDraft: boolean;
       checksPassing?: boolean;
+      checksPending?: boolean;
       reviewDecision?: string;
     },
   ): Promise<WorkItem> {
@@ -2861,6 +2863,7 @@ export class FlowWorkRuntime {
           headRefName: record.headRefName ?? "",
           isDraft: record.isDraft,
           checksPassing: record.checksPassing,
+          checksPending: record.checksPending,
           reviewDecision: record.reviewDecision,
         }),
       },
@@ -3666,6 +3669,7 @@ function reviewMetadata(issue: WorkItem) {
     mergeable: typeof metadata.prMergeable === "string" ? metadata.prMergeable : undefined,
     mergeStateStatus: typeof metadata.prMergeStateStatus === "string" ? metadata.prMergeStateStatus : undefined,
     checksPassing: metadata.prChecksPassing === undefined ? undefined : metadata.prChecksPassing === true,
+    checksPending: metadata.prChecksPending === true,
     templateMissingHeadings: metadataStringArray(metadata.prTemplateMissingHeadings),
     autoReviewStatus: typeof metadata.prAutoReviewStatus === "string" ? metadata.prAutoReviewStatus : undefined,
     autoReviewMustFix: metadata.prAutoReviewMustFix === true,
@@ -3718,7 +3722,8 @@ function pullRequestCloseoutBlockers(issue: WorkItem, pr: PullRequestStatus): st
   if (pr.reviewDecision === "CHANGES_REQUESTED" || pr.reviewDecision === "REVIEW_REQUIRED") {
     blockers.push("Pull request approval review is missing.");
   }
-  if (pr.checksPassing !== true) blockers.push("Pull request checks are not passing.");
+  if (pr.checksPending === true) blockers.push("Pull request checks are still running.");
+  else if (pr.checksPassing !== true) blockers.push("Pull request checks are not passing.");
   if (isPullRequestConflicted(pr)) blockers.push("Pull request is not mergeable.");
   if (pr.templateMissingHeadings && pr.templateMissingHeadings.length > 0) {
     blockers.push(`Pull request template is missing headings: ${pr.templateMissingHeadings.join(", ")}.`);
@@ -3775,7 +3780,8 @@ function pullRequestBlockersFromMetadata(review: NonNullable<ReturnType<typeof r
   if (review.state?.toUpperCase() === "MERGED" || review.mergedAt) return [];
   const blockers: string[] = [];
   if (review.isDraft) blockers.push("Pull request is still draft.");
-  if (review.checksPassing === false) blockers.push("Pull request checks are not passing.");
+  if (review.checksPending === true) blockers.push("Pull request checks are still running.");
+  else if (review.checksPassing === false) blockers.push("Pull request checks are not passing.");
   if (isPullRequestConflicted(review)) blockers.push("Pull request has merge conflicts.");
   if (review.autoReviewStatus === "failed") blockers.push("Auto-review check is failing.");
   if (review.autoReviewStatus === "pending") blockers.push("Auto-review check is still pending.");
@@ -3962,6 +3968,13 @@ function doctorNextAction(
     return {
       type: "fix_checks",
       summary: "Inspect failing code review checks and remediate through the review worktree.",
+    };
+  }
+  if (blockerSummaries.includes("Pull request checks are still running.")) {
+    return {
+      type: "wait_for_checks",
+      command: `flow '{"op":"workflow","mode":"advance","id":"${issue.ref}"}'`,
+      summary: "Wait for pull request checks to finish, then rerun Flow.",
     };
   }
   if (findings.some((finding) => finding.summary === "Approval review is required.")) {

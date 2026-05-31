@@ -17,6 +17,7 @@ export interface ReadinessAssessmentInput {
     mergeable?: string;
     mergeStateStatus?: string;
     checksPassing?: boolean;
+    checksPending?: boolean;
     templateMissingHeadings?: string[];
     autoReviewStatus?: string;
     autoReviewMustFix?: boolean;
@@ -130,7 +131,9 @@ export function assessIssue(input: ReadinessAssessmentInput): ReadinessAssessmen
     findings.push(finding(input.issue.ref, "blocker", "Pull request has merge conflicts."));
   }
 
-  if (input.review?.prUrl && !pullRequestMerged && input.review.checksPassing === false) {
+  if (input.review?.prUrl && !pullRequestMerged && input.review.checksPending === true) {
+    findings.push(finding(input.issue.ref, "blocker", "Pull request checks are still running."));
+  } else if (input.review?.prUrl && !pullRequestMerged && input.review.checksPassing === false) {
     findings.push(finding(input.issue.ref, "blocker", "Pull request checks are not passing."));
   }
 
@@ -222,8 +225,9 @@ export function assessIssue(input: ReadinessAssessmentInput): ReadinessAssessmen
   const hasBlocker = findings.some((item) => item.severity === "blocker");
   const pullRequestGateSatisfied = codeReviewRequired ? Boolean(input.review?.prUrl) : true;
   const pullRequestStateReady = !input.review?.prUrl ||
-    (pullRequestMerged || input.review?.isDraft === false) &&
+      (pullRequestMerged || input.review?.isDraft === false) &&
       (pullRequestMerged || !isPullRequestConflicted(input.review)) &&
+      (pullRequestMerged || input.review?.checksPending !== true) &&
       (pullRequestMerged || input.review?.checksPassing !== false) &&
       (pullRequestMerged || !hasMissingPullRequestTemplateHeadings(input.review)) &&
       (pullRequestMerged || input.review?.autoReviewStatus !== "failed") &&

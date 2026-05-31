@@ -25,6 +25,7 @@ export interface UnifiedCodeReview {
   isClosed: boolean;
   mergeableState: "clean" | "conflicting" | "unknown";
   checksPassing?: boolean;
+  checksPending?: boolean;
   state?: string;
   reviewDecision?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | string;
   templateMissingHeadings: string[];

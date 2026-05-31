@@ -333,6 +333,45 @@ test("Readiness treats provider-credential executor failures as retryable", () =
   assert.equal(assessment.findings.some((finding) => finding.summary === "Auto review checks failed."), true);
 });
 
+test("Readiness waits for pending pull request checks instead of requesting remediation", () => {
+  const assessment = assessIssue({
+    issue: {
+      ref: "GH-239",
+      title: "Expand CONTRIBUTING.md with development setup guide",
+      repoKeys: ["flow"],
+      state: "awaiting_review",
+      metadata: {},
+    },
+    workerResults: [
+      {
+        taskId: "worker-gh-239",
+        issueRef: "GH-239",
+        repoKey: "flow",
+        status: "succeeded",
+        summary: "Updated CONTRIBUTING.md.",
+        changedFiles: ["CONTRIBUTING.md"],
+        testsRun: ["npm test"],
+        blockers: [],
+        completedAt: nowIso(),
+      },
+    ],
+    review: {
+      prUrl: "https://github.com/camden-lowrance/flow/pull/393",
+      isDraft: false,
+      checksPending: true,
+      checksPassing: undefined,
+      autoReviewStatus: "missing",
+    },
+    evidenceRecorded: true,
+    documentationRecorded: true,
+  });
+
+  assert.equal(assessment.readyToAdvance, false);
+  assert.equal(assessment.reviewReady, false);
+  assert.equal(assessment.findings.some((finding) => finding.summary === "Pull request checks are still running."), true);
+  assert.equal(assessment.findings.some((finding) => finding.summary === "Pull request checks are not passing."), false);
+});
+
 test("Readiness blocks duplicate review remediation when executor changes are unpushed", () => {
   const assessment = assessIssue({
     issue: {
