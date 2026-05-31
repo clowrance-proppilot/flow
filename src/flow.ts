@@ -7,7 +7,6 @@ import {
   createSqliteSqlStateConfig,
   flowUserStateRoot,
   GhGitHubAdapter,
-  IssueStateValue,
   flowLayout,
   migrateFlowConfig,
   StandaloneAutoflowRunner,
@@ -27,6 +26,7 @@ import { repoRoot } from "./flow-runtime.js";
 import { JsonCliError, runJsonCli } from "./json-cli.js";
 import { createConfiguredWorkRuntime } from "./runtime-factory.js";
 import { PiSessionDriver } from "./pi-session-driver.js";
+import { resolveCliIssue } from "./cli-issue.js";
 
 const configValidation = await validateFlowConfig({ projectRoot: repoRoot });
 const configuredRuntime = createConfiguredWorkRuntime({ projectRoot: repoRoot, flowConfig: configValidation.config });
@@ -615,13 +615,9 @@ async function ensureSession(sessionId: string): Promise<void> {
 async function queueIssue(issueRef: string): Promise<WorkItem> {
   const resolvedIssueRef = await resolveIssueRef(issueRef);
   if (resolvedIssueRef) issueRef = resolvedIssueRef;
-  const issueKey = issueRef.toUpperCase();
-  const queue = await runtime.inspectQueue(50);
-  const issue = queue.find((candidate) =>
-    candidate.ref.toUpperCase() === issueKey || issueMatchesPullRequest(candidate, issueRef)
+  return resolveCliIssue(runtime, issueRef, (candidate, ref) =>
+    candidate.ref.toUpperCase() === ref.toUpperCase() || issueMatchesPullRequest(candidate, ref)
   );
-  if (issue) return issue;
-  return { ref: issueKey, title: issueKey, repoKeys: [], state: IssueStateValue.Queued, metadata: {} };
 }
 
 async function resolveIssueRef(ref: string): Promise<string | undefined> {

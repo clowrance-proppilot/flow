@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import type { Server } from "node:http";
 import { tmpdir } from "node:os";
@@ -39,9 +40,11 @@ import {
   flowUserIssueProjectionPath,
   flowUserRuntimePath,
   flowUserStateRoot,
+  flowUserWorkflowLedgerDatabasePath,
   flowUserWorkflowLedgerPath,
   flowWorkflowLedgerPath,
   resolveFlowPath,
+  resolveCliIssue,
   canClaimWork,
   canCompleteWork,
   canResolveBlocker,
@@ -333,6 +336,7 @@ test("Flow user state root includes the project basename and truncated SHA-256 d
   assert.equal(flowUserConfigPath(root), join(userStateRoot, "config.yaml"));
   assert.equal(flowUserRuntimePath(root), join(userStateRoot, "runtime"));
   assert.equal(flowUserWorkflowLedgerPath(root), join(userStateRoot, "ledger", "workflow.jsonl"));
+  assert.equal(flowUserWorkflowLedgerDatabasePath(root), join(userStateRoot, "ledger", "workflow.db"));
   assert.equal(flowUserContextProjectionPath(root), join(userStateRoot, "ledger", "context.json"));
 });
 
@@ -854,7 +858,8 @@ test("Flow config bootstrap creates hidden user-state config by default", async 
     assert.equal(config.issueTracker?.type, "local");
     assert.equal(config.collaboration?.type, "none");
     assert.equal(config.sourceControl?.type, "git");
-    assert.equal(config.ledger?.type, "flow");
+    assert.equal(config.ledger?.type, "sql");
+    assert.equal(configString(config.ledger, "dialect"), "sqlite");
     assert.equal(config.runtime?.store?.type, "sqlite");
     assert.equal(config.runtime?.stateDir, flowUserRuntimePath(root));
 
@@ -981,6 +986,39 @@ test("Configured SQL workflow ledger imports existing JSONL records idempotently
   assert.match(await readFile(jsonlPath, "utf8"), /FLOW-MIG-1/);
 });
 
+test("Configured workflow ledger defaults to SQLite in user state", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-default-sql-ledger-"));
+  const config = flowConfigSchema.parse({
+    version: "1",
+    project: { name: "Default SQL Ledger Fixture" },
+    topology: {
+      repos: {
+        main: { name: "flow", baseBranch: "main" },
+      },
+    },
+    issueTracker: { type: "local" },
+    collaboration: { type: "none" },
+    sourceControl: { type: "git" },
+    runtime: { store: { type: "sqlite" } },
+  });
+
+  const configured = createConfiguredWorkRuntime({ projectRoot: root, flowConfig: config });
+  await configured.workflowLedger.writeIssue({
+    ref: "FLOW-DEFAULT-SQL-1",
+    title: "Default SQL workflow ledger",
+    repoKeys: ["main"],
+    state: "queued",
+    metadata: {},
+  });
+
+  assert.equal(configured.workflowLedgerPath, flowUserWorkflowLedgerDatabasePath(root));
+  assert.equal((await configured.workflowLedger.readIssue("FLOW-DEFAULT-SQL-1"))?.title, "Default SQL workflow ledger");
+  assert.equal(existsSync(join(root, ".flow", "ledger", "workflow.jsonl")), false);
+  assert.equal(existsSync(join(root, ".flow", "ledger", "issues", "FLOW-DEFAULT-SQL-1.json")), false);
+
+  await (configured.workflowLedger as { close?(): Promise<void> }).close?.();
+});
+
 test("Configured runtime can select Postgres SQL workflow ledger from urlSecret", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-postgres-ledger-config-"));
   const original = process.env.FLOW_TEST_DATABASE_URL;
@@ -1011,6 +1049,25 @@ test("Configured runtime can select Postgres SQL workflow ledger from urlSecret"
 
   if (original === undefined) delete process.env.FLOW_TEST_DATABASE_URL;
   else process.env.FLOW_TEST_DATABASE_URL = original;
+});
+
+test("CLI issue resolver hydrates provider issue refs before workflow commands", async () => {
+  const hydrated: WorkItem = {
+    ref: "GH-165",
+    title: "Harden Autoflow into a real project runner",
+    repoKeys: ["flow"],
+    state: "queued",
+    metadata: { issueType: "story", branchKind: "feature" },
+  };
+
+  const resolved = await resolveCliIssue({
+    inspectQueue: async () => [],
+    inspectIssue: async () => hydrated,
+  }, "GH-165");
+
+  assert.equal(resolved.title, "Harden Autoflow into a real project runner");
+  assert.deepEqual(resolved.repoKeys, ["flow"]);
+  assert.equal(resolved.metadata.branchKind, "feature");
 });
 
 test("Flow CLI core works with only git available on PATH", async () => {

@@ -35,7 +35,8 @@ collaboration:
 sourceControl:
   type: "git"
 ledger:
-  type: "flow"
+  type: "sql"
+  dialect: "sqlite"
 ```
 
 Provider-backed config should swap `issueTracker`, `collaboration`, and

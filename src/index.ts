@@ -7,6 +7,7 @@ export * from "./adapters/provider-errors.js";
 export * from "./triage.js";
 export * from "./contracts.js";
 export * from "./flow-layout.js";
+export * from "./cli-issue.js";
 export * from "./project-topology.js";
 export * from "./runtime-utils.js";
 export * from "./runtime-factory.js";

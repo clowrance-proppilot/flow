@@ -8,7 +8,7 @@ import { assessIssue } from "./readiness.js";
 import { createFlowStore, type FlowStoreBackend } from "./store.js";
 import { FlowWorkRuntime } from "./work-runtime.js";
 import { createWorkflowLedger, MigratingWorkflowLedger, type WorkflowLedger } from "./ledger.js";
-import { flowRuntimePath, flowWorkflowLedgerPath, resolveFlowPath } from "./flow-layout.js";
+import { flowRuntimePath, flowUserWorkflowLedgerDatabasePath, flowWorkflowLedgerPath, resolveFlowPath } from "./flow-layout.js";
 import { createKyselyFlowState, createPostgresDialect, createPostgresSqlStateConfig, createSqliteSqlStateConfig } from "./sql-state.js";
 
 export interface ConfiguredWorkRuntimeOptions {
@@ -66,7 +66,7 @@ function createConfiguredWorkflowLedger(
   flowConfig: FlowConfig | undefined,
 ): { workflowLedger: WorkflowLedger; workflowLedgerPath: string } {
   const ledger = flowConfig?.ledger;
-  const type = configString(ledger, "type");
+  const type = configString(ledger, "type") ?? "sql";
   if (type === "sql") {
     const dialect = configString(ledger, "dialect") ?? "sqlite";
     if (dialect === "sqlite") {
@@ -123,7 +123,7 @@ function resolveWorkflowLedgerPath(projectRoot: string, flowConfig: FlowConfig |
 
 function resolveSqlWorkflowLedgerPath(projectRoot: string, flowConfig: FlowConfig | undefined): string {
   const configured = configString(flowConfig?.ledger, "path");
-  return configured ? resolveFlowPath(projectRoot, configured) : resolveFlowPath(projectRoot, ".flow/ledger/workflow.db");
+  return configured ? resolveFlowPath(projectRoot, configured) : flowUserWorkflowLedgerDatabasePath(projectRoot);
 }
 
 function resolveRuntimeStoreBackend(flowConfig: FlowConfig | undefined): FlowStoreBackend {

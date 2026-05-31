@@ -11,4 +11,4 @@ coverage/
 .env.local
 *.log
 .flow/runtime/
-.flow/ledger/**/*.tmp
+.flow/ledger/
