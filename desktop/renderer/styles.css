@@ -56,15 +56,35 @@ button,
 input,
 textarea {
   font: inherit;
+  transition: all 180ms ease;
 }
 
 button {
   cursor: pointer;
 }
 
+button:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
 button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
+}
+
+button:focus-visible {
+  outline: 2px solid var(--th-primary);
+  outline-offset: 2px;
+}
+
+input:focus-visible,
+textarea:focus-visible {
+  border-color: var(--th-primary);
+  box-shadow: 0 0 0 2px rgb(59 130 246 / 0.25);
 }
 
 .desktop-shell {
@@ -77,6 +97,20 @@ button:disabled {
   border: 1px solid rgb(59 130 246 / 0.16);
   border-radius: 0.8rem;
   background: rgb(3 8 20 / 0.88);
+  animation: shellFadeIn 400ms ease-out;
+}
+
+@keyframes shellFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.desktop-shell.issue-selected {
+  animation: none;
 }
 
 .project-panel,
@@ -267,6 +301,12 @@ button:disabled {
   color: var(--th-fg);
   padding: 0.2rem;
   text-align: left;
+  transition: all 200ms ease;
+}
+
+.project-card:hover {
+  background: var(--project-color-soft, rgb(56 189 248 / 0.14));
+  transform: scale(1.05);
 }
 
 .project-card.active {
@@ -359,6 +399,7 @@ button:disabled {
   color: var(--th-fg-muted);
   font-size: 0.72rem;
   line-height: 1.25;
+  transition: all 250ms ease;
 }
 
 .autoflow-health-dot {
@@ -367,6 +408,7 @@ button:disabled {
   flex: 0 0 auto;
   border-radius: 999px;
   background: #64748b;
+  transition: all 250ms ease;
 }
 
 .autoflow-health.starting .autoflow-health-dot,
@@ -394,6 +436,7 @@ button:disabled {
   flex: 0 0 auto;
   color: var(--th-fg);
   font-weight: 800;
+  transition: color 250ms ease;
 }
 
 .autoflow-health-issue {
@@ -413,6 +456,13 @@ button:disabled {
   color: var(--th-fg-faint);
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: color 250ms ease;
+}
+
+.autoflow-health-concurrency {
+  color: var(--th-fg-faint);
+  font-size: 0.65rem;
+  font-weight: 700;
 }
 
 .autoflow-switch {
@@ -427,6 +477,12 @@ button:disabled {
   padding: 0 0.42rem 0 0.68rem;
   font-size: 0.7rem;
   font-weight: 800;
+  transition: all 200ms ease;
+}
+
+.autoflow-switch:hover {
+  border-color: rgb(96 165 250 / 0.45);
+  background: rgb(15 23 42 / 0.88);
 }
 
 .autoflow-switch.enabled {
@@ -435,13 +491,18 @@ button:disabled {
   color: var(--th-fg);
 }
 
+.autoflow-switch.enabled:hover {
+  border-color: rgb(34 211 238 / 0.7);
+  background: rgb(8 47 73 / 0.62);
+}
+
 .switch-track {
   position: relative;
   width: 1.88rem;
   height: 1.02rem;
   border-radius: 999px;
   background: rgb(51 65 85 / 0.9);
-  transition: background 150ms ease;
+  transition: background 200ms ease;
 }
 
 .switch-track span {
@@ -452,7 +513,7 @@ button:disabled {
   height: 0.7rem;
   border-radius: 999px;
   background: #cbd5e1;
-  transition: transform 150ms ease, background 150ms ease;
+  transition: transform 200ms ease, background 200ms ease;
 }
 
 .autoflow-switch.enabled .switch-track {
@@ -476,11 +537,19 @@ button:disabled {
   padding: 0 0.62rem;
   font-size: 0.7rem;
   font-weight: 800;
+  transition: all 200ms ease;
 }
 
 .new-issue-button:hover {
   border-color: rgb(147 197 253 / 0.62);
   background: rgb(37 99 235 / 0.28);
+  transform: translateY(-1px);
+  box-shadow: 0 0.5rem 1.2rem rgb(37 99 235 / 0.18);
+}
+
+.new-issue-button:active {
+  transform: translateY(0);
+  box-shadow: none;
 }
 
 .eyebrow {
@@ -635,10 +704,17 @@ h2 {
   padding: 0.32rem 0.5rem;
   font-size: 0.7rem;
   font-weight: 650;
+  transition: all 180ms ease;
+}
+
+.status-chip:hover {
+  background: rgb(15 26 46 / 0.92);
+  transform: translateY(-1px);
 }
 
 .status-chip.active {
   box-shadow: 0 0 0 1px currentColor inset, 0 0.45rem 1.2rem rgb(0 0 0 / 0.18);
+  transform: translateY(-1px);
 }
 
 .status-count {
@@ -722,17 +798,26 @@ h2 {
   text-align: left;
   overflow: hidden;
   box-shadow: 0 0.5rem 1.35rem rgb(0 0 0 / 0.16);
+  transition: all 220ms ease;
+  transform: translateY(0);
 }
 
 .issue-card:hover {
   background: var(--th-card-hover);
-  transform: translateY(-1px);
+  transform: translateY(-2px);
+  box-shadow: 0 0.75rem 2rem rgb(0 0 0 / 0.22);
+}
+
+.issue-card:active {
+  transform: translateY(0);
+  box-shadow: 0 0.4rem 1rem rgb(0 0 0 / 0.14);
 }
 
 .issue-card.active {
   border-left-color: var(--th-primary);
   border-color: rgb(96 165 250 / 0.56);
   box-shadow: 0 0 0 1px rgb(96 165 250 / 0.18), 0 1rem 2rem rgb(0 0 0 / 0.2);
+  transform: translateY(-1px);
 }
 
 .issue-card.status-theme-blocked { border-left-color: #ef4444; color: var(--th-fg); }
@@ -781,6 +866,7 @@ h2 {
   font-size: 0.66rem;
   font-weight: 700;
   white-space: nowrap;
+  transition: all 200ms ease;
 }
 
 .issue-state.queued {
@@ -820,6 +906,20 @@ h2 {
   background: rgb(239 68 68 / 0.16);
 }
 
+.issue-state.running,
+.issue-state.done {
+  animation: statusPulse 2s ease-in-out infinite;
+}
+
+@keyframes statusPulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}
+
 .issue-title {
   margin-top: 0.58rem;
   color: var(--th-fg);
@@ -854,6 +954,12 @@ h2 {
   padding: 0.08rem 0.42rem;
   font-size: 0.63rem;
   font-weight: 700;
+  transition: all 180ms ease;
+}
+
+.issue-card:hover .issue-actions-preview span {
+  border-color: rgb(148 163 184 / 0.4);
+  background: rgb(15 26 46 / 0.88);
 }
 
 .workflow-track {
@@ -868,10 +974,12 @@ h2 {
   height: 0.36rem;
   border-radius: 999px;
   background: rgb(127 149 176 / 0.38);
+  transition: all 300ms ease;
 }
 
 .track-dot.active {
   background: var(--th-primary);
+  box-shadow: 0 0 4px rgb(59 130 246 / 0.4);
 }
 
 .track-line {
@@ -879,6 +987,7 @@ h2 {
   height: 1px;
   border-radius: 999px;
   background: rgb(127 149 176 / 0.38);
+  transition: all 300ms ease;
 }
 
 .track-line.active {
@@ -896,6 +1005,16 @@ h2 {
     radial-gradient(circle at 50% 28%, rgb(37 99 235 / 0.16), transparent 34rem),
     rgb(1 5 13 / 0.58);
   backdrop-filter: blur(3px);
+  animation: popoverFadeIn 250ms ease-out;
+}
+
+@keyframes popoverFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .chat-panel {
@@ -912,6 +1031,18 @@ h2 {
     linear-gradient(135deg, rgb(4 10 21 / 0.98), rgb(2 8 19 / 0.94)),
     var(--th-app);
   box-shadow: 0 2rem 5rem rgb(0 0 0 / 0.46);
+  animation: chatPanelSlideIn 300ms ease-out;
+}
+
+@keyframes chatPanelSlideIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
 }
 
 .snapshot-text {
@@ -941,6 +1072,22 @@ h2 {
   gap: 0.65rem;
   border-top: 1px solid var(--th-border);
   padding: 0.7rem;
+  animation: detailExpand 250ms ease-out;
+}
+
+@keyframes detailExpand {
+  from {
+    opacity: 0;
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+  to {
+    opacity: 1;
+    max-height: 500px;
+    padding-top: 0.7rem;
+    padding-bottom: 0.7rem;
+  }
 }
 
 .detail-section {
@@ -948,6 +1095,11 @@ h2 {
   border-radius: 0.55rem;
   background: var(--th-card);
   padding: 0.8rem;
+  transition: all 200ms ease;
+}
+
+.detail-section:hover {
+  background: var(--th-card-hover);
 }
 
 .detail-grid {
@@ -991,12 +1143,23 @@ h2 {
   padding: 0.5rem 0.55rem;
   font-size: 0.75rem;
   line-height: 1.38;
+  transition: all 200ms ease;
+}
+
+.blocker-note:hover {
+  background: rgb(12 21 39 / 0.92);
+  border-color: rgb(30 43 63 / 0.95);
 }
 
 .blocker-note.blocked {
   border-color: rgb(239 68 68 / 0.45);
   background: rgb(239 68 68 / 0.14);
   color: #fee2e2;
+}
+
+.blocker-note.blocked:hover {
+  background: rgb(239 68 68 / 0.2);
+  border-color: rgb(239 68 68 / 0.6);
 }
 
 .chat-header-actions {
@@ -1018,11 +1181,14 @@ h2 {
   font-size: 0.72rem;
   font-weight: 700;
   white-space: nowrap;
+  transition: all 200ms ease;
 }
 
 .monitor-back-button:hover {
   border-color: rgb(56 189 248 / 0.55);
   color: var(--th-fg);
+  background: rgb(15 23 42 / 0.92);
+  transform: translateX(-2px);
 }
 
 .system-notice {
@@ -1082,11 +1248,19 @@ h2 {
   padding: 0.16rem 0.58rem;
   font-size: 0.68rem;
   font-weight: 800;
+  transition: all 200ms ease;
 }
 
 .pending-action-button:hover:not(:disabled) {
   border-color: #fbbf24;
   background: rgb(245 158 11 / 0.28);
+  transform: translateY(-1px);
+  box-shadow: 0 0.3rem 0.8rem rgb(245 158 11 / 0.15);
+}
+
+.pending-action-button:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: none;
 }
 
 .timeline {
@@ -1127,6 +1301,18 @@ h2 {
   padding: 2rem;
   color: var(--th-fg-muted);
   font-size: 0.8rem;
+  animation: loadingFadeIn 300ms ease-out;
+}
+
+@keyframes loadingFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .assistant-loading .accent-spinner {
@@ -1148,6 +1334,19 @@ h2 {
   background: rgb(12 22 39 / 0.84);
   padding: 0.95rem 1.1rem;
   box-shadow: 0 0.8rem 2rem rgb(0 0 0 / 0.18);
+  animation: messageSlideIn 280ms ease-out;
+  transform-origin: bottom;
+}
+
+@keyframes messageSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .message.user {
@@ -1189,6 +1388,18 @@ h2 {
   padding: 0.6rem 0.85rem;
   font-size: 0.78rem;
   color: var(--th-fg-muted);
+  animation: statusSlideIn 220ms ease-out;
+}
+
+@keyframes statusSlideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 .status-message-dot {
@@ -1235,6 +1446,7 @@ h2 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--th-fg-faint);
 }
 
 .markdown-message {
@@ -1320,6 +1532,17 @@ h2 {
   border-radius: 0.62rem;
   background: rgb(15 23 42 / 0.72);
   color: var(--th-fg-muted);
+  transition: all 200ms ease;
+}
+
+.composer-tool-button:hover:not(:disabled) {
+  border-color: rgb(96 165 250 / 0.45);
+  color: var(--th-fg);
+  background: rgb(15 23 42 / 0.92);
+}
+
+.composer-tool-button:active:not(:disabled) {
+  transform: scale(0.95);
 }
 
 .status-summary {
@@ -1420,6 +1643,22 @@ h2 {
   font-size: 0.9rem;
   line-height: 1.45;
   box-shadow: 0 0.8rem 2rem rgb(0 0 0 / 0.16);
+  transition: all 200ms ease;
+}
+
+.composer textarea:focus {
+  border-color: rgb(96 165 250 / 0.6);
+  box-shadow: 0 0.8rem 2rem rgb(0 0 0 / 0.16), 0 0 0 3px rgb(59 130 246 / 0.18);
+  background: rgb(7 14 27 / 0.96);
+}
+
+.composer textarea::placeholder {
+  color: var(--th-fg-faint);
+  transition: color 200ms ease;
+}
+
+.composer textarea:focus::placeholder {
+  color: var(--th-fg-muted);
 }
 
 .composer .assistant-send-button {
@@ -1433,6 +1672,18 @@ h2 {
   background: linear-gradient(135deg, #2563eb, #1e40af);
   color: #dbeafe;
   box-shadow: 0 0.8rem 1.7rem rgb(37 99 235 / 0.22);
+  transition: all 200ms ease;
+}
+
+.composer .assistant-send-button:hover:not(:disabled) {
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  box-shadow: 0 1rem 2.2rem rgb(37 99 235 / 0.32);
+  transform: translateY(-1px);
+}
+
+.composer .assistant-send-button:active:not(:disabled) {
+  transform: translateY(0) scale(0.96);
+  box-shadow: 0 0.5rem 1rem rgb(37 99 235 / 0.2);
 }
 
 @media (max-width: 1180px) {
@@ -1474,6 +1725,18 @@ h2 {
   color: #fee2e2;
   padding: 0.52rem 0.85rem;
   font-size: 0.78rem;
+  animation: errorSlideIn 250ms ease-out;
+}
+
+@keyframes errorSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .shell-error {
@@ -1493,6 +1756,18 @@ h2 {
   color: var(--th-fg-faint);
   font-size: 0.8rem;
   text-align: center;
+  animation: emptyFadeIn 300ms ease-out;
+}
+
+@keyframes emptyFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @media (max-width: 760px) {
