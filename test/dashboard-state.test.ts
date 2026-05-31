@@ -30,6 +30,16 @@ function mockRuntime(issues: DashboardQueueIssue[]) {
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
 test("DashboardState.payload returns ok with snapshot freshness label", async () => {
   const issues = [makeIssue()];
   const runtime = mockRuntime(issues);
@@ -195,25 +205,67 @@ test("DashboardState.payload caches snapshot within TTL", async () => {
 
 test("DashboardState.payload deduplicates concurrent refreshes", async () => {
   let callCount = 0;
+  const refresh = deferred<DashboardQueueIssue[]>();
   const runtime = {
     inspectDashboardQueue: async (_limit: number) => {
       callCount++;
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      return [makeIssue()];
+      return await refresh.promise;
     },
   };
   const state = new DashboardState({ runtime });
 
-  const [result1, result2, result3] = await Promise.all([
-    state.payload(),
-    state.payload(),
-    state.payload(),
-  ]);
+  const requests = [state.payload(), state.payload(), state.payload()];
+  refresh.resolve([makeIssue({ ref: "SHARED-SNAPSHOT" })]);
+  const [result1, result2, result3] = await Promise.all(requests);
 
   assert.equal(callCount, 1);
-  assert.equal((result1.issues as unknown[]).length, 1);
-  assert.equal((result2.issues as unknown[]).length, 1);
-  assert.equal((result3.issues as unknown[]).length, 1);
+  assert.deepEqual(result1.issues, result2.issues);
+  assert.deepEqual(result2.issues, result3.issues);
+  assert.equal((result1.issues as Record<string, unknown>[])[0].ref, "SHARED-SNAPSHOT");
+});
+
+test("DashboardState.payload keeps concurrent refreshes separate for different limits", async () => {
+  const refreshes = new Map<number, ReturnType<typeof deferred<DashboardQueueIssue[]>>>();
+  const runtime = {
+    inspectDashboardQueue: async (limit: number) => {
+      const refresh = deferred<DashboardQueueIssue[]>();
+      refreshes.set(limit, refresh);
+      return await refresh.promise;
+    },
+  };
+  const state = new DashboardState({ runtime });
+
+  const limit10 = state.payload({ limit: 10 });
+  const limit50 = state.payload({ limit: 50 });
+  refreshes.get(10)?.resolve([makeIssue({ ref: "LIMIT-10" })]);
+  refreshes.get(50)?.resolve([makeIssue({ ref: "LIMIT-50" })]);
+  const [result10, result50] = await Promise.all([limit10, limit50]);
+
+  assert.equal(refreshes.size, 2);
+  assert.equal((result10.issues as Record<string, unknown>[])[0].ref, "LIMIT-10");
+  assert.equal((result50.issues as Record<string, unknown>[])[0].ref, "LIMIT-50");
+});
+
+test("DashboardState.payload propagates a failed concurrent refresh to every waiter", async () => {
+  let callCount = 0;
+  const refresh = deferred<DashboardQueueIssue[]>();
+  const runtime = {
+    inspectDashboardQueue: async (_limit: number) => {
+      callCount++;
+      return await refresh.promise;
+    },
+  };
+  const state = new DashboardState({ runtime });
+
+  const requests = Promise.allSettled([state.payload(), state.payload(), state.payload()]);
+  refresh.reject(new Error("refresh failed"));
+  const results = await requests;
+
+  assert.equal(callCount, 1);
+  assert.deepEqual(results.map((result) => result.status), ["rejected", "rejected", "rejected"]);
+  for (const result of results) {
+    assert.equal((result as PromiseRejectedResult).reason.message, "refresh failed");
+  }
 });
 
 test("DashboardState.payload calls debugLog on refresh", async () => {
