@@ -680,6 +680,85 @@ test("AutoflowService sends one commit follow-up when the workspace stays dirty"
   assert.deepEqual(messages, ["You have uncommitted changes. Commit them with a descriptive message and push to the branch."]);
 });
 
+test("AutoflowService polls pending pull request checks through closeout", async () => {
+  let advances = 0;
+  const runtime = {
+    inspectQueue: async () => [{
+      ref: "GH-396",
+      title: "Autoflow should poll pending PR checks through closeout",
+      repoKeys: ["flow"],
+      state: "queued",
+      metadata: {},
+    }],
+    summarizeHandoff: async () => "handoff",
+    createSession: async (id: string) => ({ id, findings: [], workerResults: [], createdAt: nowIso(), updatedAt: nowIso() }),
+    selectIssue: async () => undefined,
+    diagnoseIssue: async () => ({
+      issueRef: "GH-396",
+      status: "ok",
+      issue: { ref: "GH-396", title: "Autoflow should poll pending PR checks through closeout", state: "selected", repoKeys: ["flow"] },
+      visibility: {
+        ledger: true,
+        issueTracker: true,
+        repoRouting: true,
+        preparedWorktree: true,
+        codeReview: false,
+        codeReviewRequired: false,
+      },
+      findings: [],
+      nextAction: { type: "advance", summary: "Run Autoflow." },
+    }),
+    autoFlowIssue: async () => ({
+      status: "execution_handoff",
+      message: "Ready for executor.",
+      steps: [],
+      workerResults: [],
+      session: { id: "session", findings: [], workerResults: [], createdAt: nowIso(), updatedAt: nowIso() },
+    }),
+    adoptPendingLiveWorker: async () => ({
+      id: "task-396",
+      issueRef: "GH-396",
+      repoKey: "flow",
+      workJobId: "job-396",
+      prompt: "Implement GH-396.",
+      workspacePath: "/tmp/flow-gh-396",
+    }),
+    recordLocalThreadResult: async (_sessionId: string, result: { issueRef: string; status: string }) => result,
+    recordEvidence: async () => undefined,
+    recordDocumentation: async () => undefined,
+    recordPullRequest: async () => undefined,
+    advanceIssue: async () => {
+      advances += 1;
+      if (advances === 1) {
+        return {
+          status: "blocked",
+          message: "Pull request checks are still running.",
+        };
+      }
+      return {
+        status: "awaiting_review",
+        message: "GH-396 closeout completed with status merged_jira_verified.",
+      };
+    },
+  };
+  const service = new AutoflowService({
+    projectId: "flow",
+    runtime: runtime as never,
+    agentSessionDriver: fakeAgentDriver(),
+    autoReconcileOnSlotAvailable: false,
+    pendingCheckPollAttempts: 2,
+    pendingCheckPollIntervalMs: 0,
+  });
+
+  assert.equal((await service.reconcile()).activeCount, 1);
+  const status = await service.waitForIdle();
+
+  assert.equal(advances, 2);
+  assert.equal(status.activeCount, 0);
+  assert.equal(status.issues["GH-396"]?.phase, "idle");
+  assert.equal(status.issues["GH-396"]?.summary, "GH-396 closeout completed with status merged_jira_verified.");
+});
+
 function fakeAgentDriver(): AutoflowAgentSessionDriver {
   const session = fakeAgentDriverSession();
   return {
