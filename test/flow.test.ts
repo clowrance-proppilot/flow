@@ -1,7 +1,8 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { promisify } from "node:util";
 import assert from "node:assert/strict";
@@ -28,10 +29,17 @@ import {
   configToWorkTypeRegistry,
   flowConfigPath,
   flowContextProjectionPath,
+  flowIssueProjectionFileName,
   flowIssueProjectionPath,
   flowContextRecordSchema,
   flowUserConfigPath,
+  flowUserContextProjectionPath,
+  flowUserIssueProjectionPath,
   flowUserRuntimePath,
+  flowUserStateRoot,
+  flowUserWorkflowLedgerPath,
+  flowWorkflowLedgerPath,
+  resolveFlowPath,
   flowConfigSchema,
   loadFlowConfig,
   migrateFlowConfig,
@@ -189,6 +197,55 @@ function parseCapturedJsonCliOutput(output: string): any {
   const json = end === -1 ? output.slice(start) : output.slice(start, end);
   return JSON.parse(json);
 }
+
+test("Flow layout paths resolve under the project root", () => {
+  const root = join(tmpdir(), "Flow Root With Spaces");
+
+  assert.equal(flowConfigPath(root), join(resolve(root), ".flow", "config.yaml"));
+  assert.equal(flowWorkflowLedgerPath(root), join(resolve(root), ".flow", "ledger", "workflow.jsonl"));
+  assert.equal(flowContextProjectionPath(root), join(resolve(root), ".flow", "ledger", "context.json"));
+  assert.equal(flowIssueProjectionPath(root, "GH-267"), join(resolve(root), ".flow", "ledger", "issues", "GH-267.json"));
+});
+
+test("Flow layout sanitizes special characters in issue projection refs", () => {
+  const root = join(tmpdir(), "flow-layout-special");
+  const issueRef = "GH/267:bad?name*with spaces";
+  const expectedFileName = "GH_267_bad_name_with_spaces";
+
+  assert.equal(flowIssueProjectionFileName(issueRef), expectedFileName);
+  assert.equal(flowIssueProjectionPath(root, issueRef), join(resolve(root), ".flow", "ledger", "issues", `${expectedFileName}.json`));
+  assert.equal(flowUserIssueProjectionPath(root, issueRef), join(flowUserStateRoot(root), "ledger", "issues", `${expectedFileName}.json`));
+});
+
+test("Flow layout uses a stable fallback file name for empty issue refs", () => {
+  const root = join(tmpdir(), "flow-layout-empty-ref");
+
+  assert.equal(flowIssueProjectionFileName(""), "issue");
+  assert.equal(flowIssueProjectionFileName("///"), "___");
+  assert.equal(flowIssueProjectionPath(root, ""), join(resolve(root), ".flow", "ledger", "issues", "issue.json"));
+});
+
+test("Flow user state root includes the project basename and truncated SHA-256 digest", () => {
+  const root = resolve(join(tmpdir(), "flow layout digest"));
+  const digest = createHash("sha256").update(root).digest("hex").slice(0, 16);
+  const userStateRoot = flowUserStateRoot(root);
+
+  assert.equal(basename(userStateRoot), `${basename(root)}-${digest}`);
+  assert.equal(digest.length, 16);
+  assert.equal(flowUserConfigPath(root), join(userStateRoot, "config.yaml"));
+  assert.equal(flowUserRuntimePath(root), join(userStateRoot, "runtime"));
+  assert.equal(flowUserWorkflowLedgerPath(root), join(userStateRoot, "ledger", "workflow.jsonl"));
+  assert.equal(flowUserContextProjectionPath(root), join(userStateRoot, "ledger", "context.json"));
+});
+
+test("Flow path resolver keeps absolute paths and resolves relative paths from the project root", () => {
+  const root = resolve(join(tmpdir(), "flow-layout-resolve"));
+  const absolute = join(root, "outside", "config.yaml");
+
+  assert.equal(resolveFlowPath(root, absolute), absolute);
+  assert.equal(resolveFlowPath(root, join(".flow", "config.yaml")), flowConfigPath(root));
+  assert.equal(resolveFlowPath(root, "config.yaml"), join(root, "config.yaml"));
+});
 
 test("Typed work contracts and registry validate supported jobs", () => {
   const workTypes = createDefaultFlowWorkTypeRegistry();
