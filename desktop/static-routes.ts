@@ -1,6 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import express, { type Express } from "express";
+import express, { type Express, type NextFunction, type Response } from "express";
 
 export function registerStaticRoutes(
   server: Express,
@@ -10,23 +10,34 @@ export function registerStaticRoutes(
   const desktopAssetsDir = join(dirname(desktopFilePath), "assets");
   const dashboardAssetsDir = join(dirname(dashboardFilePath), "assets");
 
-  server.get("/", (_req, res) => {
-    if (!existsSync(desktopFilePath)) {
-      res.status(404).send("Desktop UI not built. Run: npm run build:desktop");
-      return;
-    }
-    res.type("html").send(readFileSync(desktopFilePath, "utf8"));
+  server.get("/", async (_req, res, next) => {
+    await sendHtmlFile(res, next, desktopFilePath, "Desktop UI not built. Run: npm run build:desktop");
   });
 
-  server.get("/dashboard", (_req, res) => {
-    if (!existsSync(dashboardFilePath)) {
-      res.status(404).send("Dashboard UI not built.");
-      return;
-    }
-    res.type("html").send(readFileSync(dashboardFilePath, "utf8"));
+  server.get("/dashboard", async (_req, res, next) => {
+    await sendHtmlFile(res, next, dashboardFilePath, "Dashboard UI not built.");
   });
 
   server.use("/assets", express.static(desktopAssetsDir));
   server.use("/dashboard/assets", express.static(dashboardAssetsDir));
   server.use((_req, res) => res.status(404).json({ ok: false }));
+}
+
+async function sendHtmlFile(res: Response, next: NextFunction, path: string, missingMessage: string): Promise<void> {
+  try {
+    res.type("html").send(await readFile(path, "utf8"));
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      res.status(404).send(missingMessage);
+      return;
+    }
+    next(error);
+  }
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return typeof error === "object"
+    && error !== null
+    && "code" in error
+    && (error as { code?: unknown }).code === "ENOENT";
 }
