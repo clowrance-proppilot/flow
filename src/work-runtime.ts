@@ -3156,10 +3156,10 @@ export class FlowWorkRuntime {
     session: WorkRuntimeSession,
     findings: ReadinessFinding[],
   ): PendingConfirmation | undefined {
-    const hasConflictBlocker = findings.some((finding) =>
+    const conflictFindings = findings.filter((finding) =>
       finding.severity === "blocker" && finding.summary === "Pull request has merge conflicts."
     );
-    if (!hasConflictBlocker) return undefined;
+    if (!conflictFindings.length) return undefined;
     const repoKey = session.selectedRepoKey ?? issue.repoKeys[0];
     if (!repoKey) return undefined;
     return {
@@ -3167,7 +3167,10 @@ export class FlowWorkRuntime {
       issueRef: issue.ref,
       action: "request_execution",
       summary: `Hand off PR merge-conflict resolution for ${issue.ref} in ${repoKey}.`,
-      payload: { repoKey },
+      payload: {
+        repoKey,
+        workerPrompt: buildMergeConflictResolutionWorkerPrompt(issue, repoKey, conflictFindings),
+      },
       createdAt: nowIso(),
     };
   }
@@ -4482,6 +4485,29 @@ function buildReviewRemediationWorkerPrompt(
     branchForRepo(issue, repoKey) ? `Branch: ${branchForRepo(issue, repoKey)}` : undefined,
     "",
     "Prompt: address these review findings.",
+    ...findings.map((finding, index) =>
+      [
+        `${index + 1}. ${finding.summary}`,
+        finding.detail ? finding.detail : undefined,
+      ].filter(Boolean).join("\n")
+    ),
+    ...workerPromptGuardrails(),
+  ].filter(Boolean).join("\n");
+}
+
+function buildMergeConflictResolutionWorkerPrompt(
+  issue: WorkItem,
+  repoKey: string,
+  findings: ReadinessFinding[],
+): string {
+  return [
+    "Use Flow to work this prompt.",
+    "",
+    `Repo key: ${repoKey}`,
+    worktreePathForRepo(issue, repoKey) ? `Prepared workspace: ${worktreePathForRepo(issue, repoKey)}` : undefined,
+    branchForRepo(issue, repoKey) ? `Branch: ${branchForRepo(issue, repoKey)}` : undefined,
+    "",
+    "Prompt: resolve the merge conflicts on this pull request.",
     ...findings.map((finding, index) =>
       [
         `${index + 1}. ${finding.summary}`,
