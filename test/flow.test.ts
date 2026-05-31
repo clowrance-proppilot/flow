@@ -87,7 +87,7 @@ import {
 } from "../desktop/autoflow-reconcile.js";
 import { PiAgentOrchestrator } from "../desktop/pi-agent-orchestrator.js";
 import { PiSessionDriver } from "../src/pi-session-driver.js";
-import { PiSdkSessionRunner } from "../src/pi-sdk-runner.js";
+import { FLOW_PI_AGENT_TOOLS, PiSdkSessionRunner, childRunnerSource } from "../src/pi-sdk-runner.js";
 import { DesktopProjectRegistry } from "../desktop/project-registry.js";
 import type { DesktopProjectRecord } from "../desktop/project-registry.js";
 import type { DesktopProjectSurface } from "../desktop/route-types.js";
@@ -2569,33 +2569,37 @@ test("Pi SDK session runner maps real SDK events into desktop timeline", async (
   const root = await mkdtemp(join(tmpdir(), "flow-pi-sdk-runner-"));
   let listener: ((event: Record<string, unknown>) => void) | undefined;
   const driverEvents: string[] = [];
+  let sessionOptions: Record<string, unknown> | undefined;
   const runner = new PiSdkSessionRunner({
     loadModule: async () => ({
       SessionManager: {
         create: () => ({ mode: "create" }),
         open: () => ({ mode: "open" }),
       },
-      createAgentSession: async () => ({
-        session: {
-          sessionId: "real-pi-session",
-          sessionFile: join(root, "session.jsonl"),
-          subscribe(next) {
-            listener = next;
-            return () => {
-              listener = undefined;
-            };
+      createAgentSession: async (options) => {
+        sessionOptions = options;
+        return {
+          session: {
+            sessionId: "real-pi-session",
+            sessionFile: join(root, "session.jsonl"),
+            subscribe(next) {
+              listener = next;
+              return () => {
+                listener = undefined;
+              };
+            },
+            async prompt() {
+              listener?.({ type: "tool_execution_start", toolCallId: "tool-1", toolName: "read", args: {} });
+              listener?.({ type: "tool_execution_end", toolCallId: "tool-1", toolName: "read", result: "ok", isError: false });
+              listener?.({
+                type: "message_update",
+                assistantMessageEvent: { type: "text_delta", delta: "Done from pi." },
+              });
+            },
+            dispose() {},
           },
-          async prompt() {
-            listener?.({ type: "tool_execution_start", toolCallId: "tool-1", toolName: "read", args: {} });
-            listener?.({ type: "tool_execution_end", toolCallId: "tool-1", toolName: "read", result: "ok", isError: false });
-            listener?.({
-              type: "message_update",
-              assistantMessageEvent: { type: "text_delta", delta: "Done from pi." },
-            });
-          },
-          dispose() {},
-        },
-      }),
+        };
+      },
     }),
   });
 
@@ -2617,6 +2621,15 @@ test("Pi SDK session runner maps real SDK events into desktop timeline", async (
   assert.match(result.summary ?? "", /Done from pi/);
   assert.equal(result.timeline?.some((item) => item.role === "tool" && item.toolName === "read"), true);
   assert.deepEqual(driverEvents, ["toolStarted", "toolFinished", "assistantDelta"]);
+  assert.deepEqual(sessionOptions?.tools, [...FLOW_PI_AGENT_TOOLS]);
+  assert.equal((sessionOptions?.tools as string[]).includes("claude"), false);
+  assert.equal((sessionOptions?.tools as string[]).includes("subagent"), false);
+});
+
+test("Pi SDK child runner source forwards Flow-owned tool policy", () => {
+  const source = childRunnerSource();
+  assert.match(source, /const tools = Array\.isArray\(input\.tools\)/);
+  assert.match(source, /createAgentSession\(\{ cwd, sessionManager, tools \}\)/);
 });
 
 test("Local issue tracker creates issues through the Flow ledger surface", async () => {
