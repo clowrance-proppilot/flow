@@ -18,6 +18,7 @@ export * from "./ledger.js";
 export * from "./engine/ledger-contracts.js";
 export * from "./store.js";
 export * from "./sql-store.js";
+export * from "./sql-state.js";
 export * from "./work-envelope.js";
 export * from "./work-registry.js";
 export * from "./config/config-schema.js";
