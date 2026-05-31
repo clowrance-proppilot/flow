@@ -131,6 +131,14 @@ export type SourceControlIntegration = GitInspector & Partial<SourceControlProvi
 
 export interface GitHubInspector {
   findPullRequests(repo: string, headRefName?: string): Promise<PullRequestStatus[]>;
+  createPullRequest?(input: {
+    repo: string;
+    title: string;
+    body: string;
+    headRefName: string;
+    baseRefName: string;
+    isDraft?: boolean;
+  }): Promise<PullRequestStatus>;
   getPullRequest?(repo: string, number: number): Promise<PullRequestStatus | undefined>;
   markPullRequestReadyForReview?(repo: string, number: number): Promise<PullRequestStatus | undefined>;
   postPullRequestComment?(repo: string, number: number, body: string): Promise<{ url?: string; body: string }>;
@@ -1840,6 +1848,10 @@ export class FlowWorkRuntime {
     return updated;
   }
 
+  async listWorkerResults(issueRef: string): Promise<WorkerTaskResult[]> {
+    return this.ledger.listWorkerResults(issueRef);
+  }
+
   private workTypeForCategory(category: Parameters<WorkTypeRegistry["workTypeForCategory"]>[0]): string {
     const workType = this.workTypes.workTypeForCategory(category);
     if (!workType) throw new Error(`No work type registered for category ${category}.`);
@@ -3286,6 +3298,20 @@ function normalizeCodeCollaborationIntegration(
       ? async (repo: string, number: number): Promise<PullRequestStatus | undefined> => {
         const review = await collaborationProvider.getCodeReview?.(repo, number);
         return review ? pullRequestStatusFromUnified(review) : undefined;
+      }
+      : undefined,
+    createPullRequest: collaborationProvider.createCodeReview
+      ? async (input): Promise<PullRequestStatus> => {
+        const review = await collaborationProvider.createCodeReview?.({
+          repo: input.repo,
+          title: input.title,
+          body: input.body,
+          sourceBranch: input.headRefName,
+          targetBranch: input.baseRefName,
+          draft: input.isDraft,
+        });
+        if (!review) throw new Error("Code review provider did not return a created review.");
+        return pullRequestStatusFromUnified(review);
       }
       : undefined,
     markPullRequestReadyForReview: collaborationProvider.markReadyForReview

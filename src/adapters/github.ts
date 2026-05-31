@@ -97,6 +97,24 @@ export class GhGitHubAdapter implements CodeCollaborationProvider {
     return prs.map(normalizePullRequest);
   }
 
+  async createCodeReview(input: {
+    repo: string;
+    title: string;
+    body: string;
+    sourceBranch: string;
+    targetBranch: string;
+    draft?: boolean;
+  }): Promise<UnifiedCodeReview> {
+    return normalizePullRequest(await this.createPullRequest({
+      repo: input.repo,
+      title: input.title,
+      body: input.body,
+      headRefName: input.sourceBranch,
+      baseRefName: input.targetBranch,
+      isDraft: input.draft,
+    }));
+  }
+
   async getCodeReview(repo: string, id: string | number): Promise<UnifiedCodeReview | undefined> {
     const pr = await this.getPullRequest(repo, Number(id));
     if (pr) return normalizePullRequest(pr);
@@ -139,6 +157,38 @@ export class GhGitHubAdapter implements CodeCollaborationProvider {
       execFileAsync("gh", args, { cwd: this.cwd, maxBuffer: 20 * 1024 * 1024 })
     );
     return parsePullRequests(JSON.parse(stdout) as unknown, repo, this.requiredPullRequestTemplateHeadings());
+  }
+
+  async createPullRequest(input: {
+    repo: string;
+    title: string;
+    body: string;
+    headRefName: string;
+    baseRefName: string;
+    isDraft?: boolean;
+  }): Promise<PullRequestStatus> {
+    const args = [
+      "pr",
+      "create",
+      "--repo",
+      this.repoSpecifier(input.repo),
+      "--base",
+      input.baseRefName,
+      "--head",
+      input.headRefName,
+      "--title",
+      input.title,
+      "--body",
+      input.body,
+    ];
+    if (input.isDraft) args.push("--draft");
+    const { stdout } = await withPerfLog(`gh pr create ${input.repo}`, () =>
+      execFileAsync("gh", args, { cwd: this.cwd, maxBuffer: 20 * 1024 * 1024 })
+    );
+    const number = pullRequestNumberFromUrl(stdout.trim());
+    const created = await this.getPullRequest(input.repo, number);
+    if (!created) throw new Error(`Created pull request ${stdout.trim()} could not be read.`);
+    return created;
   }
 
   private repoSpecifier(repo: string): string {
@@ -584,6 +634,12 @@ function issueNumberFromRef(ref: string): number {
 function issueNumberFromUrl(url: string): number {
   const match = /\/issues\/(\d+)(?:\D*$|$)/.exec(url);
   if (!match) throw new Error(`Could not read GitHub issue number from ${url}.`);
+  return Number(match[1]);
+}
+
+function pullRequestNumberFromUrl(url: string): number {
+  const match = /\/pull\/(\d+)(?:\D*$|$)/.exec(url);
+  if (!match) throw new Error(`Could not read GitHub pull request number from ${url}.`);
   return Number(match[1]);
 }
 

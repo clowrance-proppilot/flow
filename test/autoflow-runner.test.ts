@@ -1,0 +1,174 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  StandaloneAutoflowRunner,
+  nowIso,
+  type AutoflowAgentSessionDriver,
+  type AutoflowAgentSessionSnapshot,
+} from "../src/index.js";
+
+class MemoryRunnerState {
+  private readonly values = new Map<string, unknown>();
+
+  async getProjectState<T = unknown>(projectId: string, key: string): Promise<T | undefined> {
+    return this.values.get(`${projectId}:${key}`) as T | undefined;
+  }
+
+  async setProjectState(projectId: string, key: string, value: unknown): Promise<void> {
+    this.values.set(`${projectId}:${key}`, value);
+  }
+}
+
+test("StandaloneAutoflowRunner stores enablement and pauses ticks when disabled", async () => {
+  const state = new MemoryRunnerState();
+  let queueReads = 0;
+  const runner = new StandaloneAutoflowRunner({
+    projectId: "flow",
+    state,
+    runtime: {
+      inspectQueue: async () => {
+        queueReads += 1;
+        return [];
+      },
+    } as never,
+    agentSessionDriver: fakeAgentDriver(),
+  });
+
+  assert.equal((await runner.status()).enabled, true);
+  assert.equal((await runner.setEnabled(false)).enabled, false);
+  assert.equal(await state.getProjectState("flow", "autoflow.enabled"), false);
+  assert.equal((await runner.tick({ wait: true })).enabled, false);
+  assert.equal(queueReads, 0);
+});
+
+test("StandaloneAutoflowRunner can run a queued issue without Desktop", async () => {
+  const calls: string[] = [];
+  const runner = new StandaloneAutoflowRunner({
+    projectId: "flow",
+    state: new MemoryRunnerState(),
+    runtime: {
+      inspectQueue: async () => [{
+        ref: "GH-315",
+        title: "Add standalone Autoflow runner",
+        repoKeys: ["flow"],
+        state: "queued",
+        metadata: {},
+      }],
+      summarizeHandoff: async () => "handoff",
+      createSession: async (id: string) => ({ id, findings: [], workerResults: [], createdAt: nowIso(), updatedAt: nowIso() }),
+      selectIssue: async () => undefined,
+      diagnoseIssue: async () => ({
+        issueRef: "GH-315",
+        status: "ok",
+        issue: { ref: "GH-315", title: "Add standalone Autoflow runner", state: "selected", repoKeys: ["flow"] },
+        visibility: {
+          ledger: true,
+          issueTracker: true,
+          repoRouting: true,
+          preparedWorktree: true,
+          codeReview: false,
+          codeReviewRequired: false,
+        },
+        findings: [],
+        nextAction: { type: "advance", summary: "Run Autoflow." },
+      }),
+      autoFlowIssue: async () => ({
+        status: "execution_handoff",
+        message: "Ready for executor.",
+        steps: [],
+        workerResults: [],
+        session: { id: "session", findings: [], workerResults: [], createdAt: nowIso(), updatedAt: nowIso() },
+      }),
+      adoptPendingLiveWorker: async () => ({
+        id: "task-1",
+        issueRef: "GH-315",
+        repoKey: "flow",
+        workJobId: "job-1",
+        prompt: "Implement GH-315.",
+        workspacePath: "/tmp/flow-gh-315",
+      }),
+      recordLocalThreadResult: async (_sessionId: string, result: { issueRef: string; status: string }) => {
+        calls.push(`record:${result.issueRef}:${result.status}`);
+        return result;
+      },
+      recordEvidence: async () => undefined,
+      recordDocumentation: async () => undefined,
+      recordPullRequest: async () => undefined,
+      advanceIssue: async () => ({
+        status: "awaiting_review",
+        message: "Ready for review.",
+        issue: { ref: "GH-315", title: "Add standalone Autoflow runner", repoKeys: ["flow"], state: "awaiting_review", metadata: {} },
+      }),
+    } as never,
+    agentSessionDriver: fakeAgentDriver(),
+  });
+
+  const status = await runner.tick({ wait: true });
+
+  assert.equal(status.enabled, true);
+  assert.equal(status.issues["GH-315"]?.phase, "idle");
+  assert.equal(status.issues["GH-315"]?.summary, "Ready for review.");
+  assert.deepEqual(calls, ["record:GH-315:succeeded"]);
+});
+
+test("StandaloneAutoflowRunner can target one issue without broad queue pickup", async () => {
+  let queueReads = 0;
+  const inspected: string[] = [];
+  const runner = new StandaloneAutoflowRunner({
+    projectId: "flow",
+    state: new MemoryRunnerState(),
+    runtime: {
+      inspectQueue: async () => {
+        queueReads += 1;
+        return [];
+      },
+      inspectIssue: async (ref: string) => {
+        inspected.push(ref);
+        return {
+          ref,
+          title: "Targeted issue",
+          repoKeys: ["flow"],
+          state: "blocked",
+          metadata: {},
+        };
+      },
+    } as never,
+    agentSessionDriver: fakeAgentDriver(),
+  });
+
+  const status = await runner.tick({ issueRefs: ["GH-999"], wait: true });
+
+  assert.equal(status.summary, "Autoflow idle.");
+  assert.deepEqual(inspected, ["GH-999"]);
+  assert.equal(queueReads, 0);
+});
+
+function fakeAgentDriver(): AutoflowAgentSessionDriver {
+  const session: AutoflowAgentSessionSnapshot = {
+    id: "agent-gh-315",
+    workspacePath: "/tmp/flow-gh-315",
+    status: "done",
+    summary: "Implemented GH-315.",
+    timeline: [{
+      id: "assistant-1",
+      role: "assistant",
+      content: "Implemented GH-315 and committed changes.",
+      createdAt: nowIso(),
+    }],
+  };
+  return {
+    async getSession() {
+      return session;
+    },
+    async openOrCreateIssueSession() {
+      return session;
+    },
+    async sendUserMessage() {
+      return session;
+    },
+    async postPrompt() {
+      return session;
+    },
+  };
+}

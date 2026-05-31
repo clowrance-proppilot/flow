@@ -51,8 +51,8 @@ import { normalizePullRequest, parseGitHubIssues, parsePullRequests } from "../s
 import { currentUserBacklogJql, currentUserOpenSprintJql, parseJiraCommentUrl, parseJiraIssue, parseJiraSearch } from "../src/adapters/jira.js";
 import { DesktopActionRouter } from "../desktop/action-router.js";
 import { PiAgentOrchestrator } from "../desktop/pi-agent-orchestrator.js";
-import { PiSessionDriver } from "../desktop/pi-session-driver.js";
-import { PiSdkSessionRunner } from "../desktop/pi-sdk-runner.js";
+import { PiSessionDriver } from "../src/pi-session-driver.js";
+import { PiSdkSessionRunner } from "../src/pi-sdk-runner.js";
 import { DesktopProjectRegistry } from "../desktop/project-registry.js";
 import { DesktopPromptRouter } from "../desktop/prompt-router.js";
 import { projectThemeFor } from "../src/theme/project-theme.js";
@@ -1212,7 +1212,7 @@ test("Pi agent orchestrator starts the next ready issue and records a result", a
   }
   const issueStatus = orchestrator.getStatus().issues["GH-56"];
   assert.equal(issueStatus?.phase, "needs_input");
-  assert.match(issueStatus?.summary ?? "", /Acceptance evidence is missing/);
+  assert.match(issueStatus?.summary ?? "", /Pull request is missing/);
 });
 
 test("Autoflow service can be instantiated without Desktop modules", async () => {

@@ -5,7 +5,7 @@ import {
   type AutoflowServicePhase,
   type AutoflowServiceStatus,
 } from "../src/autoflow-service.js";
-import type { PiSessionDriver } from "./pi-session-driver.js";
+import type { PiSessionDriver } from "../src/pi-session-driver.js";
 
 export type PiAgentOrchestratorPhase = AutoflowServicePhase;
 export type PiAgentOrchestratorIssueStatus = AutoflowServiceIssueStatus;

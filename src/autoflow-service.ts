@@ -11,7 +11,11 @@ export type AutoflowServiceRuntime = Pick<
   | "autoFlowIssue"
   | "adoptPendingLiveWorker"
   | "diagnoseIssue"
+  | "listWorkerResults"
   | "recordLocalThreadResult"
+  | "recordEvidence"
+  | "recordDocumentation"
+  | "recordPullRequest"
   | "advanceIssue"
 >;
 
@@ -65,9 +69,30 @@ export interface AutoflowServiceOptions {
   projectId: string;
   runtime: AutoflowServiceRuntime;
   agentSessionDriver: AutoflowAgentSessionDriver;
+  codeReviewCreator?: AutoflowCodeReviewCreator;
   enabled?: () => boolean;
   maxConcurrency?: number;
   gitInspect?: (path: string) => Promise<{ dirty: boolean; entries: string[] }>;
+  autoReconcileOnSlotAvailable?: boolean;
+}
+
+export interface AutoflowCodeReviewCreator {
+  createPullRequest(input: {
+    issueRef: string;
+    title: string;
+    repo: string;
+    baseRefName: string;
+    headRefName: string;
+    body: string;
+  }): Promise<{
+    repo: string;
+    number: number;
+    url: string;
+    headRefName?: string;
+    isDraft?: boolean;
+    checksPassing?: boolean;
+    reviewDecision?: string;
+  }>;
 }
 
 interface ActiveRun {
@@ -83,8 +108,10 @@ export class AutoflowService {
   private readonly projectId: string;
   private readonly runtime: AutoflowServiceRuntime;
   private readonly agentSessionDriver: AutoflowAgentSessionDriver;
+  private readonly codeReviewCreator?: AutoflowCodeReviewCreator;
   private readonly enabled: () => boolean;
   private readonly maxConcurrency: number;
+  private readonly autoReconcileOnSlotAvailable: boolean;
   private readonly gitInspect?: (path: string) => Promise<{ dirty: boolean; entries: string[] }>;
   private readonly activeRuns = new Map<string, ActiveRun>();
   private readonly issueStatuses = new Map<string, AutoflowServiceIssueStatus>();
@@ -94,8 +121,10 @@ export class AutoflowService {
     this.projectId = options.projectId;
     this.runtime = options.runtime;
     this.agentSessionDriver = options.agentSessionDriver;
+    this.codeReviewCreator = options.codeReviewCreator;
     this.enabled = options.enabled ?? (() => true);
     this.maxConcurrency = options.maxConcurrency ?? 5;
+    this.autoReconcileOnSlotAvailable = options.autoReconcileOnSlotAvailable ?? true;
     this.gitInspect = options.gitInspect;
   }
 
@@ -168,7 +197,7 @@ export class AutoflowService {
     return undefined;
   }
 
-  async reconcile(): Promise<AutoflowServiceStatus> {
+  async reconcile(options: { issueRefs?: string[] } = {}): Promise<AutoflowServiceStatus> {
     if (!this.enabled()) return this.getStatus();
     if (this.reconciling) return this.getStatus();
     this.reconciling = true;
@@ -184,7 +213,7 @@ export class AutoflowService {
       const availableSlots = this.maxConcurrency - this.activeRuns.size;
       if (availableSlots <= 0) return this.getStatus();
 
-      const candidates = await this.nextCandidates(availableSlots);
+      const candidates = await this.nextCandidates(availableSlots, options.issueRefs);
       for (const candidate of candidates) {
         this.spawnRun(candidate.ref, candidate.repoKeys, candidate.title, candidate.metadata);
       }
@@ -192,6 +221,19 @@ export class AutoflowService {
       this.reconciling = false;
     }
 
+    return this.getStatus();
+  }
+
+  async waitForIdle(): Promise<AutoflowServiceStatus> {
+    while (this.activeRuns.size > 0) {
+      const runs = [...this.activeRuns.values()].map((run) => run.promise.catch(() => undefined));
+      await Promise.all(runs);
+      for (const [ref, run] of this.activeRuns) {
+        if (run.status !== "running" && run.status !== "starting") {
+          this.activeRuns.delete(ref);
+        }
+      }
+    }
     return this.getStatus();
   }
 
@@ -234,7 +276,7 @@ export class AutoflowService {
         // This prevents reconcile from immediately re-spawning the same issue
         run.status = run.status === "starting" ? "idle" : run.status;
         // Trigger reconcile to fill the slot
-        void this.reconcile();
+        if (this.autoReconcileOnSlotAvailable) void this.reconcile();
       });
   }
 
@@ -263,6 +305,18 @@ export class AutoflowService {
     }
     const autoflow = await this.runtime.autoFlowIssue(flowSessionId, { autoPrepareWorkspace: true, maxSteps: 20 });
     if (!isExecutionReady(autoflow)) {
+      if (canCloseoutBlockedAutoflow(autoflow)) {
+        const closed = await this.recordCloseoutInputsFromExistingResult(flowSessionId, issueRef);
+        if (closed) {
+          const advanced = await this.runtime.advanceIssue(flowSessionId);
+          this.updateIssueStatus(issueRef, {
+            phase: phaseAfterWorkerAdvance(advanced),
+            summary: advanced.message || autoflow.message,
+          });
+          this.activeRuns.delete(issueRef);
+          return;
+        }
+      }
       this.updateIssueStatus(issueRef, {
         phase: autoflow.status === "needs_confirmation" ? "needs_input" : "idle",
         summary: autoflow.message,
@@ -272,8 +326,8 @@ export class AutoflowService {
     }
 
     const handoff = await this.runtime.adoptPendingLiveWorker(flowSessionId, {
-      adopter: "Flow Desktop Autoflow",
-      summary: `Flow Desktop Autoflow started ${issueRef}.`,
+      adopter: "Flow Autoflow",
+      summary: `Flow Autoflow started ${issueRef}.`,
     });
     const piSession = await this.agentSessionDriver.openOrCreateIssueSession(issueRef);
 
@@ -298,6 +352,11 @@ export class AutoflowService {
     let finalPhase: AutoflowServicePhase = completed.status === "failed" ? "failed" : resultStatus === "blocked" ? "needs_input" : "idle";
     let finalSummary = completed.error ?? latestAssistantText(completed) ?? `Autoflow finished ${issueRef}.`;
     if (completed.status !== "failed" && resultStatus === "succeeded") {
+      await this.recordCloseoutInputs(flowSessionId, handoff, {
+        summary: completed.error ?? latestAssistantText(completed) ?? `Autoflow completed ${handoff.issueRef}.`,
+        changedFiles: extractChangedFilesFromTimeline(completed.timeline),
+        testsRun: extractTestsRunFromTimeline(completed.timeline),
+      });
       const advanced = await this.runtime.advanceIssue(flowSessionId);
       finalPhase = phaseAfterWorkerAdvance(advanced);
       finalSummary = advanced.message || finalSummary;
@@ -373,14 +432,94 @@ export class AutoflowService {
     return status;
   }
 
-  private async nextCandidates(limit: number): Promise<Array<{ ref: string; repoKeys: string[]; title: string; metadata: Record<string, unknown> }>> {
-    const queue = await this.runtime.inspectQueue(50);
+  private async recordCloseoutInputsFromExistingResult(flowSessionId: string, issueRef: string): Promise<boolean> {
+    const results = await this.runtime.listWorkerResults(issueRef);
+    const latest = [...results].reverse().find((result) => result.status === "succeeded" && result.blockers.length === 0);
+    if (!latest) return false;
+    await this.recordCloseoutInputs(flowSessionId, {
+      issueRef: latest.issueRef,
+      repoKey: latest.repoKey,
+      id: latest.taskId,
+      workJobId: latest.workJobId ?? latest.taskId,
+      prompt: latest.handoffPrompt ?? "",
+      createdAt: latest.completedAt,
+    }, {
+      summary: latest.summary,
+      changedFiles: latest.changedFiles,
+      testsRun: latest.testsRun,
+    });
+    return true;
+  }
+
+  private async recordCloseoutInputs(
+    flowSessionId: string,
+    handoff: WorkerTaskRequest & { workJobId: string },
+    result: { summary: string; changedFiles: string[]; testsRun: string[] },
+  ): Promise<void> {
+    const criteria = result.testsRun.length
+      ? result.testsRun.map((test) => ({ label: test, status: "passed" as const, evidence: result.summary, source: "autoflow" }))
+      : [{ label: "Autoflow worker completed", status: "passed" as const, evidence: result.summary, source: "autoflow" }];
+    await this.runtime.recordEvidence(flowSessionId, {
+      issueRef: handoff.issueRef,
+      summary: result.summary,
+      source: "autoflow",
+      criteria,
+    });
+    const documentationUpdated = result.changedFiles.some(isDocumentationFile);
+    await this.runtime.recordDocumentation(flowSessionId, {
+      issueRef: handoff.issueRef,
+      disposition: documentationUpdated ? "updated" : "not_needed",
+      summary: documentationUpdated
+        ? "Documentation was updated by Autoflow."
+        : "No separate documentation update was needed.",
+    });
+    await this.ensurePullRequest(flowSessionId, handoff, result.summary);
+  }
+
+  private async ensurePullRequest(
+    flowSessionId: string,
+    handoff: WorkerTaskRequest & { workJobId: string },
+    summary: string,
+  ): Promise<void> {
+    if (!this.codeReviewCreator) return;
+    const issue = await this.runtime.inspectIssue(handoff.issueRef);
+    if (!issue) return;
+    if (metadataString(issue.metadata.prUrl)) return;
+    const repoKey = handoff.repoKey || issue.repoKeys[0] || "flow";
+    const branch = metadataString(issue.metadata[`workflow.repos.${repoKey}.branch`]) ?? metadataString(issue.metadata.branch);
+    if (!branch) return;
+    const baseRefName = metadataString(issue.metadata[`workflow.repos.${repoKey}.base_branch`]) ?? "main";
+    const pr = await this.codeReviewCreator.createPullRequest({
+      issueRef: issue.ref,
+      title: `${issue.ref}: ${issue.title}`,
+      repo: repoKey,
+      baseRefName,
+      headRefName: branch,
+      body: autoflowPullRequestBody(issue.ref, summary),
+    });
+    await this.runtime.recordPullRequest(flowSessionId, {
+      issueRef: issue.ref,
+      repo: pr.repo,
+      number: pr.number,
+      url: pr.url,
+      headRefName: pr.headRefName ?? branch,
+      isDraft: pr.isDraft === true,
+      checksPassing: pr.checksPassing,
+      reviewDecision: pr.reviewDecision,
+    });
+  }
+
+  private async nextCandidates(limit: number, issueRefs?: string[]): Promise<Array<{ ref: string; repoKeys: string[]; title: string; metadata: Record<string, unknown> }>> {
+    const queue = issueRefs?.length
+      ? await Promise.all(issueRefs.map((ref) => this.runtime.inspectIssue(ref).then((issue) => issue ?? undefined)))
+      : await this.runtime.inspectQueue(50);
     const candidates: Array<{ ref: string; repoKeys: string[]; title: string; metadata: Record<string, unknown> }> = [];
 
     for (const issue of queue) {
+      if (!issue) continue;
       if (candidates.length >= limit) break;
-      // Only pick up queued or selected issues (not done, blocked, awaiting_review, etc.)
-      if (issue.state !== "queued" && issue.state !== "selected") continue;
+      // Only pick up issues that can still advance automatically.
+      if (issue.state !== "queued" && issue.state !== "selected" && issue.state !== "ready_to_run") continue;
       if (this.activeRuns.has(issue.ref)) continue;
       // Skip issues that have been flagged as needing input
       const issueStatus = this.issueStatuses.get(issue.ref);
@@ -449,6 +588,13 @@ function isExecutionReady(result: AutoFlowIssueResult): boolean {
   return result.status === "needs_confirmation" || result.status === "execution_handoff";
 }
 
+function canCloseoutBlockedAutoflow(result: AutoFlowIssueResult): boolean {
+  if (result.status !== "blocked") return false;
+  return result.message.includes("Acceptance evidence is missing.") ||
+    result.message.includes("Documentation disposition is missing.") ||
+    result.message.includes("Pull request is missing.");
+}
+
 function phaseAfterWorkerAdvance(result: AdvanceIssueResult): AutoflowServicePhase {
   if (result.status === "awaiting_review") return "idle";
   return "needs_input";
@@ -463,6 +609,27 @@ function latestAssistantText(session: AutoflowAgentSessionSnapshot): string | un
   return [...session.timeline].reverse().find((item) => item.role === "assistant")?.content.trim() || undefined;
 }
 
+function metadataString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function isDocumentationFile(path: string): boolean {
+  const normalized = path.replace(/\\/g, "/").toLowerCase();
+  return normalized.startsWith("docs/") || normalized.endsWith(".md") || normalized.endsWith(".mdx");
+}
+
+function autoflowPullRequestBody(issueRef: string, summary: string): string {
+  return [
+    "## Summary",
+    `- Autoflow completed ${issueRef}`,
+    "",
+    "## Verification",
+    `- ${summary.replace(/\s+/g, " ").trim() || "Autoflow worker completed."}`,
+    "",
+    `Closes #${issueRef.replace(/^GH-/i, "")}`,
+  ].join("\n");
+}
+
 function doctorSummary(doctor: FlowDoctorResult): string {
   const finding = doctor.findings.find((item) => item.severity === "blocker") ?? doctor.findings[0];
   return finding?.summary ?? doctor.nextAction.summary;
@@ -474,6 +641,9 @@ function doctorBlocksAutoflow(doctor: FlowDoctorResult): boolean {
     .map((finding) => finding.summary);
   const autoflowCanAdvance = new Set([
     "Prepared worktree is missing.",
+    "Acceptance evidence is missing.",
+    "Documentation disposition is missing.",
+    "Pull request is missing.",
   ]);
   return blockerSummaries.some((summary) => !autoflowCanAdvance.has(summary));
 }
