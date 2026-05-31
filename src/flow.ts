@@ -376,6 +376,7 @@ async function handleReviewRequest(request: Record<string, unknown>): Promise<un
   }
   return runtime.reviewCodeReview(activeSessionId, issueRef, {
     repo: optionalString(request, "repo"),
+    post: request.post === true,
   });
 }
 

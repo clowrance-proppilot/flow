@@ -1542,11 +1542,10 @@ export class FlowWorkRuntime {
       return { issueRef: issue.ref, repoKeys: issue.repoKeys, target: "code_review", summary: reviewSummary("code_review", findings, []), findings, blocking: true, codeReviewRequired, collaboration: collaborationType, pullRequest: undefined, blockers: codeReviewRequired ? ["Pull request is missing."] : [] };
     }
     const target = closeoutPullRequestTarget(issue, (k) => this.topology.repoName(k)) ?? codeReviewTargetFromMetadata(issue, review, options?.repo);
-    const diff = target && (this.collaboration as any)?.getPullRequestDiff ? await (this.collaboration as any).getPullRequestDiff(options?.repo ?? target.repo, target.number) : undefined;
+    const diff = target && this.collaboration?.getCodeReviewDiff ? await this.collaboration.getCodeReviewDiff(target.repo, target.number) : undefined;
     const findings = reviewFindingsFromCodeReview(review, diff);
     const blockers = pullRequestBlockersFromMetadata(review);
-    const postReviewComment = (this.collaboration as any)?.postPullRequestComment ?? (this.collaboration as any)?.postReviewComment;
-    const postedComment = target && postReviewComment && options?.post === true ? await postReviewComment.call(this.collaboration, target.repo, target.number, flowReviewComment(findings)) : undefined;
+    const postedComment = target && this.collaboration?.postReviewComment && options?.post === true ? await this.collaboration.postReviewComment(target.repo, target.number, flowReviewComment(findings)) : undefined;
     return {
       issueRef: issue.ref,
       repoKeys: issue.repoKeys,
