@@ -6,6 +6,7 @@ import {
   IssueStateValue,
   flowLayout,
   migrateFlowConfig,
+  migrateJsonlToSql,
   terminalWorkerStatusValues,
   type AcceptanceCriterionEvidence,
   validateFlowConfig,
@@ -149,11 +150,18 @@ async function handleConfigRequest(request: Record<string, unknown>): Promise<un
 
 async function handleLedgerRequest(request: Record<string, unknown>): Promise<unknown> {
   const mode = optionalString(request, "mode") ?? "verify";
-  if (mode !== "verify") throw badMode("ledger", mode, ["verify"]);
-  return verifyJsonlWorkflowLedger(
-    optionalString(request, "path") ?? configuredRuntime.workflowLedgerPath,
-    { rebuildProjections: Boolean(request.rebuildProjections) },
-  );
+  if (mode === "verify") {
+    return verifyJsonlWorkflowLedger(
+      optionalString(request, "path") ?? configuredRuntime.workflowLedgerPath,
+      { rebuildProjections: Boolean(request.rebuildProjections) },
+    );
+  }
+  if (mode === "migrate") {
+    const jsonlPath = optionalString(request, "jsonlPath") ?? configuredRuntime.workflowLedgerPath;
+    const sqlPath = optionalString(request, "sqlPath") ?? jsonlPath.replace(/\.jsonl$/, ".db");
+    return migrateJsonlToSql({ jsonlPath, sqlPath });
+  }
+  throw badMode("ledger", mode, ["verify", "migrate"]);
 }
 
 async function handleIssueRequest(request: Record<string, unknown>): Promise<unknown> {
@@ -303,7 +311,7 @@ function flowManifest(target?: string) {
         body: ["flow '{\"op\":\"state\"}'", "printf '%s\\n' '{\"op\":\"state\"}' | flow"],
       },
       detail: { op: "manifest", target: "<op>" },
-      targets: ["workflow", "issue", "runtime", "config", "layout"],
+      targets: ["workflow", "issue", "runtime", "config", "layout", "ledger"],
       ops: {
         manifest: "Get compact or targeted capability metadata.",
         state: "Read current Flow state, optionally scoped by id.",
@@ -311,7 +319,7 @@ function flowManifest(target?: string) {
         backlog: "Inspect backlog.",
         bootstrap: "Create Flow config from repo metadata.",
         config: "Validate or explain Flow config.",
-        ledger: "Verify workflow ledger.",
+        ledger: "Verify or migrate workflow ledger.",
         issue: "Inspect, create, select, or adopt issue/workspace state through the configured issue tracker.",
         workflow: "Advance, audit, autoflow, record, or observe workflow state.",
         runtime: "Call a raw Work Runtime method by name.",
@@ -375,12 +383,24 @@ function flowManifest(target?: string) {
       layout: flowLayout,
     };
   }
+  if (target === "ledger") {
+    return {
+      target,
+      modes: ["verify", "migrate"],
+      examples: [
+        { op: "ledger", mode: "verify" },
+        { op: "ledger", mode: "verify", rebuildProjections: true },
+        { op: "ledger", mode: "migrate" },
+        { op: "ledger", mode: "migrate", jsonlPath: ".flow/ledger/workflow.jsonl", sqlPath: ".flow/ledger/workflow.db" },
+      ],
+    };
+  }
   return {
     target,
     error: {
       code: "UNKNOWN_MANIFEST_TARGET",
       message: `Unknown manifest target: ${target}`,
-      targets: ["workflow", "issue", "runtime", "config", "layout"],
+      targets: ["workflow", "issue", "runtime", "config", "layout", "ledger"],
     },
   };
 }

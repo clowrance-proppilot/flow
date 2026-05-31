@@ -41,6 +41,8 @@ import {
   NoopCodeCollaborationAdapter,
   ProviderAdapterError,
   classifyProviderCliError,
+  SqlWorkflowLedger,
+  migrateJsonlToSql,
 } from "../src/index.js";
 import type { ProjectTopology } from "../src/project-topology.js";
 import { normalizePullRequest, parseGitHubIssues, parsePullRequests } from "../src/adapters/github.js";
@@ -6027,4 +6029,257 @@ test("Custom topology overrides repo names, paths, branch names, and PR URLs", a
 
   assert.equal(customTopology.isValidRepoKey("my_service"), true);
   assert.equal(customTopology.isValidRepoKey("unknown_repo"), false);
+});
+
+test("SQL workflow ledger persists issues and worker results", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-sql-ledger-"));
+  const ledger = new SqlWorkflowLedger({ path: join(root, "ledger.db") });
+
+  await ledger.writeIssue({
+    ref: "ISSUE-SQL-1",
+    title: "SQL ledger test",
+    repoKeys: ["main"],
+    state: "queued",
+    metadata: {},
+  });
+  await ledger.recordWorkerResult({
+    taskId: "worker-sql-1",
+    issueRef: "ISSUE-SQL-1",
+    repoKey: "main",
+    status: "succeeded",
+    summary: "done",
+    changedFiles: [],
+    testsRun: [],
+    blockers: [],
+    completedAt: nowIso(),
+  });
+
+  const issues = await ledger.listIssues();
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0].ref, "ISSUE-SQL-1");
+
+  const issue = await ledger.readIssue("ISSUE-SQL-1");
+  assert.equal(issue?.title, "SQL ledger test");
+
+  const results = await ledger.listWorkerResults("ISSUE-SQL-1");
+  assert.equal(results.length, 1);
+  assert.equal(results[0].taskId, "worker-sql-1");
+
+  const runs = await ledger.listWorkerRuns("ISSUE-SQL-1");
+  assert.equal(runs.length, 1);
+
+  ledger.close();
+});
+
+test("SQL workflow ledger persists work jobs and results", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-sql-jobs-"));
+  const ledger = new SqlWorkflowLedger({ path: join(root, "ledger.db") });
+  const now = nowIso();
+
+  await ledger.recordWorkJob({
+    id: "job-sql-1",
+    issueRef: "ISSUE-SQL-2",
+    repoKey: "app_api",
+    workType: "flow.implement",
+    status: "queued",
+    input: { prompt: "fix it" },
+    requiredCapabilities: [],
+    createdAt: now,
+    updatedAt: now,
+  });
+  await ledger.recordWorkJobResult({
+    jobId: "job-sql-1",
+    issueRef: "ISSUE-SQL-2",
+    repoKey: "app_api",
+    workType: "flow.implement",
+    status: "succeeded",
+    summary: "Implemented",
+    evidence: [],
+    completedAt: now,
+  });
+
+  const jobs = await ledger.listWorkJobs("ISSUE-SQL-2");
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].id, "job-sql-1");
+
+  const jobResults = await ledger.listWorkJobResults("ISSUE-SQL-2");
+  assert.equal(jobResults.length, 1);
+  assert.equal(jobResults[0].jobId, "job-sql-1");
+
+  ledger.close();
+});
+
+test("SQL workflow ledger persists context records", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-sql-context-"));
+  const ledger = new SqlWorkflowLedger({ path: join(root, "ledger.db") });
+  const now = nowIso();
+
+  await ledger.recordContext({
+    kind: "thread",
+    id: "thread-sql-1",
+    projectId: "flow",
+    issueRef: "ISSUE-SQL-3",
+    title: "SQL context test",
+    createdAt: now,
+    updatedAt: now,
+    metadata: {},
+  });
+  await ledger.recordContext({
+    kind: "prompt",
+    id: "prompt-sql-1",
+    projectId: "flow",
+    issueRef: "ISSUE-SQL-3",
+    threadId: "thread-sql-1",
+    prompt: "Test prompt",
+    target: "project",
+    createdAt: now,
+    updatedAt: now,
+    metadata: {},
+  });
+
+  const projection = await ledger.readContext({ projectId: "flow" });
+  assert.equal(projection.threads.length, 1);
+  assert.equal(projection.threads[0].id, "thread-sql-1");
+  assert.equal(projection.prompts.length, 1);
+  assert.equal(projection.prompts[0].id, "prompt-sql-1");
+  assert.equal(projection.active.threadId, "thread-sql-1");
+
+  ledger.close();
+});
+
+test("SQL workflow ledger upserts issues and worker results", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-sql-upsert-"));
+  const ledger = new SqlWorkflowLedger({ path: join(root, "ledger.db") });
+
+  await ledger.writeIssue({
+    ref: "ISSUE-UPSERT",
+    title: "Original title",
+    repoKeys: ["main"],
+    state: "queued",
+    metadata: {},
+  });
+  await ledger.writeIssue({
+    ref: "ISSUE-UPSERT",
+    title: "Updated title",
+    repoKeys: ["main"],
+    state: "selected",
+    metadata: {},
+  });
+
+  const issue = await ledger.readIssue("ISSUE-UPSERT");
+  assert.equal(issue?.title, "Updated title");
+  assert.equal(issue?.state, "selected");
+
+  const issues = await ledger.listIssues();
+  assert.equal(issues.length, 1);
+
+  ledger.close();
+});
+
+test("SQL workflow ledger reads multiple issues at once", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-sql-batch-"));
+  const ledger = new SqlWorkflowLedger({ path: join(root, "ledger.db") });
+
+  await ledger.writeIssue({ ref: "ISSUE-A", title: "Issue A", repoKeys: [], state: "queued", metadata: {} });
+  await ledger.writeIssue({ ref: "ISSUE-B", title: "Issue B", repoKeys: [], state: "queued", metadata: {} });
+  await ledger.writeIssue({ ref: "ISSUE-C", title: "Issue C", repoKeys: [], state: "queued", metadata: {} });
+
+  const batch = await ledger.readIssues(["ISSUE-A", "ISSUE-C", "ISSUE-MISSING"]);
+  assert.equal(batch.size, 2);
+  assert.equal(batch.get("ISSUE-A")?.title, "Issue A");
+  assert.equal(batch.get("ISSUE-C")?.title, "Issue C");
+  assert.equal(batch.has("ISSUE-MISSING"), false);
+
+  ledger.close();
+});
+
+test("Migration converts JSONL ledger to SQL", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-migration-"));
+  const jsonlPath = join(root, "workflow.jsonl");
+  const sqlPath = join(root, "workflow.db");
+
+  // Create a JSONL ledger with data
+  const jsonlLedger = createWorkflowLedger({ cwd: root, path: jsonlPath });
+  await jsonlLedger.writeIssue({
+    ref: "ISSUE-MIG-1",
+    title: "Migration test",
+    repoKeys: ["main"],
+    state: "queued",
+    metadata: {},
+  });
+  await jsonlLedger.recordWorkerResult({
+    taskId: "worker-mig-1",
+    issueRef: "ISSUE-MIG-1",
+    repoKey: "main",
+    status: "succeeded",
+    summary: "done",
+    changedFiles: [],
+    testsRun: [],
+    blockers: [],
+    completedAt: nowIso(),
+  });
+
+  // Migrate to SQL
+  const result = await migrateJsonlToSql({ jsonlPath, sqlPath });
+  assert.equal(result.ok, true);
+  assert.equal(result.recordsProcessed, 2);
+  assert.equal(result.recordsMigrated, 2);
+
+  // Verify SQL ledger has the data
+  const sqlLedger = new SqlWorkflowLedger({ path: sqlPath });
+  const issues = await sqlLedger.listIssues();
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0].ref, "ISSUE-MIG-1");
+
+  const results = await sqlLedger.listWorkerResults("ISSUE-MIG-1");
+  assert.equal(results.length, 1);
+  assert.equal(results[0].taskId, "worker-mig-1");
+
+  sqlLedger.close();
+});
+
+test("Migration handles missing JSONL file gracefully", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-migration-missing-"));
+  const jsonlPath = join(root, "nonexistent.jsonl");
+  const sqlPath = join(root, "workflow.db");
+
+  const result = await migrateJsonlToSql({ jsonlPath, sqlPath });
+  assert.equal(result.ok, true);
+  assert.equal(result.recordsProcessed, 0);
+  assert.equal(result.recordsMigrated, 0);
+});
+
+test("Migration reports errors for malformed JSONL records", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-migration-errors-"));
+  const jsonlPath = join(root, "workflow.jsonl");
+  const sqlPath = join(root, "workflow.db");
+
+  await writeFile(jsonlPath, "{\"kind\":\"unknown\",\"value\":{}}\nnot-json\n", "utf8");
+
+  const result = await migrateJsonlToSql({ jsonlPath, sqlPath });
+  assert.equal(result.ok, false);
+  assert.equal(result.recordsProcessed, 2);
+  assert.equal(result.recordsMigrated, 0);
+  assert.equal(result.errors.length, 2);
+});
+
+test("createWorkflowLedger with sql adapter creates SQL ledger", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-sql-factory-"));
+  const ledger = createWorkflowLedger({ cwd: root, adapter: "sql" });
+
+  await ledger.writeIssue({
+    ref: "ISSUE-SQL-FACTORY",
+    title: "SQL factory test",
+    repoKeys: ["main"],
+    state: "queued",
+    metadata: {},
+  });
+
+  const issue = await ledger.readIssue("ISSUE-SQL-FACTORY");
+  assert.equal(issue?.title, "SQL factory test");
+
+  // Clean up
+  if (ledger instanceof SqlWorkflowLedger) {
+    ledger.close();
+  }
 });

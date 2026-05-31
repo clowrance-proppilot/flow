@@ -32,6 +32,7 @@ import {
 import { flowIssueProjectionFileName, flowWorkflowLedgerPath } from "./flow-layout.js";
 import type { WorkflowLedger, WorkflowLedgerMirror } from "./engine/ledger-contracts.js";
 export type { WorkflowLedger, WorkflowLedgerMirror } from "./engine/ledger-contracts.js";
+import { SqlWorkflowLedger } from "./sql-ledger.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -542,6 +543,10 @@ export interface WorkflowLedgerFactoryOptions {
 
 export function createWorkflowLedger(options: WorkflowLedgerFactoryOptions): WorkflowLedger {
   if (options.adapter === "beads") return new BeadsWorkflowLedger({ cwd: options.cwd });
+  if (options.adapter === "sql") {
+    const sqlPath = options.path?.replace(/\.jsonl$/, ".db") ?? flowWorkflowLedgerPath(options.cwd).replace(/\.jsonl$/, ".db");
+    return new SqlWorkflowLedger({ path: sqlPath });
+  }
   return new JsonlWorkflowLedger({
     path: options.path ?? flowWorkflowLedgerPath(options.cwd),
   });

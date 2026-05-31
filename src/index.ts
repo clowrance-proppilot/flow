@@ -13,6 +13,8 @@ export * from "./reconciliation.js";
 export * from "./work-runtime.js";
 export * from "./readiness.js";
 export * from "./ledger.js";
+export * from "./sql-ledger.js";
+export * from "./migration.js";
 export * from "./engine/ledger-contracts.js";
 export * from "./store.js";
 export * from "./work-envelope.js";

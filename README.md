@@ -49,7 +49,8 @@ flow '{"op":"workflow","mode":"recordEvidence","id":"FLOW-123","summary":"npm te
 ```text
 .flow/config.yaml
 .flow/runtime/
-.flow/ledger/workflow.jsonl
+.flow/ledger/workflow.jsonl    # JSONL ledger (default)
+.flow/ledger/workflow.db       # SQLite ledger (optional)
 .flow/ledger/issues/
 ```
 
