@@ -40,6 +40,9 @@ import {
   flowUserWorkflowLedgerPath,
   flowWorkflowLedgerPath,
   resolveFlowPath,
+  canClaimWork,
+  canCompleteWork,
+  canResolveBlocker,
   flowConfigSchema,
   loadFlowConfig,
   migrateFlowConfig,
@@ -55,6 +58,7 @@ import {
   classifyProviderCliError,
   triageIssues as triageIssuesEngine,
   type CreateIssueOptions,
+  type ProjectedWorkSubject,
   type WorkItem,
 } from "../src/index.js";
 import { JsonCliError, runJsonCli, type JsonCliOptions } from "../src/json-cli.js";
@@ -198,6 +202,19 @@ function parseCapturedJsonCliOutput(output: string): any {
   return JSON.parse(json);
 }
 
+function projectedWorkSubject(overrides: Partial<ProjectedWorkSubject> = {}): ProjectedWorkSubject {
+  return {
+    subject: { type: "issue", ref: "GH-266" },
+    state: "queued",
+    claims: [],
+    blockers: [],
+    links: [],
+    records: [],
+    handoffs: [],
+    ...overrides,
+  };
+}
+
 test("Flow layout paths resolve under the project root", () => {
   const root = join(tmpdir(), "Flow Root With Spaces");
 
@@ -245,6 +262,138 @@ test("Flow path resolver keeps absolute paths and resolves relative paths from t
   assert.equal(resolveFlowPath(root, absolute), absolute);
   assert.equal(resolveFlowPath(root, join(".flow", "config.yaml")), flowConfigPath(root));
   assert.equal(resolveFlowPath(root, "config.yaml"), join(root, "config.yaml"));
+});
+
+test("Work state policy allows completion when blockers and readiness are clear", () => {
+  const projection = projectedWorkSubject();
+
+  assert.deepEqual(canCompleteWork({ projection }), { accepted: true, blockers: [] });
+  assert.deepEqual(canCompleteWork({ projection, readinessPassed: true }), { accepted: true, blockers: [] });
+});
+
+test("Work state policy blocks completion for unresolved blockers", () => {
+  const projection = projectedWorkSubject({
+    blockers: [{
+      eventId: "ask-1",
+      actorId: "executor",
+      askedAt: nowIso(),
+    }],
+  });
+
+  assert.deepEqual(canCompleteWork({ projection }), {
+    accepted: false,
+    blockers: ["Unresolved blockers remain."],
+  });
+});
+
+test("Work state policy requires linked pull requests for code-producing completion", () => {
+  const projection = projectedWorkSubject();
+  const linkedProjection = projectedWorkSubject({
+    links: [{
+      eventId: "link-1",
+      type: "code_review",
+      target: { type: "pull_request", ref: "https://github.com/camden-lowrance/flow/pull/266" },
+      linkedAt: nowIso(),
+    }],
+  });
+
+  assert.deepEqual(canCompleteWork({ projection, codeProducing: true }), {
+    accepted: false,
+    blockers: ["Code-producing work requires a linked pull request."],
+  });
+  assert.deepEqual(canCompleteWork({ projection: linkedProjection, codeProducing: true }), { accepted: true, blockers: [] });
+});
+
+test("Work state policy blocks completion when readiness has failed", () => {
+  const projection = projectedWorkSubject();
+
+  assert.deepEqual(canCompleteWork({ projection, readinessPassed: false }), {
+    accepted: false,
+    blockers: ["Readiness checks have not passed."],
+  });
+});
+
+test("Work state policy reports every completion blocker together", () => {
+  const projection = projectedWorkSubject({
+    blockers: [{
+      eventId: "ask-1",
+      actorId: "executor",
+      askedAt: nowIso(),
+    }],
+  });
+
+  assert.deepEqual(canCompleteWork({ projection, codeProducing: true, readinessPassed: false }), {
+    accepted: false,
+    blockers: [
+      "Unresolved blockers remain.",
+      "Code-producing work requires a linked pull request.",
+      "Readiness checks have not passed.",
+    ],
+  });
+});
+
+test("Work state policy allows claims for unclaimed work and optional parallel claims", () => {
+  const claimed = projectedWorkSubject({
+    state: "running",
+    claims: [{
+      eventId: "claim-1",
+      actorId: "executor",
+      claimedAt: nowIso(),
+    }],
+  });
+
+  assert.deepEqual(canClaimWork(projectedWorkSubject()), { accepted: true, blockers: [] });
+  assert.deepEqual(canClaimWork(claimed, { allowParallelClaims: true }), { accepted: true, blockers: [] });
+});
+
+test("Work state policy blocks claims for completed or actively claimed work", () => {
+  const completed = projectedWorkSubject({ state: "done", completedAt: nowIso(), completedByEventId: "done-1" });
+  const claimed = projectedWorkSubject({
+    state: "running",
+    claims: [{
+      eventId: "claim-1",
+      actorId: "executor",
+      claimedAt: nowIso(),
+    }],
+  });
+
+  assert.deepEqual(canClaimWork(completed), {
+    accepted: false,
+    blockers: ["Work is already complete."],
+  });
+  assert.deepEqual(canClaimWork(claimed), {
+    accepted: false,
+    blockers: ["An active claim already exists."],
+  });
+});
+
+test("Work state policy resolves only existing unresolved blockers", () => {
+  const projection = projectedWorkSubject({
+    blockers: [
+      {
+        eventId: "ask-open",
+        actorId: "executor",
+        askedAt: nowIso(),
+      },
+      {
+        eventId: "ask-resolved",
+        actorId: "executor",
+        askedAt: nowIso(),
+        resolvedByEventId: "resolve-1",
+        resolvedAt: nowIso(),
+      },
+    ],
+  });
+
+  assert.deepEqual(canResolveBlocker(projection, "ask-open"), { accepted: true, blockers: [] });
+  assert.deepEqual(canResolveBlocker(projection, "ask-missing"), {
+    accepted: false,
+    blockers: ["No blocker exists for ask event ask-missing."],
+  });
+  assert.deepEqual(canResolveBlocker(projection, "ask-resolved"), {
+    accepted: false,
+    blockers: ["Blocker ask-resolved is already resolved."],
+  });
 });
 
 test("Typed work contracts and registry validate supported jobs", () => {
