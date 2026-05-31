@@ -92,7 +92,7 @@ function App() {
       <div className="grid h-dvh w-full grid-rows-[3.5rem_1fr] overflow-hidden">
         <TopBar />
         {!loaded ? (
-          <div className="grid min-h-0 place-items-center bg-[var(--th-app)] px-6 text-center">
+          <div className="grid min-h-0 place-items-center bg-[var(--th-app)] px-4 text-center sm:px-6">
             <div>
               <div className="accent-spinner mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2" />
               <div className="text-sm font-semibold text-[var(--th-fg)]">Loading issues</div>
@@ -100,7 +100,7 @@ function App() {
             </div>
           </div>
         ) : (
-          <div className="relative grid min-h-0 grid-cols-1 lg:grid-cols-[13.75rem_minmax(0,1fr)] xl:grid-cols-[14.75rem_minmax(0,1fr)]">
+          <div className="relative grid min-h-0 grid-cols-1 md:grid-cols-[14rem_minmax(0,1fr)] lg:grid-cols-[14.5rem_minmax(0,1fr)]">
             <Sidebar
               activeStatus={activeStatus}
               issues={issues}
@@ -110,9 +110,9 @@ function App() {
               onQueryChange={setQuery}
             />
             <main className="grid min-h-0 min-w-0 grid-rows-[auto_1fr_auto] bg-[var(--th-app)]">
-              <header className="border-b border-[var(--th-border)] bg-[var(--th-surface)] px-4 py-4 lg:px-6">
+              <header className="border-b border-[var(--th-border)] bg-[var(--th-surface)] px-4 py-4 sm:px-5 lg:px-6">
                 <div className="min-w-0">
-                  <h1 className="m-0 text-[1.25rem] font-semibold leading-tight text-[var(--th-fg)]">Issues</h1>
+                  <h1 className="m-0 text-lg font-semibold leading-tight text-[var(--th-fg)] sm:text-xl">Issues</h1>
                   <p className="m-0 mt-1 break-words text-[0.8rem] text-[var(--th-fg-muted)]">
                     {filteredIssues.length} of {issues.length} issue{issues.length === 1 ? "" : "s"}
                   </p>
@@ -128,7 +128,7 @@ function App() {
                   setExpandedRef((current) => current === ref ? "" : ref);
                 }}
               />
-              <div className="border-t border-[var(--th-border)] px-6 py-3 text-center text-[0.72rem] tabular-nums text-[var(--th-fg-muted)]">
+              <div className="border-t border-[var(--th-border)] px-4 py-3 text-center text-[0.72rem] tabular-nums text-[var(--th-fg-muted)] sm:px-5 lg:px-6">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <span>{filteredIssues.length} of {issues.length} issues</span>
                   <div className="flex items-center gap-2">
