@@ -1,12 +1,14 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import type { Server } from "node:http";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { promisify } from "node:util";
 import assert from "node:assert/strict";
 import test from "node:test";
+import express, { type Express } from "express";
 
 import {
   FlowWorkRuntime,
@@ -89,6 +91,7 @@ import type { DesktopProjectRecord } from "../desktop/project-registry.js";
 import type { DesktopProjectSurface } from "../desktop/route-types.js";
 import { DesktopPromptRouter } from "../desktop/prompt-router.js";
 import { defaultDesktopRefreshIntervals, desktopRefreshIntervalsFromSettings } from "../desktop/renderer/refresh-settings.js";
+import { registerStaticRoutes } from "../desktop/static-routes.js";
 import { projectThemeFor } from "../src/theme/project-theme.js";
 
 const execFileAsync = promisify(execFile);
@@ -164,6 +167,21 @@ function desktopProjectSurfaceStub(
       reconcile,
     },
   } as unknown as DesktopProjectSurface;
+}
+
+async function listenExpress(app: Express): Promise<{ url: string; close: () => Promise<void> }> {
+  const server = await new Promise<Server>((resolveServer, reject) => {
+    const listener = app.listen(0, "127.0.0.1", () => resolveServer(listener));
+    listener.on("error", reject);
+  });
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  return {
+    url: `http://127.0.0.1:${address.port}`,
+    close: () => new Promise((resolveClose, reject) => {
+      server.close((error) => error ? reject(error) : resolveClose());
+    }),
+  };
 }
 
 async function approveIssueIntake(
@@ -2104,6 +2122,33 @@ test("Desktop LruMap evicts least recently used entries", () => {
 
 test("Desktop LruMap rejects empty cache sizes", () => {
   assert.throws(() => new LruMap<string, number>(0), /maxSize must be at least 1/);
+});
+
+test("Desktop static routes serve built HTML and keep missing UI 404s", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-desktop-static-"));
+  const desktopDir = join(root, "desktop");
+  const dashboardDir = join(root, "dashboard");
+  await mkdir(desktopDir, { recursive: true });
+  await mkdir(dashboardDir, { recursive: true });
+  const desktopFilePath = join(desktopDir, "index.html");
+  const dashboardFilePath = join(dashboardDir, "missing.html");
+  await writeFile(desktopFilePath, "<!doctype html><title>Desktop</title>");
+
+  const app = express();
+  registerStaticRoutes(app, { desktopFilePath, dashboardFilePath });
+  const server = await listenExpress(app);
+  try {
+    const desktopResponse = await fetch(`${server.url}/`);
+    assert.equal(desktopResponse.status, 200);
+    assert.equal(await desktopResponse.text(), "<!doctype html><title>Desktop</title>");
+    assert.equal((desktopResponse.headers.get("content-type") ?? "").includes("text/html"), true);
+
+    const dashboardResponse = await fetch(`${server.url}/dashboard`);
+    assert.equal(dashboardResponse.status, 404);
+    assert.equal(await dashboardResponse.text(), "Dashboard UI not built.");
+  } finally {
+    await server.close();
+  }
 });
 
 test("Pi session driver starts issue-linked sessions and records FlowSessionLink", async () => {
