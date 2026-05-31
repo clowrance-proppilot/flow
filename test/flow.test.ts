@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import type { Server } from "node:http";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -68,6 +68,7 @@ import {
   ReconciliationEngine,
   ProviderAdapterError,
   classifyProviderCliError,
+  GitAdapter,
   triageIssues as triageIssuesEngine,
   type CreateIssueOptions,
   type ProjectedWorkSubject,
@@ -6258,11 +6259,155 @@ test("Work Runtime records preserved worktrees when closeout prune refuses dirty
     jiraPollIntervalMs: 0,
   });
 
-  assert.equal(result.status, "already_merged_jira_verified");
+  assert.equal(result.status, "already_merged_cleanup_needed");
+  assert.deepEqual(result.blockers, ["Worktree cleanup needed for app_api at /repo/app-api/.worktrees/feature-ISSUE-21-closeout: worktree is dirty"]);
   assert.equal(result.prunedWorktrees?.[0]?.removed, false);
   assert.equal(result.prunedWorktrees?.[0]?.reason, "worktree is dirty");
   const issue = await ledger.readIssue("ISSUE-21");
+  assert.equal(issue?.metadata["workflow.closeout.cleanup_needed"], true);
   assert.match(String(issue?.metadata["workflow.closeout.pruned_worktrees"]), /worktree is dirty/);
+});
+
+test("Work Runtime returns partial success when cleanup fails after merge and retries cleanup without remerging", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const ledger = new MemoryWorkflowLedger();
+  let prMerged = false;
+  let mergeCalls = 0;
+  let pruneCalls = 0;
+  const workRuntime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    sourceControl: {
+      async inspect(repoPath) {
+        return { branch: "feature/ISSUE-22-closeout", headSha: "abc123", dirty: false, entries: [], worktreePath: repoPath };
+      },
+      async pruneWorktree(input) {
+        pruneCalls += 1;
+        if (pruneCalls === 1) {
+          throw new Error(`failed to delete '${input.worktreePath}': Filename too long`);
+        }
+        return { removed: true, worktreePath: input.worktreePath, branch: input.branch };
+      },
+    },
+    collaboration: {
+      async findPullRequests() {
+        return [];
+      },
+      async getPullRequest(repo, number) {
+        return {
+          repo,
+          number,
+          title: "Cleanup retry",
+          url: `https://github.com/ExampleOrg/${repo}/pull/${number}`,
+          headRefName: "feature/ISSUE-22-closeout",
+          state: prMerged ? "MERGED" : "OPEN",
+          mergedAt: prMerged ? "2026-05-15T15:00:00Z" : undefined,
+          mergeCommitSha: prMerged ? "abc123" : undefined,
+          isDraft: false,
+          checksPassing: true,
+          autoReviewStatus: "passed",
+          autoReviewMustFix: false,
+        };
+      },
+      async mergePullRequest(repo, number) {
+        mergeCalls += 1;
+        prMerged = true;
+        return {
+          url: `https://github.com/ExampleOrg/${repo}/pull/${number}`,
+          mergedAt: "2026-05-15T15:00:00Z",
+          mergeCommitSha: "abc123",
+        };
+      },
+    },
+    issueTracker: {
+      async viewIssue(key) {
+        return {
+          key,
+          summary: "Closeout issue",
+          status: "Closed",
+          statusCategory: "Done",
+          labels: [],
+        };
+      },
+      async postIssueComment(_key, body) {
+        return { body };
+      },
+    },
+  });
+  const session = await workRuntime.createSession("session-closeout-cleanup-retry");
+  await workRuntime.selectIssue(session.id, {
+    ref: "ISSUE-22",
+    title: "Cleanup retry",
+    repoKeys: ["app_api"],
+    state: "awaiting_review",
+    metadata: {
+      prRepo: "app-api",
+      prNumber: 22,
+      prUrl: "https://github.com/ExampleOrg/app-api/pull/22",
+      "workflow.repos.app_api.branch": "feature/ISSUE-22-closeout",
+      "workflow.repos.app_api.worktree_path": "/repo/app-api/.worktrees/feature-ISSUE-22-closeout",
+      evidenceRecorded: true,
+      evidenceSummary: "Acceptance criteria passed.",
+      evidenceSource: "npm test",
+      documentationRecorded: true,
+      documentationDisposition: "not_needed",
+      documentationSummary: "No docs needed.",
+    },
+  });
+
+  const first = await workRuntime.closeoutAfterApproval(session.id, {
+    jiraPollAttempts: 1,
+    jiraPollIntervalMs: 0,
+  });
+  const doctor = await workRuntime.diagnoseIssue(session.id);
+  const second = await workRuntime.closeoutAfterApproval(session.id, {
+    jiraPollAttempts: 1,
+    jiraPollIntervalMs: 0,
+  });
+
+  assert.equal(first.status, "merged_cleanup_needed");
+  assert.equal(first.issue.state, "done");
+  assert.equal(first.blockers.length, 1);
+  assert.match(first.blockers[0], /Filename too long/);
+  assert.equal(doctor.nextAction.type, "cleanup_worktrees");
+  assert.equal(second.status, "already_merged_jira_verified");
+  assert.deepEqual(second.blockers, []);
+  assert.equal(mergeCalls, 1);
+  assert.equal(pruneCalls, 2);
+  assert.equal(second.issue.metadata["workflow.closeout.cleanup_needed"], false);
+});
+
+test("GitAdapter pruneWorktree removes only the intended worktree and does not follow dependency junctions", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "flow-git-prune-"));
+  const repoPath = join(root, "repo");
+  const worktreePath = join(repoPath, ".worktrees", "feature-long-cleanup-path");
+  const sharedTarget = join(root, "shared-node-modules");
+  await mkdir(repoPath, { recursive: true });
+  await mkdir(sharedTarget, { recursive: true });
+  await writeFile(join(repoPath, "README.md"), "root\n");
+  await writeFile(join(sharedTarget, "keep.txt"), "shared\n");
+  await execFileAsync("git", ["-C", repoPath, "init"]);
+  await execFileAsync("git", ["-C", repoPath, "add", "README.md"]);
+  await execFileAsync("git", ["-C", repoPath, "-c", "user.email=flow@example.test", "-c", "user.name=Flow Test", "commit", "-m", "init"]);
+  await execFileAsync("git", ["-C", repoPath, "worktree", "add", "-b", "feature/long-cleanup-path", worktreePath]);
+  await mkdir(join(worktreePath, "node_modules"), { recursive: true });
+  try {
+    await symlink(sharedTarget, join(worktreePath, "node_modules", "shared"), process.platform === "win32" ? "junction" : "dir");
+  } catch {
+    t.skip("symlink creation is unavailable on this filesystem");
+    return;
+  }
+
+  const result = await new GitAdapter().pruneWorktree({
+    repoPath,
+    worktreePath,
+    branch: "feature/long-cleanup-path",
+    requireClean: false,
+  });
+
+  assert.equal(result.removed, true);
+  assert.equal(existsSync(worktreePath), false);
+  await access(join(sharedTarget, "keep.txt"));
 });
 
 test("Work Runtime records provider escalation as blocked workflow metadata", async () => {

@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
-import { access, mkdir } from "node:fs/promises";
-import { dirname, relative, resolve } from "node:path";
+import { access, lstat, mkdir, readdir, rm, rmdir } from "node:fs/promises";
+import { dirname, join, relative, resolve, toNamespacedPath } from "node:path";
 import { promisify } from "node:util";
 
 import type {
@@ -137,9 +137,42 @@ export class GitAdapter implements SourceControlProvider {
         branch: status.branch,
       };
     }
-    await execFileAsync("git", ["-C", options.repoPath, "worktree", "remove", options.worktreePath], {
-      maxBuffer: 10 * 1024 * 1024,
-    });
+    try {
+      await execFileAsync("git", ["-C", options.repoPath, "worktree", "remove", options.worktreePath], {
+        maxBuffer: 10 * 1024 * 1024,
+      });
+    } catch (error) {
+      const reason = errorMessage(error);
+      if (!isSafeFlowWorktreePath(options.repoPath, options.worktreePath)) {
+        return {
+          removed: false,
+          reason,
+          worktreePath: options.worktreePath,
+          branch: status.branch,
+        };
+      }
+      try {
+        if (await pathExists(options.worktreePath)) {
+          await removePathWithoutFollowingLinks(options.worktreePath);
+        }
+        await execFileAsync("git", ["-C", options.repoPath, "worktree", "prune"], {
+          maxBuffer: 10 * 1024 * 1024,
+        }).catch(() => undefined);
+        return {
+          removed: true,
+          reason: `git worktree remove failed; removed worktree directory safely: ${reason}`,
+          worktreePath: options.worktreePath,
+          branch: status.branch,
+        };
+      } catch (cleanupError) {
+        return {
+          removed: false,
+          reason: `${reason}; safe cleanup failed: ${errorMessage(cleanupError)}`,
+          worktreePath: options.worktreePath,
+          branch: status.branch,
+        };
+      }
+    }
     return {
       removed: true,
       worktreePath: options.worktreePath,
@@ -151,6 +184,35 @@ export class GitAdapter implements SourceControlProvider {
 function pathContains(parent: string, child: string): boolean {
   const relativePath = relative(resolve(parent), resolve(child));
   return relativePath === "" || (!relativePath.startsWith("..") && !relativePath.startsWith("/") && !relativePath.startsWith("\\"));
+}
+
+function isSafeFlowWorktreePath(repoPath: string, worktreePath: string): boolean {
+  const worktreesRoot = resolve(repoPath, ".worktrees");
+  const resolvedWorktree = resolve(worktreePath);
+  return resolvedWorktree !== worktreesRoot &&
+    pathContains(worktreesRoot, resolvedWorktree) &&
+    !pathContains(resolvedWorktree, process.cwd());
+}
+
+async function removePathWithoutFollowingLinks(path: string): Promise<void> {
+  const stat = await lstat(fsPath(path));
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    await rm(fsPath(path), { force: true });
+    return;
+  }
+  for (const entry of await readdir(fsPath(path))) {
+    await removePathWithoutFollowingLinks(join(path, entry));
+  }
+  await rmdir(fsPath(path));
+}
+
+function fsPath(path: string): string {
+  return process.platform === "win32" ? toNamespacedPath(path) : path;
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
 }
 
 async function gitOutput(repoPath: string, args: string[]): Promise<string> {
@@ -222,7 +284,7 @@ async function findWorktreePathForBranch(repoPath: string, branch: string): Prom
 
 async function pathExists(path: string): Promise<boolean> {
   try {
-    await access(path);
+    await access(fsPath(path));
     return true;
   } catch {
     return false;

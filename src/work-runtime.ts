@@ -306,7 +306,14 @@ export interface CloseoutAfterApprovalOptions {
 }
 
 export interface CloseoutAfterApprovalResult {
-  status: "blocked" | "merged_jira_verified" | "merged_jira_pending" | "already_merged_jira_verified" | "already_merged_jira_pending";
+  status:
+    | "blocked"
+    | "merged_jira_verified"
+    | "merged_jira_pending"
+    | "merged_cleanup_needed"
+    | "already_merged_jira_verified"
+    | "already_merged_jira_pending"
+    | "already_merged_cleanup_needed";
   issue: WorkItem;
   pr?: PullRequestStatus;
   blockers: string[];
@@ -2596,9 +2603,14 @@ export class FlowWorkRuntime {
     const jiraAfter = await this.waitForJiraCloseout(issue.ref, options);
     const jiraVerified = isJiraCloseoutStatus(jiraAfter);
     const prunedWorktrees = await this.pruneMergedIssueWorktrees(evidenceIssue);
-    const status = alreadyMerged
+    const cleanupBlockers = worktreeCleanupBlockers(prunedWorktrees);
+    const cleanupNeeded = cleanupBlockers.length > 0;
+    const baseStatus = alreadyMerged
       ? jiraVerified ? "already_merged_jira_verified" : "already_merged_jira_pending"
       : jiraVerified ? "merged_jira_verified" : "merged_jira_pending";
+    const status = cleanupNeeded
+      ? alreadyMerged ? "already_merged_cleanup_needed" : "merged_cleanup_needed"
+      : baseStatus;
     const writtenAt = nowIso();
     const updated = await this.ledger.writeIssue({
       ...evidenceIssue,
@@ -2619,6 +2631,8 @@ export class FlowWorkRuntime {
         "workflow.closeout.jira_status_after": jiraAfter.status ?? "",
         "workflow.closeout.jira_verified": jiraVerified,
         "workflow.closeout.pruned_worktrees": JSON.stringify(prunedWorktrees),
+        "workflow.closeout.cleanup_needed": cleanupNeeded,
+        "workflow.closeout.cleanup_blockers": JSON.stringify(cleanupBlockers),
         "workflow.closeout.checked_at": writtenAt,
       },
     });
@@ -2626,7 +2640,9 @@ export class FlowWorkRuntime {
       sessionId,
       type: "closeout.completed",
       issueRef: issue.ref,
-      message: jiraVerified
+      message: cleanupNeeded
+        ? `Merged ${pr.url}; worktree cleanup still needs attention.`
+        : jiraVerified
         ? `Merged ${pr.url} and verified Jira moved to ${jiraAfter.status ?? "a closeout status"}.`
         : `Merged ${pr.url}; Jira has not moved from ${jiraAfter.status ?? "current status"} yet.`,
       payload: { status, pr, merge, jiraBefore, jiraAfter, acceptanceCommentUrl, prunedWorktrees, writtenAt },
@@ -2635,7 +2651,10 @@ export class FlowWorkRuntime {
       status,
       issue: updated,
       pr,
-      blockers: jiraVerified ? [] : ["Jira did not move to Ready for QA or Done after merge."],
+      blockers: [
+        ...(jiraVerified ? [] : ["Jira did not move to Ready for QA or Done after merge."]),
+        ...cleanupBlockers,
+      ],
       acceptanceCommentUrl,
       merge,
       prunedWorktrees,
@@ -2652,12 +2671,22 @@ export class FlowWorkRuntime {
       const branch = existingString(issue.metadata[`workflow.repos.${repoKey}.branch`]) ?? existingString(issue.metadata.branch);
       if (!worktreePath || !branch) continue;
       const repoPath = this.topology.repoPath(this.projectRoot, repoKey);
-      const result = await this.sourceControl.pruneWorktree({
-        repoPath,
-        worktreePath,
-        branch,
-        requireClean: true,
-      });
+      let result: Awaited<ReturnType<NonNullable<SourceControlIntegration["pruneWorktree"]>>>;
+      try {
+        result = await this.sourceControl.pruneWorktree({
+          repoPath,
+          worktreePath,
+          branch,
+          requireClean: true,
+        });
+      } catch (error) {
+        result = {
+          removed: false,
+          reason: runtimeErrorMessage(error),
+          worktreePath,
+          branch,
+        };
+      }
       results.push({
         repoKey,
         removed: result.removed,
@@ -3781,6 +3810,38 @@ interface RetryableWorkJobFailure {
   summary: string;
 }
 
+type WorktreePruneRecord = {
+  repoKey: string;
+  removed: boolean;
+  reason?: string;
+  worktreePath: string;
+  branch?: string;
+};
+
+function worktreeCleanupBlockers(prunedWorktrees: WorktreePruneRecord[]): string[] {
+  return prunedWorktrees
+    .filter((result) => !result.removed)
+    .map((result) => {
+      const reason = result.reason ? `: ${result.reason}` : "";
+      return `Worktree cleanup needed for ${result.repoKey} at ${result.worktreePath}${reason}`;
+    });
+}
+
+function hasCloseoutCleanupNeeded(issue: WorkItem): boolean {
+  if (issue.metadata["workflow.closeout.cleanup_needed"] === true) return true;
+  const status = existingString(issue.metadata["workflow.closeout.status"]);
+  if (status === "merged_cleanup_needed" || status === "already_merged_cleanup_needed") return true;
+  const rawPrunedWorktrees = existingString(issue.metadata["workflow.closeout.pruned_worktrees"]);
+  if (!rawPrunedWorktrees) return false;
+  try {
+    const parsed = JSON.parse(rawPrunedWorktrees);
+    return Array.isArray(parsed) &&
+      parsed.some((item) => item && typeof item === "object" && (item as { removed?: unknown }).removed === false);
+  } catch {
+    return false;
+  }
+}
+
 function latestRetryableWorkJobFailure(
   workJobs: WorkJob[],
   workJobResults: WorkJobResult[],
@@ -3829,6 +3890,13 @@ function doctorNextAction(
   latestWorker?: WorkerTaskResult,
   retryableWorkJobFailure?: RetryableWorkJobFailure,
 ): FlowDoctorResult["nextAction"] {
+  if (hasCloseoutCleanupNeeded(issue)) {
+    return {
+      type: "cleanup_worktrees",
+      command: `flow '{"op":"workflow","mode":"advance","id":"${issue.ref}"}'`,
+      summary: "Retry closeout worktree cleanup for the merged issue.",
+    };
+  }
   if (isFlowTerminal(issue)) {
     return {
       type: "done",
@@ -4282,6 +4350,11 @@ function isAcceptanceCriterionEvidence(value: unknown): value is AcceptanceCrite
 
 function stableHash(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function runtimeErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
 }
 
 function parseNeedsConfirmationDisposition(value: unknown): "accept" | "reject" | "defer" | undefined {
