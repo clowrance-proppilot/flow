@@ -1,39 +1,12 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@import "../theme/tokens.css";
 
 @layer base {
-  :root {
-    --th-primary: #38bdf8;
-    --th-primary-dark: #0ea5e9;
-    --th-primary-fg: #ffffff;
-    --th-font-sans: "Open Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    --th-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    --th-icon-color: currentColor;
-    --th-icon-stroke-width: 2;
-    --th-brand-icon-image: none;
-
-    --th-app: #050914;
-    --th-surface: #0b1220;
-    --th-card: #101a2b;
-    --th-card-hover: #17243a;
-    --th-input: #070f1d;
-    --th-border: #334155;
-    --th-border-strong: #64748b;
-    --th-fg: #f8fafc;
-    --th-fg-soft: #dbeafe;
-    --th-fg-muted: #a8bed8;
-    --th-fg-faint: #7f95b0;
-    --th-hover: rgb(56 189 248 / 0.18);
-
-    color-scheme: dark;
-  }
-
   body {
     margin: 0;
-    background: var(--th-app);
-    color: var(--th-fg);
-    font-family: var(--th-font-sans);
+    background: var(--flow-app);
+    color: var(--flow-fg);
+    font-family: var(--flow-font-sans);
     -webkit-font-smoothing: antialiased;
   }
 
@@ -43,119 +16,119 @@
   }
 
   svg {
-    stroke-width: var(--th-icon-stroke-width);
+    stroke-width: var(--flow-icon-stroke-width);
   }
 }
 
 /* ---- Brand accent utilities ---- */
 .accent-bg {
-  background: var(--th-primary);
-  color: var(--th-primary-fg);
+  background: var(--flow-primary);
+  color: var(--flow-primary-fg);
 }
 .accent-bg:hover {
-  background: var(--th-primary-dark);
+  background: var(--flow-primary-dark);
   filter: none;
 }
 .accent-bg-tint {
-  background: color-mix(in srgb, var(--th-primary) 18%, transparent);
+  background: color-mix(in srgb, var(--flow-primary) 18%, transparent);
 }
 .accent-bg-tint-hover:hover {
-  background: color-mix(in srgb, var(--th-primary) 28%, transparent);
+  background: color-mix(in srgb, var(--flow-primary) 28%, transparent);
 }
 .accent-text {
-  color: var(--th-primary);
+  color: var(--flow-primary);
 }
 .accent-border {
-  border-color: var(--th-primary);
+  border-color: var(--flow-primary);
 }
 .accent-border-soft {
-  border-color: color-mix(in srgb, var(--th-primary) 40%, transparent);
+  border-color: color-mix(in srgb, var(--flow-primary) 40%, transparent);
 }
 .accent-dot {
-  background: var(--th-primary);
+  background: var(--flow-primary);
 }
 .accent-ring-focus:focus {
-  border-color: var(--th-primary);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--th-primary) 15%, transparent);
+  border-color: var(--flow-primary);
+  box-shadow: 0 0 0 3px var(--flow-focus-ring);
 }
 .accent-active {
-  border-color: var(--th-primary) !important;
-  background: color-mix(in srgb, var(--th-primary) 12%, transparent) !important;
-  box-shadow: 0 0 0 1px var(--th-primary) inset,
-    0 0 0 3px color-mix(in srgb, var(--th-primary) 22%, transparent);
+  border-color: var(--flow-primary) !important;
+  background: color-mix(in srgb, var(--flow-primary) 12%, transparent) !important;
+  box-shadow: 0 0 0 1px var(--flow-primary) inset,
+    0 0 0 3px color-mix(in srgb, var(--flow-primary) 22%, transparent);
 }
 .accent-spinner {
-  border-color: var(--th-border);
-  border-top-color: var(--th-primary);
+  border-color: var(--flow-border);
+  border-top-color: var(--flow-primary);
 }
 .brand-mark {
-  background-image: var(--th-brand-icon-image);
+  background-image: var(--flow-brand-icon-image);
   background-position: center;
   background-repeat: no-repeat;
   background-size: 62%;
 }
 .brand-mark-icon {
-  color: var(--th-icon-color);
+  color: var(--flow-icon-color);
 }
 .font-mono {
-  font-family: var(--th-font-mono);
+  font-family: var(--flow-font-mono);
 }
 
 /* ---- Work status themes ---- */
 .status-theme-all {
-  --status-color: #cbd5e1;
-  --status-soft: rgb(203 213 225 / 0.11);
-  --status-border: rgb(203 213 225 / 0.36);
-  --status-text: #e2e8f0;
+  --status-color: var(--flow-status-all);
+  --status-soft: var(--flow-status-all-soft);
+  --status-border: var(--flow-status-all-border);
+  --status-text: var(--flow-status-all-text);
 }
 .status-theme-active {
-  --status-color: var(--th-primary);
-  --status-soft: rgb(56 189 248 / 0.16);
-  --status-border: rgb(56 189 248 / 0.5);
-  --status-text: #dff8ff;
+  --status-color: var(--flow-status-active);
+  --status-soft: var(--flow-status-active-soft);
+  --status-border: var(--flow-status-active-border);
+  --status-text: var(--flow-status-active-text);
 }
 .status-theme-queued {
-  --status-color: #94a3b8;
-  --status-soft: rgb(148 163 184 / 0.14);
-  --status-border: rgb(148 163 184 / 0.42);
-  --status-text: #dbeafe;
+  --status-color: var(--flow-status-queued);
+  --status-soft: var(--flow-status-queued-soft);
+  --status-border: var(--flow-status-queued-border);
+  --status-text: var(--flow-status-queued-text);
 }
 .status-theme-ready {
-  --status-color: #2dd4bf;
-  --status-soft: rgb(45 212 191 / 0.15);
-  --status-border: rgb(45 212 191 / 0.46);
-  --status-text: #ccfbf1;
+  --status-color: var(--flow-status-ready);
+  --status-soft: var(--flow-status-ready-soft);
+  --status-border: var(--flow-status-ready-border);
+  --status-text: var(--flow-status-ready-text);
 }
 .status-theme-running,
 .status-theme-done {
-  --status-color: #22c55e;
-  --status-soft: rgb(34 197 94 / 0.15);
-  --status-border: rgb(34 197 94 / 0.46);
-  --status-text: #dcfce7;
+  --status-color: var(--flow-status-running);
+  --status-soft: var(--flow-status-running-soft);
+  --status-border: var(--flow-status-running-border);
+  --status-text: var(--flow-status-running-text);
 }
 .status-theme-review {
-  --status-color: #a78bfa;
-  --status-soft: rgb(167 139 250 / 0.16);
-  --status-border: rgb(167 139 250 / 0.5);
-  --status-text: #ede9fe;
+  --status-color: var(--flow-status-review);
+  --status-soft: var(--flow-status-review-soft);
+  --status-border: var(--flow-status-review-border);
+  --status-text: var(--flow-status-review-text);
 }
 .status-theme-needs-input {
-  --status-color: #f59e0b;
-  --status-soft: rgb(245 158 11 / 0.16);
-  --status-border: rgb(245 158 11 / 0.5);
-  --status-text: #fef3c7;
+  --status-color: var(--flow-status-needs-input);
+  --status-soft: var(--flow-status-needs-input-soft);
+  --status-border: var(--flow-status-needs-input-border);
+  --status-text: var(--flow-status-needs-input-text);
 }
 .status-theme-blocked {
-  --status-color: #ef4444;
-  --status-soft: rgb(239 68 68 / 0.16);
-  --status-border: rgb(239 68 68 / 0.54);
-  --status-text: #fee2e2;
+  --status-color: var(--flow-status-blocked);
+  --status-soft: var(--flow-status-blocked-soft);
+  --status-border: var(--flow-status-blocked-border);
+  --status-text: var(--flow-status-blocked-text);
 }
 .status-theme-unknown {
-  --status-color: var(--th-fg-faint);
-  --status-soft: rgb(127 149 176 / 0.12);
-  --status-border: rgb(127 149 176 / 0.36);
-  --status-text: var(--th-fg-muted);
+  --status-color: var(--flow-status-unknown);
+  --status-soft: var(--flow-status-unknown-soft);
+  --status-border: var(--flow-status-unknown-border);
+  --status-text: var(--flow-status-unknown-text);
 }
 .status-dot,
 .status-track-fill {
@@ -168,13 +141,13 @@
 }
 .status-filter {
   border-color: transparent;
-  color: var(--th-fg-soft);
+  color: var(--flow-fg-soft);
 }
 .status-filter:hover,
 .status-filter.is-active {
   border-color: var(--status-border);
   background: var(--status-soft);
-  color: var(--th-fg);
+  color: var(--flow-fg);
 }
 .status-filter.is-active {
   box-shadow: 0 0 0 1px var(--status-border) inset;
@@ -185,6 +158,6 @@
   width: 8px;
 }
 .mirror-scroll::-webkit-scrollbar-thumb {
-  background: var(--th-hover);
+  background: var(--flow-hover);
   border-radius: 8px;
 }
