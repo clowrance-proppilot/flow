@@ -39,6 +39,7 @@ import {
   LocalThreadExecutor,
   LocalIssueTrackerAdapter,
   NoopCodeCollaborationAdapter,
+  AutoflowService,
   ProviderAdapterError,
   classifyProviderCliError,
   triageIssues as triageIssuesEngine,
@@ -729,6 +730,24 @@ test("Desktop project registry tracks active Flow projects from config roots", a
   assert.equal((await registry.activeProject())?.id, project.id);
 });
 
+test("Desktop project registry can store project toggle state in SQLite", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-desktop-project-db-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  await bootstrapFlowConfig({ projectRoot: root, storage: "repo-tracked" });
+  const stateRoot = await mkdtemp(join(tmpdir(), "flow-desktop-db-state-"));
+  const dbPath = join(stateRoot, "desktop-state.db");
+  const registry = new DesktopProjectRegistry({ dbPath });
+
+  const project = await registry.addProject(root);
+  const disabled = await registry.setProjectAutoflow(project.id, false);
+  const reloaded = new DesktopProjectRegistry({ dbPath });
+  const active = await reloaded.activeProject();
+
+  assert.equal(disabled.autoflowEnabled, false);
+  assert.equal(active?.id, project.id);
+  assert.equal(active?.autoflowEnabled, false);
+});
+
 test("Project theme generates stable colors and initials", () => {
   const theme = projectThemeFor({ id: "flow-123", name: "Flow Desktop", root: "C:/repo/flow" });
   const repeated = projectThemeFor({ id: "flow-123", name: "Flow Desktop", root: "C:/repo/flow" });
@@ -1194,6 +1213,34 @@ test("Pi agent orchestrator starts the next ready issue and records a result", a
   const issueStatus = orchestrator.getStatus().issues["GH-56"];
   assert.equal(issueStatus?.phase, "needs_input");
   assert.match(issueStatus?.summary ?? "", /Acceptance evidence is missing/);
+});
+
+test("Autoflow service can be instantiated without Desktop modules", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-autoflow-service-"));
+  const runtime = testWorkRuntime({ store: new FlowStore({ root }), ledger: new MemoryWorkflowLedger() });
+  const service = new AutoflowService({
+    projectId: "project",
+    runtime,
+    enabled: () => false,
+    agentSessionDriver: {
+      async getSession() {
+        throw new Error("not used");
+      },
+      async openOrCreateIssueSession() {
+        throw new Error("not used");
+      },
+      async sendUserMessage() {
+        throw new Error("not used");
+      },
+      async postPrompt() {
+        throw new Error("not used");
+      },
+    },
+  });
+
+  const status = service.getStatus();
+  assert.equal(status.enabled, false);
+  assert.equal(status.summary, "Autoflow is paused.");
 });
 
 test("Pi agent orchestrator sends follow-up messages to running sessions", async () => {
