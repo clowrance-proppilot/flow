@@ -242,20 +242,15 @@ async function handleWorkflowRequest(request: Record<string, unknown>): Promise<
   const activeSessionId = sessionId(request);
   await ensureSession(activeSessionId);
   const issueRef = optionalString(request, "id");
-  if (["advance", "autoflow", "doctor", "audit", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation", "recordAcceptance", "observe"].includes(mode)) {
+  if (["advance", "doctor", "audit", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation", "recordAcceptance", "observe"].includes(mode)) {
     requireValue(issueRef, "id");
   }
-  if (issueRef && ["advance", "autoflow", "doctor", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation", "recordAcceptance"].includes(mode)) {
+  if (issueRef && ["advance", "doctor", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation", "recordAcceptance"].includes(mode)) {
     await runtime.selectIssue(activeSessionId, await queueIssue(issueRef));
   }
   switch (mode) {
     case "advance":
       return runtime.advanceIssue(activeSessionId, optionalString(request, "approveConfirmationId"));
-    case "autoflow":
-      return runtime.autoFlowIssue(activeSessionId, {
-        autoPrepareWorkspace: true,
-        maxSteps: limit(request, 20),
-      });
     case "doctor":
     case "audit": {
       const diagnosis = await runtime.diagnoseIssue(activeSessionId, issueRef);
@@ -338,7 +333,7 @@ async function handleWorkflowRequest(request: Record<string, unknown>): Promise<
         ref: requireValue(issueRef, "ref"),
       });
     default:
-      throw badMode("workflow", mode, ["advance", "audit", "autoflow", "doctor", "handoff", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation", "recordAcceptance", "observe"]);
+      throw badMode("workflow", mode, ["advance", "audit", "doctor", "handoff", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation", "recordAcceptance", "observe"]);
   }
 }
 
@@ -458,7 +453,7 @@ function flowManifest(target?: string) {
         config: "Validate or explain Flow config.",
         ledger: "Verify workflow ledger.",
         issue: "Inspect, create, select, or adopt issue/workspace state through the configured issue tracker.",
-        workflow: "Advance, audit, autoflow, record, or observe workflow state.",
+        workflow: "Advance, audit, record, or observe workflow state.",
         autoflow: "Run or inspect standalone Autoflow outside Desktop.",
         review: "Provider-neutral review of local readiness or external code review state.",
         runtime: "Call a raw Work Runtime method by name.",
@@ -468,10 +463,9 @@ function flowManifest(target?: string) {
   if (target === "workflow") {
     return {
       target,
-      modes: ["advance", "audit", "autoflow", "doctor", "handoff", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation", "recordAcceptance", "observe"],
+      modes: ["advance", "audit", "doctor", "handoff", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation", "recordAcceptance", "observe"],
       examples: [
         { op: "workflow", mode: "audit", id: "FLOW-123" },
-        { op: "workflow", mode: "autoflow", id: "FLOW-123", limit: 20 },
         { op: "workflow", mode: "recordEvidence", id: "FLOW-123", summary: "npm test passed", criteria: ["tests"] },
         { op: "workflow", mode: "recordAcceptance", id: "FLOW-123", summary: "npm test passed", criteria: ["tests"], disposition: "not_needed" },
       ],

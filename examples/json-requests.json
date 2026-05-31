@@ -150,14 +150,6 @@
         "request": { "op": "workflow", "mode": "audit", "id": "FLOW-123" },
         "description": "Audit issue state and findings"
       },
-      "autoflow": {
-        "request": { "op": "workflow", "mode": "autoflow", "id": "FLOW-123" },
-        "description": "Run automated workflow steps"
-      },
-      "autoflow_limited": {
-        "request": { "op": "workflow", "mode": "autoflow", "id": "FLOW-123", "limit": 10 },
-        "description": "Run autoflow with step limit"
-      },
       "doctor": {
         "request": { "op": "workflow", "mode": "doctor", "id": "FLOW-123" },
         "description": "Diagnose issue health"
@@ -225,6 +217,32 @@
       "observe": {
         "request": { "op": "workflow", "mode": "observe", "id": "FLOW-123" },
         "description": "Observe a flow subject"
+      }
+    },
+    "autoflow": {
+      "status": {
+        "request": { "op": "autoflow", "mode": "status" },
+        "description": "Check Autoflow status"
+      },
+      "tick": {
+        "request": { "op": "autoflow", "mode": "tick" },
+        "description": "Run one Autoflow tick"
+      },
+      "run": {
+        "request": { "op": "autoflow", "mode": "run", "id": "FLOW-123" },
+        "description": "Run Autoflow on an issue"
+      },
+      "run_limited": {
+        "request": { "op": "autoflow", "mode": "run", "id": "FLOW-123", "limit": 10 },
+        "description": "Run Autoflow with step limit"
+      },
+      "enable": {
+        "request": { "op": "autoflow", "mode": "enable" },
+        "description": "Enable Autoflow"
+      },
+      "disable": {
+        "request": { "op": "autoflow", "mode": "disable" },
+        "description": "Disable Autoflow"
       }
     },
     "runtime": {

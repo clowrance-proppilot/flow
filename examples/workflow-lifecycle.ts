@@ -131,8 +131,8 @@ function recordResult(
  */
 function autoFlow(issueId: string, maxSteps = 20): unknown {
   const response = callFlow({
-    op: "workflow",
-    mode: "autoflow",
+    op: "autoflow",
+    mode: "run",
     id: issueId,
     limit: maxSteps,
   });
