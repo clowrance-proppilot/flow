@@ -13,8 +13,8 @@ export function IssueList(props: {
   onActivate: (ref: string) => void;
 }) {
   return (
-    <div className="mirror-scroll min-h-0 overflow-auto p-3.5 lg:p-4">
-      <div className="grid gap-2.5">
+    <div className="mirror-scroll min-h-0 overflow-auto p-3 sm:p-4 lg:p-5">
+      <div className="grid gap-2 sm:gap-2.5">
         {props.issues.length ? props.issues.map((issue) => {
           const isExpanded = issue.ref === props.expandedRef;
           const statusLabel = workStatusLabel(issue);
@@ -28,7 +28,7 @@ export function IssueList(props: {
                 aria-expanded={isExpanded}
                 onClick={() => props.onActivate(issue.ref)}
                 className={cx(
-                  "grid w-full min-w-0 gap-2 rounded-md border border-l-4 border-[var(--th-border)] bg-[var(--th-card)] p-3.5 text-left shadow-sm transition-colors hover:bg-[var(--th-card-hover)]",
+                  "grid w-full min-w-0 gap-2 rounded-md border border-l-4 border-[var(--th-border)] bg-[var(--th-card)] p-3 text-left shadow-sm transition-colors hover:bg-[var(--th-card-hover)] sm:p-3.5",
                   "border-l-[var(--th-primary)]",
                   issue.ref === props.activeRef && "accent-active",
                   isExpanded && "rounded-b-none",
@@ -41,13 +41,13 @@ export function IssueList(props: {
                     </span>
                   </div>
                 </div>
-                <div className="line-clamp-2 break-words text-[0.86rem] font-semibold leading-snug text-[var(--th-fg)]">
+                <div className="line-clamp-2 break-words text-[0.85rem] font-semibold leading-snug text-[var(--th-fg)] sm:text-[0.86rem]">
                   {issue.title || "Untitled issue"}
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2.5 sm:gap-3">
                   <WorkflowTrack status={statusLabel} />
                   {!isExceptionalWorkStatusLabel(statusLabel) && (
-                    <span className="min-w-0 truncate text-[0.75rem] text-[var(--th-fg-muted)]">
+                    <span className="min-w-0 truncate text-[0.74rem] text-[var(--th-fg-muted)] sm:text-[0.75rem]">
                       {statusLabel}
                     </span>
                   )}
@@ -90,7 +90,7 @@ function IssueDetails({
   return (
     <section id={id} className="min-w-0 rounded-b-md border border-t-0 border-l-4 border-[var(--th-border)] border-l-[var(--th-primary)] bg-[var(--th-surface)] shadow-sm">
       <DetailSection title="Issue Details">
-        <dl className="grid grid-cols-[4.75rem_minmax(0,1fr)] gap-x-3 gap-y-2.5 text-[0.8rem]">
+        <dl className="grid grid-cols-[5rem_minmax(0,1fr)] gap-x-3 gap-y-2 text-[0.8rem] sm:grid-cols-[5.5rem_minmax(0,1fr)] sm:gap-y-2.5">
           <dt className="text-[var(--th-fg-muted)]">Status</dt>
           <dd className="m-0 break-words text-[var(--th-fg)]">{statusLabel}</dd>
           {issue.workStatusDetail && <>
@@ -126,10 +126,10 @@ function IssueDetails({
 
       {blockerLabels.length ? (
         <DetailSection title={attentionTitle}>
-          <div className="grid gap-2">
+          <div className="grid gap-1.5 sm:gap-2">
             {blockerLabels.map((label, index) => (
               <div key={`${index}-${label}`} className={cx(
-                "rounded-md border p-2 text-xs leading-relaxed [overflow-wrap:anywhere]",
+                "rounded-md border p-2.5 text-xs leading-relaxed [overflow-wrap:anywhere] sm:p-3",
                 statusLabel === "Blocked"
                   ? "border-flow-red/40 bg-flow-red/10 text-red-300"
                   : "border-[var(--th-border)] bg-[var(--th-card)] text-[var(--th-fg-soft)]",
@@ -144,7 +144,7 @@ function IssueDetails({
       {handoffPrompt ? (
         <DetailSection title="Handoff Prompt">
           <div className="grid gap-3">
-            <pre className="m-0 max-h-48 overflow-auto whitespace-pre-wrap rounded-md border border-[var(--th-border)] bg-[var(--th-input)] p-3 text-[0.74rem] leading-relaxed text-[var(--th-fg-soft)] [overflow-wrap:anywhere]">{handoffPrompt}</pre>
+            <pre className="m-0 max-h-48 overflow-auto whitespace-pre-wrap rounded-md border border-[var(--th-border)] bg-[var(--th-input)] p-3 text-[0.74rem] leading-relaxed text-[var(--th-fg-soft)] [overflow-wrap:anywhere] sm:p-3.5">{handoffPrompt}</pre>
             <button
               type="button"
               data-mirror-control="copy-handoff-prompt"
