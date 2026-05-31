@@ -1,50 +1,58 @@
 #!/usr/bin/env node
-import { rmSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, normalize } from "node:path";
 import { run } from "node:test";
+import { pathToFileURL } from "node:url";
 import { fileURLToPath } from "node:url";
-import ts from "typescript";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const flowRoot = join(scriptDir, "..");
-const outDir = join(flowRoot, ".tmp", "test");
+const cliShim = join(flowRoot, ".tmp", "test", "src", "flow.js");
 
-rmSync(outDir, { recursive: true, force: true });
-buildFlow();
-await runTests([
-  join(outDir, "test", "flow.test.js"),
-  join(outDir, "test", "autoflow-runner.test.js"),
-  join(outDir, "test", "dashboard-state.test.js"),
-  join(outDir, "test", "sql-state.test.js"),
-  join(outDir, "test", "sql-store.test.js"),
-]);
+const defaultTestFiles = [
+  "test/flow.test.ts",
+  "test/autoflow-runner.test.ts",
+  "test/dashboard-state.test.ts",
+  "test/sql-state.test.ts",
+  "test/sql-store.test.ts",
+];
 
-function buildFlow() {
-  const packageRoot = flowRoot;
-  const configPath = ts.findConfigFile(packageRoot, ts.sys.fileExists, "tsconfig.json");
-  if (!configPath) throw new Error("Missing flow/tsconfig.json");
+writeCliShim();
+await runTests(resolveTestFiles(process.argv.slice(2)));
 
-  const config = ts.readConfigFile(configPath, ts.sys.readFile);
-  if (config.error) throw new Error(formatDiagnostics([config.error]));
+function writeCliShim() {
+  mkdirSync(dirname(cliShim), { recursive: true });
+  const sourceCli = join(flowRoot, "src", "flow.ts");
+  const tsxRegister = pathToFileURL(join(flowRoot, "node_modules", "tsx", "dist", "esm", "index.mjs")).href;
+  writeFileSync(
+    cliShim,
+    `#!/usr/bin/env node
+import { spawnSync } from "node:child_process";
 
-  const parsed = ts.parseJsonConfigFileContent(
-    config.config,
-    ts.sys,
-    packageRoot,
-    {
-      outDir,
-      rootDir: packageRoot,
-      noEmit: false,
-    },
-    configPath,
+const result = spawnSync(process.execPath, ["--import", ${JSON.stringify(tsxRegister)}, ${JSON.stringify(sourceCli)}, ...process.argv.slice(2)], {
+  cwd: process.cwd(),
+  encoding: "utf8",
+  env: process.env,
+});
+
+if (result.stdout) process.stdout.write(result.stdout);
+if (result.stderr) process.stderr.write(result.stderr);
+if (result.error) {
+  console.error(result.error);
+  process.exit(1);
+}
+process.exit(result.status ?? 1);
+`,
   );
-  if (parsed.errors.length) throw new Error(formatDiagnostics(parsed.errors));
+}
 
-  const program = ts.createProgram(parsed.fileNames, parsed.options);
-  const emit = program.emit();
-  const diagnostics = ts.getPreEmitDiagnostics(program).concat(emit.diagnostics);
-  if (diagnostics.length) throw new Error(formatDiagnostics(diagnostics));
-  if (emit.emitSkipped) throw new Error("TypeScript emit was skipped.");
+function resolveTestFiles(args) {
+  const requested = args.length ? args : defaultTestFiles;
+  return requested.map((file) => {
+    const resolved = isAbsolute(file) ? file : join(flowRoot, file);
+    if (!existsSync(resolved)) throw new Error(`Missing test file: ${normalize(file)}`);
+    return resolved;
+  });
 }
 
 async function runTests(files) {
@@ -64,12 +72,4 @@ async function runTests(files) {
     throw new Error(`flow-runtime tests failed: ${failures.join(", ")}`);
   }
   console.log(`flow-runtime tests: ${counts.pass} passed`);
-}
-
-function formatDiagnostics(diagnostics) {
-  return ts.formatDiagnosticsWithColorAndContext(diagnostics, {
-    getCanonicalFileName: (fileName) => fileName,
-    getCurrentDirectory: () => flowRoot,
-    getNewLine: () => "\n",
-  });
 }
