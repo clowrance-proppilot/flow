@@ -73,6 +73,8 @@ export interface AutoflowServiceOptions {
   enabled?: () => boolean;
   maxConcurrency?: number;
   postPromptTimeoutMs?: number;
+  pendingCheckPollAttempts?: number;
+  pendingCheckPollIntervalMs?: number;
   gitInspect?: (path: string) => Promise<{ dirty: boolean; entries: string[] }>;
   autoReconcileOnSlotAvailable?: boolean;
   onStatusChange?: (status: AutoflowServiceStatus) => void | Promise<void>;
@@ -99,6 +101,8 @@ export interface AutoflowCodeReviewCreator {
 }
 
 const COMMIT_FOLLOW_UP_PROMPT = "You have uncommitted changes. Commit them with a descriptive message and push to the branch.";
+const DEFAULT_PENDING_CHECK_POLL_ATTEMPTS = 30;
+const DEFAULT_PENDING_CHECK_POLL_INTERVAL_MS = 10_000;
 
 interface ActiveRun {
   promise: Promise<void>;
@@ -117,6 +121,8 @@ export class AutoflowService {
   private readonly enabled: () => boolean;
   private readonly maxConcurrency: number;
   private readonly postPromptTimeoutMs: number;
+  private readonly pendingCheckPollAttempts: number;
+  private readonly pendingCheckPollIntervalMs: number;
   private readonly autoReconcileOnSlotAvailable: boolean;
   private readonly gitInspect?: (path: string) => Promise<{ dirty: boolean; entries: string[] }>;
   private readonly onStatusChange?: (status: AutoflowServiceStatus) => void | Promise<void>;
@@ -132,6 +138,8 @@ export class AutoflowService {
     this.enabled = options.enabled ?? (() => true);
     this.maxConcurrency = options.maxConcurrency ?? 5;
     this.postPromptTimeoutMs = options.postPromptTimeoutMs ?? 10 * 60 * 1000;
+    this.pendingCheckPollAttempts = options.pendingCheckPollAttempts ?? DEFAULT_PENDING_CHECK_POLL_ATTEMPTS;
+    this.pendingCheckPollIntervalMs = options.pendingCheckPollIntervalMs ?? DEFAULT_PENDING_CHECK_POLL_INTERVAL_MS;
     this.autoReconcileOnSlotAvailable = options.autoReconcileOnSlotAvailable ?? true;
     this.gitInspect = options.gitInspect;
     this.onStatusChange = options.onStatusChange;
@@ -372,7 +380,7 @@ export class AutoflowService {
         changedFiles: extractChangedFilesFromTimeline(completed.timeline),
         testsRun: extractTestsRunFromTimeline(completed.timeline),
       });
-      const advanced = await this.runtime.advanceIssue(flowSessionId);
+      const advanced = await this.advanceIssueThroughPendingChecks(flowSessionId);
       finalPhase = phaseAfterWorkerAdvance(advanced);
       finalSummary = advanced.message || finalSummary;
     }
@@ -402,6 +410,15 @@ export class AutoflowService {
   private emitStatusChange(): void {
     if (!this.onStatusChange) return;
     void Promise.resolve(this.onStatusChange(this.getStatus())).catch(() => undefined);
+  }
+
+  private async advanceIssueThroughPendingChecks(flowSessionId: string): Promise<AdvanceIssueResult> {
+    let advanced = await this.runtime.advanceIssue(flowSessionId);
+    for (let attempt = 0; attempt < this.pendingCheckPollAttempts && isPendingCheckAdvance(advanced); attempt += 1) {
+      if (this.pendingCheckPollIntervalMs > 0) await sleep(this.pendingCheckPollIntervalMs);
+      advanced = await this.runtime.advanceIssue(flowSessionId);
+    }
+    return advanced;
   }
 
   private async postPromptWithTimeout(sessionId: string, prompt: string): Promise<AutoflowAgentSessionSnapshot> {
@@ -660,6 +677,17 @@ function canCloseoutBlockedAutoflow(result: AutoFlowIssueResult): boolean {
 function phaseAfterWorkerAdvance(result: AdvanceIssueResult): AutoflowServicePhase {
   if (result.status === "awaiting_review") return "idle";
   return "needs_input";
+}
+
+function isPendingCheckAdvance(result: AdvanceIssueResult): boolean {
+  return result.status === "blocked" && result.message.includes("Pull request checks are still running.");
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timeout = setTimeout(resolve, ms);
+    timeout.unref?.();
+  });
 }
 
 function isActivePhase(phase: AutoflowServicePhase): boolean {
