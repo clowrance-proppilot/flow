@@ -19,8 +19,10 @@ import type { DesktopProjectSurface, RouteContext } from "./route-types.js";
 import { registerStaticRoutes } from "./static-routes.js";
 import { registerWorkRoutes } from "./work-routes.js";
 import { nextAutoflowReconcileDelay, runEnabledProjectAutoflowReconcile } from "./autoflow-reconcile.js";
+import { LruMap } from "./lru-map.js";
 
 const isDev = !app.isPackaged;
+export const desktopProjectSurfaceCacheSize = 5;
 
 let mainWindow: BrowserWindow | null = null;
 let dashboardServer: Server | undefined;
@@ -71,7 +73,7 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
     dbPath: join(resolveDesktopUserDataPath(), "flow-desktop-state.db"),
   });
   await projectRegistry.addProject(flowRoot);
-  const projectSurfaces = new Map<string, DesktopProjectSurface>();
+  const projectSurfaces = new LruMap<string, DesktopProjectSurface>(desktopProjectSurfaceCacheSize);
   const projectSurface = async (project: DesktopProjectRecord): Promise<DesktopProjectSurface> => {
     const cached = projectSurfaces.get(project.id);
     if (cached && cached.project.root === project.root) return cached;
