@@ -17,6 +17,7 @@ export interface ReadinessAssessmentInput {
     mergeable?: string;
     mergeStateStatus?: string;
     checksPassing?: boolean;
+    checksPending?: boolean;
     templateMissingHeadings?: string[];
     autoReviewStatus?: string;
     autoReviewMustFix?: boolean;
@@ -56,7 +57,8 @@ export function assessIssue(input: ReadinessAssessmentInput): ReadinessAssessmen
     : latestWorker && shouldAutoRetryWorker(latestWorker) && latestSuccessfulWorker
     ? latestSuccessfulWorker
     : latestWorker;
-  const hasSuccessfulWorker = workerForReadiness?.status === "succeeded";
+  const hasSuccessfulWorker = workerForReadiness?.status === "succeeded" &&
+    (workerHasCompletionOutput(workerForReadiness) || Boolean(input.review?.prUrl));
   const externalProviderEscalation = input.issue.metadata.externalProviderEscalation;
   const codeReviewRequired = input.codeReviewRequired ?? true;
 
@@ -101,6 +103,15 @@ export function assessIssue(input: ReadinessAssessmentInput): ReadinessAssessmen
     findings.push(finding(input.issue.ref, "warning", "Issue is marked running but has no execution result."));
   }
 
+  if (latestWorker?.status === "succeeded" && !workerHasCompletionOutput(latestWorker) && !input.review?.prUrl) {
+    findings.push(finding(
+      input.issue.ref,
+      "warning",
+      "Successful worker result has no changed files or tests.",
+      "Retry execution before applying closeout gates.",
+    ));
+  }
+
   const pullRequestMerged = isPullRequestMerged(input.review);
 
   if (input.review?.prUrl && !pullRequestMerged && hasDirtyPreparedWorktree(input.issue) && latestSuccessfulWorker) {
@@ -120,7 +131,9 @@ export function assessIssue(input: ReadinessAssessmentInput): ReadinessAssessmen
     findings.push(finding(input.issue.ref, "blocker", "Pull request has merge conflicts."));
   }
 
-  if (input.review?.prUrl && !pullRequestMerged && input.review.checksPassing === false) {
+  if (input.review?.prUrl && !pullRequestMerged && input.review.checksPending === true) {
+    findings.push(finding(input.issue.ref, "blocker", "Pull request checks are still running."));
+  } else if (input.review?.prUrl && !pullRequestMerged && input.review.checksPassing === false) {
     findings.push(finding(input.issue.ref, "blocker", "Pull request checks are not passing."));
   }
 
@@ -212,8 +225,9 @@ export function assessIssue(input: ReadinessAssessmentInput): ReadinessAssessmen
   const hasBlocker = findings.some((item) => item.severity === "blocker");
   const pullRequestGateSatisfied = codeReviewRequired ? Boolean(input.review?.prUrl) : true;
   const pullRequestStateReady = !input.review?.prUrl ||
-    (pullRequestMerged || input.review?.isDraft === false) &&
+      (pullRequestMerged || input.review?.isDraft === false) &&
       (pullRequestMerged || !isPullRequestConflicted(input.review)) &&
+      (pullRequestMerged || input.review?.checksPending !== true) &&
       (pullRequestMerged || input.review?.checksPassing !== false) &&
       (pullRequestMerged || !hasMissingPullRequestTemplateHeadings(input.review)) &&
       (pullRequestMerged || input.review?.autoReviewStatus !== "failed") &&
@@ -243,6 +257,10 @@ function latestSuccessfulWorkerResult(workerResults: WorkerTaskResult[]): Worker
     if (result?.status === "succeeded") return result;
   }
   return undefined;
+}
+
+function workerHasCompletionOutput(result: WorkerTaskResult): boolean {
+  return result.changedFiles.length > 0 || result.testsRun.length > 0;
 }
 
 function blockedAssessment(issueRef: string, findings: ReadinessFinding[]): ReadinessAssessment {
@@ -341,13 +359,28 @@ function readableText(value: unknown): string | undefined {
   return compact;
 }
 
-function shouldAutoRetryWorker(result: WorkerTaskResult): boolean {
-  const summary = readableText(result.summary)?.toLowerCase() ?? "";
-  if (summary.includes("without a readable error message")) return true;
-  if (summary.includes("timed out")) return true;
-  if (summary.includes("interrupted before returning a structured result")) return true;
-  if (summary.includes("provider credentials")) return true;
+export function isRetryableWorkerFailure(result: WorkerTaskResult | undefined): boolean {
+  if (!result || (result.status !== "blocked" && result.status !== "failed")) return false;
+  const text = readableText([
+    result.summary,
+    result.nextPickup,
+    ...result.blockers,
+  ].filter((item): item is string => typeof item === "string").join(" "))?.toLowerCase() ?? "";
+  if (text.includes("without a readable error message")) return true;
+  if (text.includes("timed out")) return true;
+  if (text.includes("interrupted before returning a structured result")) return true;
+  if (text.includes("provider credentials")) return true;
+  if (text.includes("executor setup")) return true;
+  if (text.includes("environment setup")) return true;
+  if (text.includes("pi sdk")) return true;
+  if (text.includes("@earendil-works/pi-coding-agent")) return true;
+  if (text.includes("worker session stalled")) return true;
+  if (text.includes("autoflow") && text.includes("stuck")) return true;
   return false;
+}
+
+function shouldAutoRetryWorker(result: WorkerTaskResult): boolean {
+  return isRetryableWorkerFailure(result);
 }
 
 function shouldTreatBlockerAsRetryable(blocker: string, result: WorkerTaskResult): boolean {
@@ -356,7 +389,13 @@ function shouldTreatBlockerAsRetryable(blocker: string, result: WorkerTaskResult
   return normalized.includes("without a readable error message") ||
     normalized.includes("timed out") ||
     normalized.includes("interrupted before returning a structured result") ||
-    normalized.includes("provider credentials");
+    normalized.includes("provider credentials") ||
+    normalized.includes("executor setup") ||
+    normalized.includes("environment setup") ||
+    normalized.includes("pi sdk") ||
+    normalized.includes("@earendil-works/pi-coding-agent") ||
+    normalized.includes("worker session stalled") ||
+    (normalized.includes("autoflow") && normalized.includes("stuck"));
 }
 
 function isProviderCredentialWorkerFailure(result: WorkerTaskResult | undefined): boolean {

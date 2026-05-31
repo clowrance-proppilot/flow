@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from "electron";
+import { app, BrowserWindow } from "electron";
 import { join, resolve, dirname } from "node:path";
 import { existsSync, watch, type FSWatcher } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -9,8 +9,8 @@ import { validateFlowConfig } from "../src/config/config-loader.js";
 import { createConfiguredWorkRuntime } from "../src/runtime-factory.js";
 import { GitAdapter } from "../src/adapters/git.js";
 import { DesktopActionRouter } from "./action-router.js";
-import { PiAgentOrchestrator } from "./pi-agent-orchestrator.js";
-import { PiSessionDriver } from "./pi-session-driver.js";
+import { createDefaultAutoflowRunnerState, StandaloneAutoflowRunner } from "../src/autoflow-runner.js";
+import { PiSessionDriver } from "../src/pi-session-driver.js";
 import { DesktopProjectRegistry, type DesktopProjectRecord } from "./project-registry.js";
 import { DesktopPromptRouter, type DesktopAgentSessionAdapter } from "./prompt-router.js";
 import { registerProjectRoutes } from "./project-routes.js";
@@ -18,8 +18,11 @@ import { message } from "./route-helpers.js";
 import type { DesktopProjectSurface, RouteContext } from "./route-types.js";
 import { registerStaticRoutes } from "./static-routes.js";
 import { registerWorkRoutes } from "./work-routes.js";
+import { nextAutoflowReconcileDelay, runEnabledProjectAutoflowReconcile } from "./autoflow-reconcile.js";
+import { LruMap } from "./lru-map.js";
 
 const isDev = !app.isPackaged;
+export const desktopProjectSurfaceCacheSize = 5;
 
 let mainWindow: BrowserWindow | null = null;
 let dashboardServer: Server | undefined;
@@ -67,10 +70,10 @@ function resolveDashboardFilePath(flowRoot: string): string {
 
 async function startDashboardServer(flowRoot: string): Promise<number> {
   const projectRegistry = new DesktopProjectRegistry({
-    statePath: join(resolveDesktopUserDataPath(), "projects.json"),
+    dbPath: join(resolveDesktopUserDataPath(), "flow-desktop-state.db"),
   });
   await projectRegistry.addProject(flowRoot);
-  const projectSurfaces = new Map<string, DesktopProjectSurface>();
+  const projectSurfaces = new LruMap<string, DesktopProjectSurface>(desktopProjectSurfaceCacheSize);
   const projectSurface = async (project: DesktopProjectRecord): Promise<DesktopProjectSurface> => {
     const cached = projectSurfaces.get(project.id);
     if (cached && cached.project.root === project.root) return cached;
@@ -92,11 +95,11 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
       configured,
       dashboardState,
       piSessionDriver,
-      piAgentOrchestrator: new PiAgentOrchestrator({
+      autoflowRunner: new StandaloneAutoflowRunner({
         projectId: project.id,
         runtime: configured.runtime,
-        piSessionDriver,
-        enabled: () => project.autoflowEnabled !== false,
+        state: createDefaultAutoflowRunnerState(project.root),
+        agentSessionDriver: piSessionDriver,
         gitInspect: async (path: string) => {
           const status = await git.inspect(path);
           return { dirty: status.dirty, entries: status.entries };
@@ -116,7 +119,7 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
       const session = input.sessionId
         ? await surface.piSessionDriver.getSession(input.sessionId).catch(() => undefined)
         : undefined;
-      void surface.piAgentOrchestrator.sendUserMessage({
+      void surface.autoflowRunner.sendUserMessage({
         issueRef: input.issueRef,
         sessionId: session?.id,
         text: input.prompt,
@@ -164,10 +167,16 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
   registerWorkRoutes(server, routeContext, { promptRouter, actionRouter }, jsonBody);
   registerStaticRoutes(server, { desktopFilePath, dashboardFilePath });
 
-  const autoflowInterval = setInterval(() => {
-    void runEnabledProjectAutoflowReconcile(projectRegistry, projectSurface);
-  }, 30000);
-  void runEnabledProjectAutoflowReconcile(projectRegistry, projectSurface);
+  let autoflowReconcileTimer: ReturnType<typeof setTimeout> | undefined;
+  let autoflowReconcileStopped = false;
+  const scheduleAutoflowReconcile = async (): Promise<void> => {
+    const summary = await runEnabledProjectAutoflowReconcile(projectRegistry, projectSurface);
+    if (autoflowReconcileStopped) return;
+    autoflowReconcileTimer = setTimeout(() => {
+      void scheduleAutoflowReconcile();
+    }, nextAutoflowReconcileDelay(summary));
+  };
+  void scheduleAutoflowReconcile();
 
   // Find a free port
   return new Promise((resolve, reject) => {
@@ -180,20 +189,12 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
       }
     });
     listener.on("error", reject);
-    listener.on("close", () => clearInterval(autoflowInterval));
+    listener.on("close", () => {
+      autoflowReconcileStopped = true;
+      if (autoflowReconcileTimer) clearTimeout(autoflowReconcileTimer);
+    });
     dashboardServer = listener;
   });
-}
-
-export async function runEnabledProjectAutoflowReconcile(
-  projectRegistry: DesktopProjectRegistry,
-  projectSurface: (project: DesktopProjectRecord) => Promise<DesktopProjectSurface>,
-): Promise<void> {
-  const projects = await projectRegistry.listProjects();
-  await Promise.all(projects.filter((project) => project.valid && project.autoflowEnabled !== false).map(async (project) => {
-    const surface = await projectSurface(project);
-    await surface.piAgentOrchestrator.reconcile();
-  }));
 }
 
 function createWindow(port: number): BrowserWindow {
@@ -206,7 +207,6 @@ function createWindow(port: number): BrowserWindow {
     show: false,
     title: "Flow",
     webPreferences: {
-      preload: join(import.meta.dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -230,16 +230,6 @@ app.whenReady().then(async () => {
 
   const port = await startDashboardServer(flowRoot);
   console.log(`[flow-desktop] dashboard server on http://127.0.0.1:${port}`);
-
-  // --- IPC handlers for future thread/session features ---
-  ipcMain.handle("flow:ping", () => "flow desktop ready");
-
-  ipcMain.handle("flow:openExternal", async (_event, url: string) => {
-    const parsed = new URL(url);
-    if (["http:", "https:"].includes(parsed.protocol)) {
-      await shell.openExternal(url);
-    }
-  });
 
   mainWindow = createWindow(port);
   enableRendererAutoReload(flowRoot);

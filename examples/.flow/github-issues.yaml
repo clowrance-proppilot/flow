@@ -1,0 +1,44 @@
+# GitHub Issues Flow configuration
+# This configuration uses GitHub Issues as the issue tracker.
+# It's suitable for teams using GitHub for issue management.
+
+version: "1"
+project:
+  name: "github-project"
+
+topology:
+  repos:
+    main:
+      name: "github-project"
+      baseBranch: "main"
+  branchPattern: "{kind}/{issueRef}-{slug}"
+  pullRequestUrlPattern: "https://github.com/my-org/{repoName}/pull/{number}"
+
+issueTracker:
+  type: "github"
+  owner: "my-org"
+  repo: "github-project"
+  assignee: "my-username"
+  activeLabels: ["in-progress", "active"]
+  backlogLabels: ["backlog", "todo"]
+
+collaboration:
+  type: "github"
+  owner: "my-org"
+
+sourceControl:
+  type: "git"
+
+ledger:
+  type: "flow"
+
+runtime:
+  dashboard:
+    defaultThemeId: "dark"
+    defaultMode: "dark"
+    themes:
+      - id: "dark"
+        name: "Dark"
+        primary: "#58a6ff"
+        primaryDark: "#1f6feb"
+        primaryFg: "#ffffff"

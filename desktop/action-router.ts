@@ -12,15 +12,13 @@ import {
   type WorkflowLedger,
 } from "../src/index.js";
 import type { AutoFlowIssueResult, FlowDoctorResult, FlowWorkRuntime } from "../src/work-runtime.js";
+import { desktopActionValues, type DesktopAction } from "./action-types.js";
 import type { DesktopProjectRecord, DesktopProjectRegistry } from "./project-registry.js";
 
 type DesktopActionRuntime = Pick<
   FlowWorkRuntime,
   "createSession" | "selectIssue" | "summarizeHandoff" | "inspectIssue" | "recordEvidence" | "recordWorkerResult" | "recordDocumentation" | "diagnoseIssue" | "autoFlowIssue" | "advanceIssue"
 >;
-
-export const desktopActionValues = ["autoflow", "approve_confirmation", "record_evidence", "record_result", "record_documentation", "run_doctor"] as const;
-export type DesktopAction = typeof desktopActionValues[number];
 
 export interface DesktopActionInput {
   action: DesktopAction;

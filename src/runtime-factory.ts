@@ -5,10 +5,11 @@ import type { CodeCollaborationProvider, IssueTrackerProvider } from "./adapters
 import type { FlowConfig } from "./config/config-schema.js";
 import { configToProjectTopology, configToWorkTypeRegistry } from "./config/config-loader.js";
 import { assessIssue } from "./readiness.js";
-import { FlowStore } from "./store.js";
+import { createFlowStore, type FlowStoreBackend } from "./store.js";
 import { FlowWorkRuntime } from "./work-runtime.js";
-import { createWorkflowLedger, type WorkflowLedger } from "./ledger.js";
-import { flowRuntimePath, flowWorkflowLedgerPath, resolveFlowPath } from "./flow-layout.js";
+import { createWorkflowLedger, MigratingWorkflowLedger, type WorkflowLedger } from "./ledger.js";
+import { flowRuntimePath, flowUserWorkflowLedgerDatabasePath, flowWorkflowLedgerPath, resolveFlowPath } from "./flow-layout.js";
+import { createKyselyFlowState, createPostgresDialect, createPostgresSqlStateConfig, createSqliteSqlStateConfig } from "./sql-state.js";
 
 export interface ConfiguredWorkRuntimeOptions {
   projectRoot: string;
@@ -27,17 +28,12 @@ export interface ConfiguredWorkRuntime {
 
 export function createConfiguredWorkRuntime(options: ConfiguredWorkRuntimeOptions): ConfiguredWorkRuntime {
   const { projectRoot, flowConfig } = options;
-  const workflowLedgerPath = resolveWorkflowLedgerPath(projectRoot, flowConfig);
-  const workflowLedger = createWorkflowLedger({
-    cwd: projectRoot,
-    adapter: configString(flowConfig?.ledger, "type"),
-    path: workflowLedgerPath,
-  });
+  const { workflowLedger, workflowLedgerPath } = createConfiguredWorkflowLedger(projectRoot, flowConfig);
   const issueTracker = createIssueTracker(projectRoot, flowConfig, workflowLedger);
   const collaboration = createCollaboration(projectRoot, flowConfig);
   const runtimeStorePath = resolveRuntimeStorePath(projectRoot, flowConfig);
   const runtime = new FlowWorkRuntime({
-    store: new FlowStore({ root: runtimeStorePath }),
+    store: createFlowStore({ root: runtimeStorePath, backend: resolveRuntimeStoreBackend(flowConfig) }),
     ledger: workflowLedger,
     collaboration,
     issueTracker,
@@ -65,6 +61,56 @@ export function createConfiguredWorkRuntime(options: ConfiguredWorkRuntimeOption
   };
 }
 
+function createConfiguredWorkflowLedger(
+  projectRoot: string,
+  flowConfig: FlowConfig | undefined,
+): { workflowLedger: WorkflowLedger; workflowLedgerPath: string } {
+  const ledger = flowConfig?.ledger;
+  const type = configString(ledger, "type") ?? "sql";
+  if (type === "sql") {
+    const dialect = configString(ledger, "dialect") ?? "sqlite";
+    if (dialect === "sqlite") {
+      const path = resolveSqlWorkflowLedgerPath(projectRoot, flowConfig);
+      return {
+        workflowLedgerPath: path,
+        workflowLedger: new MigratingWorkflowLedger({
+          sourcePath: resolveWorkflowLedgerPath(projectRoot, flowConfig),
+          target: createKyselyFlowState({
+            root: projectRoot,
+            dialectConfig: createSqliteSqlStateConfig({ path }),
+          }),
+        }),
+      };
+    }
+    if (dialect === "postgres") {
+      const connectionString = resolvePostgresConnectionString(ledger);
+      return {
+        workflowLedgerPath: "<postgres>",
+        workflowLedger: new MigratingWorkflowLedger({
+          sourcePath: resolveWorkflowLedgerPath(projectRoot, flowConfig),
+          target: createKyselyFlowState({
+            root: projectRoot,
+            dialectConfig: createPostgresSqlStateConfig({
+              connectionString,
+              dialect: createPostgresDialect(connectionString),
+            }),
+          }),
+        }),
+      };
+    }
+    throw new Error(`Unsupported SQL workflow ledger dialect: ${dialect}.`);
+  }
+  const workflowLedgerPath = resolveWorkflowLedgerPath(projectRoot, flowConfig);
+  return {
+    workflowLedgerPath,
+    workflowLedger: createWorkflowLedger({
+      cwd: projectRoot,
+      adapter: type,
+      path: workflowLedgerPath,
+    }),
+  };
+}
+
 function resolveRuntimeStorePath(projectRoot: string, flowConfig: FlowConfig | undefined): string {
   const configured = configString(flowConfig?.runtime, "storeDir") ?? configString(flowConfig?.runtime, "stateDir");
   return configured ? resolveFlowPath(projectRoot, configured) : flowRuntimePath(projectRoot);
@@ -73,6 +119,16 @@ function resolveRuntimeStorePath(projectRoot: string, flowConfig: FlowConfig | u
 function resolveWorkflowLedgerPath(projectRoot: string, flowConfig: FlowConfig | undefined): string {
   const configured = configString(flowConfig?.runtime, "workflowLedgerPath");
   return configured ? resolveFlowPath(projectRoot, configured) : flowWorkflowLedgerPath(projectRoot);
+}
+
+function resolveSqlWorkflowLedgerPath(projectRoot: string, flowConfig: FlowConfig | undefined): string {
+  const configured = configString(flowConfig?.ledger, "path");
+  return configured ? resolveFlowPath(projectRoot, configured) : flowUserWorkflowLedgerDatabasePath(projectRoot);
+}
+
+function resolveRuntimeStoreBackend(flowConfig: FlowConfig | undefined): FlowStoreBackend {
+  const store = configRecord(flowConfig?.runtime, "store");
+  return configString(store, "type") === "file" ? "file" : "sqlite";
 }
 
 function createIssueTracker(projectRoot: string, flowConfig: FlowConfig | undefined, workflowLedger: WorkflowLedger): IssueTrackerProvider {
@@ -118,6 +174,21 @@ function createCollaboration(projectRoot: string, flowConfig: FlowConfig | undef
 function configString(config: Record<string, unknown> | undefined, key: string): string | undefined {
   const value = config?.[key];
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function configRecord(config: Record<string, unknown> | undefined, key: string): Record<string, unknown> | undefined {
+  const value = config?.[key];
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  return value as Record<string, unknown>;
+}
+
+function resolvePostgresConnectionString(config: Record<string, unknown> | undefined): string {
+  const inline = configString(config, "connectionString");
+  if (inline) return inline;
+  const urlSecret = configString(config, "urlSecret");
+  const fromSecret = urlSecret ? process.env[urlSecret] : undefined;
+  if (fromSecret?.trim()) return fromSecret.trim();
+  throw new Error("Postgres SQL workflow ledger requires ledger.connectionString or ledger.urlSecret pointing to an environment variable.");
 }
 
 function configStringArray(config: Record<string, unknown> | undefined, key: string): string[] {

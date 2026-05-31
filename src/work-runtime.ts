@@ -47,10 +47,14 @@ import type {
   UnifiedCodeReview,
   UnifiedIssue,
   UnifiedWorkspaceStatus,
+  TriageOptions,
+  TriageResult,
+  IssueIntakeCandidate,
 } from "./adapters/provider-contracts.js";
-import { assessIssue } from "./readiness.js";
+import { triageIssues } from "./triage.js";
+import { assessIssue, isRetryableWorkerFailure } from "./readiness.js";
 import type { WorkflowLedger } from "./ledger.js";
-import { FlowStore } from "./store.js";
+import type { FlowStoreInterface } from "./store.js";
 import { parseWorkEnvelope } from "./work-envelope.js";
 import { type WorkTypeRegistry, createDefaultFlowWorkTypeRegistry, workerExecutorToWorkExecutor } from "./work-registry.js";
 import { DefaultProjectTopology, type ProjectTopology } from "./project-topology.js";
@@ -83,7 +87,7 @@ import type { ProjectedWorkSubject } from "./core/work-projection.js";
 import type { ExecutorAdapter } from "./executors/executor-contracts.js";
 
 export interface WorkRuntimeOptions {
-  store: FlowStore;
+  store: FlowStoreInterface;
   ledger: WorkflowLedger;
   topology?: ProjectTopology;
   sourceControl?: SourceControlIntegration | SourceControlProvider;
@@ -127,6 +131,14 @@ export type SourceControlIntegration = GitInspector & Partial<SourceControlProvi
 
 export interface GitHubInspector {
   findPullRequests(repo: string, headRefName?: string): Promise<PullRequestStatus[]>;
+  createPullRequest?(input: {
+    repo: string;
+    title: string;
+    body: string;
+    headRefName: string;
+    baseRefName: string;
+    isDraft?: boolean;
+  }): Promise<PullRequestStatus>;
   getPullRequest?(repo: string, number: number): Promise<PullRequestStatus | undefined>;
   markPullRequestReadyForReview?(repo: string, number: number): Promise<PullRequestStatus | undefined>;
   postPullRequestComment?(repo: string, number: number, body: string): Promise<{ url?: string; body: string }>;
@@ -253,6 +265,37 @@ export interface CreateJiraIssueOptions {
 
 export type CreateIssueOptions = CreateJiraIssueOptions;
 
+export interface IssueIntakeOptions extends CreateIssueOptions {
+  apply?: boolean;
+  dryRun?: boolean;
+  review?: boolean;
+}
+
+export interface IssueIntakeProposal {
+  title: string;
+  summary: string;
+  body: string;
+  issueType: string;
+  repoKeys: string[];
+  tags: string[];
+  priority?: string;
+  lane?: string;
+  missingSections: string[];
+  dependencies: string[];
+  concurrencyNotes: string[];
+}
+
+export interface IssueIntakeResult {
+  dryRun: boolean;
+  apply: boolean;
+  status: "ready" | "needs_input" | "duplicate" | "created";
+  proposal: IssueIntakeProposal;
+  duplicateIssue?: WorkItem;
+  issue?: WorkItem;
+  reviewJob?: WorkJob;
+  reasons: string[];
+}
+
 export type PullRequestMergeMethod = "merge" | "squash" | "rebase";
 
 export interface CloseoutAfterApprovalOptions {
@@ -263,12 +306,20 @@ export interface CloseoutAfterApprovalOptions {
 }
 
 export interface CloseoutAfterApprovalResult {
-  status: "blocked" | "merged_jira_verified" | "merged_jira_pending" | "already_merged_jira_verified" | "already_merged_jira_pending";
+  status:
+    | "blocked"
+    | "merged_jira_verified"
+    | "merged_jira_pending"
+    | "merged_cleanup_needed"
+    | "already_merged_jira_verified"
+    | "already_merged_jira_pending"
+    | "already_merged_cleanup_needed";
   issue: WorkItem;
   pr?: PullRequestStatus;
   blockers: string[];
   acceptanceCommentUrl?: string;
   merge?: PullRequestMergeResult;
+  prunedWorktrees?: Array<{ repoKey: string; removed: boolean; reason?: string; worktreePath: string; branch?: string }>;
   jiraStatusBefore?: string;
   jiraStatusAfter?: string;
 }
@@ -320,8 +371,81 @@ export interface FlowDoctorResult {
   };
 }
 
+export interface FlowReviewLocalResult {
+  issueRef: string;
+  state: WorkItem["state"];
+  repoKeys: string[];
+  target: "local";
+  summary: string;
+  findings: FlowReviewFinding[];
+  blocking: boolean;
+  diffs: FlowReviewDiffSummary[];
+  readiness: {
+    readyToAdvance: boolean;
+    reviewReady: boolean;
+    findings: ReadinessFinding[];
+  };
+  worker?: {
+    taskId: string;
+    status: string;
+    summary: string;
+    changedFiles: string[];
+    testsRun: string[];
+    blockers: string[];
+    completedAt?: string;
+  };
+  evidenceRecorded: boolean;
+  documentationRecorded: boolean;
+}
+
+export interface FlowReviewCodeReviewResult {
+  issueRef: string;
+  repoKeys: string[];
+  target: "code_review";
+  summary: string;
+  findings: FlowReviewFinding[];
+  blocking: boolean;
+  codeReviewRequired: boolean;
+  collaboration: string;
+  pullRequest?: {
+    url: string;
+    state?: string;
+    isDraft: boolean;
+    checksPassing?: boolean;
+    checksPending?: boolean;
+    reviewDecision?: string;
+    mergeable?: string;
+    mergedAt?: string;
+    autoReviewStatus?: string;
+    autoReviewMustFix: boolean;
+    autoReviewNeedsConfirmation: boolean;
+    humanReviewRequired?: boolean;
+    reviewCommentCount?: number;
+    reviewCommentAuthors?: string[];
+  };
+  blockers: string[];
+  postedComment?: { url?: string; body: string };
+}
+
+export interface FlowReviewFinding {
+  severity: "info" | "warning" | "error";
+  message: string;
+  file?: string;
+  line?: number;
+  range?: { start?: number; end?: number };
+  blocking: boolean;
+}
+
+export interface FlowReviewDiffSummary {
+  repoKey: string;
+  repoPath: string;
+  baseRef?: string;
+  headRef?: string;
+  files: string[];
+  stat?: string;
+}
 export class FlowWorkRuntime {
-  private readonly store: FlowStore;
+  private readonly store: FlowStoreInterface;
   private readonly ledger: WorkflowLedger;
   readonly topology: ProjectTopology;
   private readonly sourceControl: SourceControlIntegration;
@@ -584,12 +708,92 @@ export class FlowWorkRuntime {
     sessionId: string,
     options: CreateIssueOptions,
   ): Promise<WorkItem> {
-    const session = await this.requireSession(sessionId);
-    if (!this.issueTracker?.createIssue) {
-      throw new Error("Issue creation is not available in this runtime.");
-    }
+    const intake = await this.intakeIssue(sessionId, { ...options, apply: true });
+    if (intake.issue) return intake.issue;
+    if (intake.duplicateIssue) return intake.duplicateIssue;
+    throw new Error(intake.reasons[0] ?? "Issue intake did not produce an issue.");
+  }
+
+  async intakeIssue(
+    sessionId: string,
+    options: IssueIntakeOptions,
+  ): Promise<IssueIntakeResult> {
+    await this.requireSession(sessionId);
     if (!options.summary?.trim()) throw new Error("Issue summary is required.");
     const issueType = options.issueType ?? "Bug";
+    const createInput = this.issueCreateInput(options, issueType);
+    const candidates = await this.issueIntakeCandidates(createInput);
+    const proposal = this.issueIntakeProposal(options, createInput);
+    const reasons = issueIntakeProblems(createInput.summary, options.description);
+    const duplicateIssue = await this.findDuplicateIssue(createInput, candidates);
+    const reviewJob = !duplicateIssue && reasons.length === 0
+      ? await this.submitIssueIntakeReviewJob(sessionId, createInput, proposal, candidates)
+      : undefined;
+    const apply = options.apply === true;
+    const dryRun = !apply;
+
+    if (duplicateIssue) {
+      await this.store.appendEvent({
+        sessionId,
+        type: "issue.deduped",
+        issueRef: duplicateIssue.ref,
+        message: `Issue already exists: ${duplicateIssue.ref} - ${duplicateIssue.title}`,
+        payload: { existing: duplicateIssue, requested: createInput, proposal },
+      });
+      if (apply && (options.select ?? true)) {
+        await this.selectIssue(sessionId, duplicateIssue);
+      }
+      return {
+        dryRun,
+        apply,
+        status: "duplicate",
+        proposal,
+        duplicateIssue,
+        reviewJob,
+        reasons: [`Likely duplicate of ${duplicateIssue.ref}.`],
+      };
+    }
+
+    if (reasons.length > 0) {
+      if (apply) throw new Error(`Issue intake needs more detail: ${reasons.join("; ")}`);
+      return { dryRun, apply, status: "needs_input", proposal, reviewJob, reasons };
+    }
+
+    if (!apply) {
+      return { dryRun, apply, status: "ready", proposal, reviewJob, reasons: [] };
+    }
+
+    if (!await this.issueIntakeReviewSucceeded(reviewJob)) {
+      const reviewRef = reviewJob ? ` job ${reviewJob.id}` : "";
+      throw new Error(`Issue intake requires a completed executor review before creation${reviewRef}.`);
+    }
+
+    let issue = await this.createIssueAfterIntake(sessionId, options, {
+      ...createInput,
+      title: proposal.title,
+      description: proposal.body,
+    });
+    if (proposal.tags.length > 0 && this.issueTracker?.addIssueTags) {
+      await this.issueTracker.addIssueTags(issue.ref, proposal.tags);
+      const labels = metadataStringArray(issue.metadata.issueLabels) ?? [];
+      issue = await this.ledger.writeIssue({
+        ...issue,
+        metadata: {
+          ...issue.metadata,
+          issueLabels: [...new Set([...labels, ...proposal.tags])],
+        },
+      });
+    }
+    return { dryRun, apply, status: "created", proposal, issue, reviewJob, reasons: [] };
+  }
+
+  private issueCreateInput(options: CreateIssueOptions, issueType: string): {
+    projectKey?: string;
+    issueType: string;
+    title?: string;
+    summary: string;
+    description?: string;
+  } {
     const createInput: {
       projectKey?: string;
       issueType: string;
@@ -603,6 +807,24 @@ export class FlowWorkRuntime {
       description: options.description?.trim(),
     };
     if (options.title?.trim()) createInput.title = options.title.trim();
+    return createInput;
+  }
+
+  private async createIssueAfterIntake(
+    sessionId: string,
+    options: CreateIssueOptions,
+    createInput: {
+      projectKey?: string;
+      issueType: string;
+      title?: string;
+      summary: string;
+      description?: string;
+    },
+  ): Promise<WorkItem> {
+    const session = await this.requireSession(sessionId);
+    if (!this.issueTracker?.createIssue) {
+      throw new Error("Issue creation is not available in this runtime.");
+    }
     const createdIssue = await this.issueTracker.createIssue(createInput);
     const queueIssue = this.mergeJiraQueueIssue(createdIssue);
     const repoKeys = options.repoKeys?.length
@@ -615,8 +837,8 @@ export class FlowWorkRuntime {
       state: shouldSelect ? "selected" : queueIssue.state,
       metadata: {
         ...queueIssue.metadata,
-        issueType: createdIssue.issueType ?? issueType,
-        ...(isJiraIssueTrackerIssue(createdIssue) ? { jiraIssueType: createdIssue.issueType ?? issueType } : {}),
+        issueType: createdIssue.issueType ?? createInput.issueType,
+        ...(isJiraIssueTrackerIssue(createdIssue) ? { jiraIssueType: createdIssue.issueType ?? createInput.issueType } : {}),
         ...(options.branchKind ? { branchKind: options.branchKind } : {}),
       },
     });
@@ -637,6 +859,158 @@ export class FlowWorkRuntime {
       payload: { issue: storedIssue, selected: shouldSelect },
     });
     return storedIssue;
+  }
+
+  private async issueIntakeCandidates(input: {
+    title?: string;
+    summary: string;
+    projectKey?: string;
+    issueType?: string;
+  }): Promise<IssueIntakeCandidate[]> {
+    const candidates = new Map<string, IssueIntakeCandidate>();
+    const ledgerIssues = await this.ledger.listIssues(1000);
+    for (const issue of ledgerIssues) {
+      if (issue.state === "done") continue;
+      candidates.set(issue.ref, {
+        ref: issue.ref,
+        title: issue.title,
+        summary: issue.summary,
+        labels: metadataStringArray(issue.metadata.issueLabels),
+      });
+    }
+    if (this.issueTracker?.searchIssues) {
+      try {
+        const searchResults = await this.issueTracker.searchIssues({
+          title: input.title,
+          summary: input.summary,
+          projectKey: input.projectKey,
+          issueType: input.issueType,
+          state: "open",
+          limit: 5,
+        });
+        for (const result of searchResults) {
+          candidates.set(result.ref, {
+            ref: result.ref,
+            title: result.title,
+            summary: result.description,
+            url: result.url,
+            labels: result.labels,
+          });
+        }
+      } catch {
+        // Search is best-effort. Intake can continue with ledger candidates.
+      }
+    }
+    return [...candidates.values()];
+  }
+
+  private async findDuplicateIssue(
+    input: {
+      title?: string;
+      summary: string;
+      projectKey?: string;
+      issueType?: string;
+    },
+    candidates: IssueIntakeCandidate[],
+  ): Promise<WorkItem | undefined> {
+    const query = (input.title || input.summary).toLowerCase().trim();
+    for (const candidate of candidates) {
+      const title = candidate.title.toLowerCase().trim();
+      const summary = (candidate.summary || "").toLowerCase().trim();
+      if (title === query || summary === query) {
+        const resolved = await this.resolveIntakeCandidate(candidate.ref, candidates);
+        if (resolved) return resolved;
+      }
+    }
+    return undefined;
+  }
+
+  private async submitIssueIntakeReviewJob(
+    sessionId: string,
+    input: {
+      title?: string;
+      summary: string;
+      description?: string;
+      issueType: string;
+    },
+    proposal: IssueIntakeProposal,
+    candidates: IssueIntakeCandidate[],
+  ): Promise<WorkJob | undefined> {
+    const session = await this.requireSession(sessionId);
+    const workType = this.workTypeForCategory("custom");
+    const repoKey = proposal.repoKeys[0] ?? session.selectedRepoKey ?? this.topology.validRepoKeys.values().next().value ?? "main";
+    const issueRef = `INTAKE-${createHash("sha256").update(`${proposal.title}\n${proposal.summary}`).digest("hex").slice(0, 8).toUpperCase()}`;
+    return this.submitWorkJob(sessionId, {
+      issueRef,
+      repoKey,
+      workType,
+      requiredCapabilities: ["issue.intake"],
+      idempotencyKey: `issue-intake:${proposal.title}:${proposal.summary}`,
+      input: {
+        request: input,
+        proposal,
+        candidates,
+        prompt: issueIntakeReviewPrompt(input, proposal, candidates),
+      },
+    });
+  }
+
+  private async issueIntakeReviewSucceeded(reviewJob?: WorkJob): Promise<boolean> {
+    if (!reviewJob) return false;
+    const results = await this.ledger.listWorkJobResults(reviewJob.issueRef);
+    return results.some((result) => result.jobId === reviewJob.id && result.status === "succeeded");
+  }
+
+  private async resolveIntakeCandidate(ref: string, candidates: IssueIntakeCandidate[]): Promise<WorkItem | undefined> {
+    const existing = await this.ledger.readIssue(ref);
+    if (existing) return existing;
+    const candidate = candidates.find((item) => item.ref === ref);
+    if (!candidate) return undefined;
+    return this.ledger.ensureIssue({
+      ref: candidate.ref,
+      title: candidate.title,
+      summary: candidate.summary,
+      repoKeys: this.topology.inferRepoKeysFromIssue({
+        title: candidate.title,
+        description: candidate.summary,
+        labels: candidate.labels ?? [],
+      }),
+      state: "queued",
+      metadata: {
+        issueUrl: candidate.url,
+        issueLabels: candidate.labels,
+      },
+    });
+  }
+
+  private issueIntakeProposal(
+    options: CreateIssueOptions,
+    input: {
+      title?: string;
+      summary: string;
+      description?: string;
+      issueType: string;
+    },
+  ): IssueIntakeProposal {
+    const title = input.title?.trim() || input.summary;
+    const body = structuredIssueBody(input.description, input.summary, options.repoKeys);
+    const missingSections = missingIntakeSections(body);
+    const priority = proposeIssuePriority(title, body);
+    const lane = proposeIssueLane(title, body);
+    const tags = [priority, lane].filter((tag): tag is string => Boolean(tag));
+    return {
+      title,
+      summary: input.summary,
+      body,
+      issueType: input.issueType,
+      repoKeys: options.repoKeys ?? [],
+      tags,
+      priority,
+      lane,
+      missingSections,
+      dependencies: extractSectionLines(body, "Dependencies"),
+      concurrencyNotes: extractSectionLines(body, "Concurrency notes"),
+    };
   }
 
   async moveIssuesToActiveSprint(
@@ -823,6 +1197,63 @@ export class FlowWorkRuntime {
     const issue = await this.ledger.readIssue(issueRef);
     if (!issue) throw new Error(`Issue ${issueRef} was not found in the Flow ledger.`);
     return this.reconcileExternalStateSafely(issue, undefined, { persist: false });
+  }
+
+  async triageIssues(options: TriageOptions = {}): Promise<TriageResult> {
+    if (!this.issueTracker) {
+      throw new Error("Issue tracker is not configured. Cannot triage issues.");
+    }
+
+    // Fetch open issues from the issue tracker
+    let issues: UnifiedIssue[];
+    if (this.issueTracker.fetchOpenIssues) {
+      issues = await this.issueTracker.fetchOpenIssues(options.limit ?? 100);
+    } else if (this.issueTracker.searchCurrentUserOpenSprintIssues) {
+      const jiraIssues = await this.issueTracker.searchCurrentUserOpenSprintIssues(options.limit ?? 100);
+      issues = jiraIssues
+        .filter((jiraIssue) => !isJiraDone(jiraIssue))
+        .map((jiraIssue) => this.mergeJiraQueueIssue(jiraIssue))
+        .map((workItem) => ({
+          ref: workItem.ref,
+          title: workItem.title,
+          description: workItem.summary,
+          status: existingString(workItem.metadata.issueStatus) ?? "Open",
+          statusCategory: existingString(workItem.metadata.issueStatusCategory) ?? "To Do",
+          type: existingString(workItem.metadata.issueType) ?? "task",
+          url: existingString(workItem.metadata.issueUrl) ?? existingString(workItem.metadata.jiraUrl) ?? "",
+          updatedAt: workItem.updatedAt,
+          labels: metadataStringArray(workItem.metadata.issueLabels) ?? [],
+          assignee: existingString(workItem.metadata.assignee),
+        }));
+    } else {
+      // Fall back to local ledger
+      const localIssues = await this.ledger.listIssues(options.limit ?? 100);
+      issues = localIssues
+        .filter((issue) => issue.state !== "done")
+        .map((issue) => ({
+          ref: issue.ref,
+          title: issue.title,
+          description: issue.summary,
+          status: existingString(issue.metadata.localStatus) ?? "To Do",
+          statusCategory: existingString(issue.metadata.localStatusCategory) ?? "To Do",
+          type: existingString(issue.metadata.issueType) ?? "task",
+          url: existingString(issue.metadata.localUrl) ?? `flow://local/issues/${encodeURIComponent(issue.ref)}`,
+          updatedAt: issue.updatedAt,
+          labels: [],
+        }));
+    }
+
+    // Run triage analysis
+    const result = await triageIssues({
+      issues,
+      options,
+      postComment: this.issueTracker?.postComment ? (ref, body) => this.issueTracker!.postComment!(ref, body) : undefined,
+      transitionIssue: this.issueTracker?.transitionIssue ? (ref, status) => this.issueTracker!.transitionIssue!(ref, status) : undefined,
+      addTags: this.issueTracker?.addIssueTags ? (ref, tags) => this.issueTracker!.addIssueTags!(ref, tags) : undefined,
+      removeTags: this.issueTracker?.removeIssueTags ? (ref, tags) => this.issueTracker!.removeIssueTags!(ref, tags) : undefined,
+    });
+
+    return result;
   }
 
   async routeIssue(sessionId: string, issueRef: string, repoKeys: string[]): Promise<WorkItem> {
@@ -1081,6 +1512,78 @@ export class FlowWorkRuntime {
     return this.reconcileIssue(sessionId, issueRef);
   }
 
+  async reviewLocal(sessionId: string, issueRef: string): Promise<any> {
+    const issue = await this.reconcileIssue(sessionId, issueRef);
+    const workerResults = await this.ledger.listWorkerResults(issue.ref);
+    const diffs = await this.localReviewDiffs(issue);
+    const findings = reviewFindingsFromDiffs(diffs);
+    const review = reviewMetadata(issue);
+    const assessment = await this.readiness.assess({
+      issue,
+      workerResults,
+      evidenceRecorded: hasRecordedEvidence(issue),
+      documentationRecorded: hasRecordedDocumentation(issue),
+      review,
+      codeReviewRequired: this.codeReviewRequired(),
+    });
+    return {
+      issueRef: issue.ref,
+      state: issue.state,
+      repoKeys: issue.repoKeys,
+      target: "local",
+      summary: reviewSummary("local", findings, diffs),
+      findings,
+      blocking: findings.some((finding) => finding.blocking),
+      diffs: diffs.map((diff) => ({ repoKey: diff.repoKey, repoPath: diff.repoPath, baseRef: diff.baseRef, headRef: diff.headRef, files: diff.files, stat: diff.stat })),
+      readiness: { readyToAdvance: assessment.readyToAdvance, reviewReady: assessment.reviewReady, findings: assessment.findings },
+      evidenceRecorded: hasRecordedEvidence(issue),
+      documentationRecorded: hasRecordedDocumentation(issue),
+    };
+  }
+
+  async reviewCodeReview(sessionId: string, issueRef: string, options?: { repo?: string; post?: boolean }): Promise<any> {
+    const issue = await this.reconcileIssue(sessionId, issueRef);
+    const review = reviewMetadata(issue);
+    const codeReviewRequired = this.codeReviewRequired();
+    const collaborationType = this.collaboration?.capabilities?.requiresCodeReview === false ? "none" : this.collaboration ? "configured" : "none";
+    if (!review) {
+      const findings = missingReviewFindings("Pull request is missing.");
+      return { issueRef: issue.ref, repoKeys: issue.repoKeys, target: "code_review", summary: reviewSummary("code_review", findings, []), findings, blocking: true, codeReviewRequired, collaboration: collaborationType, pullRequest: undefined, blockers: codeReviewRequired ? ["Pull request is missing."] : [] };
+    }
+    const target = closeoutPullRequestTarget(issue, (k) => this.topology.repoName(k)) ?? codeReviewTargetFromMetadata(issue, review, options?.repo);
+    const diff = target && this.collaboration?.getCodeReviewDiff ? await this.collaboration.getCodeReviewDiff(target.repo, target.number) : undefined;
+    const findings = reviewFindingsFromCodeReview(review, diff);
+    const blockers = pullRequestBlockersFromMetadata(review);
+    const postedComment = target && this.collaboration?.postReviewComment && options?.post === true ? await this.collaboration.postReviewComment(target.repo, target.number, flowReviewComment(findings)) : undefined;
+    return {
+      issueRef: issue.ref,
+      repoKeys: issue.repoKeys,
+      target: "code_review",
+      summary: reviewSummary("code_review", findings, diff ? [diff] : []),
+      findings,
+      blocking: findings.some((finding) => finding.blocking) || blockers.length > 0,
+      codeReviewRequired,
+      collaboration: collaborationType,
+      pullRequest: { url: review.prUrl, state: review.state, isDraft: review.isDraft, checksPassing: review.checksPassing, checksPending: review.checksPending, reviewDecision: review.reviewDecision, mergeable: review.mergeable, mergedAt: review.mergedAt, autoReviewStatus: review.autoReviewStatus, autoReviewMustFix: review.autoReviewMustFix, autoReviewNeedsConfirmation: review.autoReviewNeedsConfirmation, humanReviewRequired: review.humanReviewRequired, reviewCommentCount: review.reviewCommentCount, reviewCommentAuthors: review.reviewCommentAuthors },
+      blockers,
+      postedComment,
+    };
+  }
+
+  private async localReviewDiffs(issue: WorkItem): Promise<any[]> {
+    if (!(this.sourceControl as any).diffWorkspace) return [];
+    const repoKeys = issue.repoKeys.length ? issue.repoKeys : [...this.topology.validRepoKeys];
+    const diffs: any[] = [];
+    for (const repoKey of repoKeys) {
+      const metadataPath = existingString(issue.metadata[`workflow.repos.${repoKey}.worktree_path`]) ?? existingString(issue.metadata.work_dir);
+      const repoPath = metadataPath ?? this.topology.repoPath(this.projectRoot, repoKey);
+      const baseBranch = existingString(issue.metadata[`workflow.repos.${repoKey}.base_branch`]) ?? "main";
+      const baseRef = baseBranch.startsWith("origin/") ? baseBranch : `origin/${baseBranch}`;
+      const diff = await (this.sourceControl as any).diffWorkspace({ repoPath, baseRef, headRef: "HEAD" });
+      diffs.push({ repoKey, repoPath, ...diff });
+    }
+    return diffs;
+  }
   async explainBlocker(sessionId: string): Promise<string> {
     const session = await this.requireSession(sessionId);
     const issue = await this.selectedIssue(session);
@@ -1101,6 +1604,9 @@ export class FlowWorkRuntime {
   async diagnoseIssue(sessionId: string, issueRef?: string): Promise<FlowDoctorResult> {
     const issue = await this.reconcileIssue(sessionId, issueRef);
     const workerResults = await this.ledger.listWorkerResults(issue.ref);
+    const workJobs = await this.ledger.listWorkJobs(issue.ref);
+    const workJobResults = await this.ledger.listWorkJobResults(issue.ref);
+    const retryableWorkJobFailure = latestRetryableWorkJobFailure(workJobs, workJobResults, this.workTypes);
     const review = reviewMetadata(issue);
     const assessment = await this.readiness.assess({
       issue,
@@ -1141,7 +1647,7 @@ export class FlowWorkRuntime {
       visibility,
       codeReview: review,
       findings: assessment.findings,
-      nextAction: doctorNextAction(issue, assessment.findings, visibility),
+      nextAction: doctorNextAction(issue, assessment.findings, visibility, workerResults.at(-1), retryableWorkJobFailure),
     };
   }
 
@@ -1200,6 +1706,18 @@ export class FlowWorkRuntime {
     });
 
     if (assessment.reviewReady) {
+      const review = reviewMetadata(issue);
+      if (this.codeReviewRequired() && review?.prUrl) {
+        const closeout = await this.closeoutAfterApproval(sessionId, { issueRef: issue.ref });
+        if (closeout.status !== "blocked") {
+          return {
+            status: "awaiting_review",
+            session: await this.requireSession(sessionId),
+            issue: closeout.issue,
+            message: `${issue.ref} closeout completed with status ${closeout.status}.`,
+          };
+        }
+      }
       await this.ledger.writeIssue({ ...issue, state: "awaiting_review" });
       const message = this.codeReviewRequired()
         ? `${issue.ref} is review-ready in Readiness assessment.`
@@ -1496,6 +2014,10 @@ export class FlowWorkRuntime {
       nextPickup: result.nextPickup,
     });
     return updated;
+  }
+
+  async listWorkerResults(issueRef: string): Promise<WorkerTaskResult[]> {
+    return this.ledger.listWorkerResults(issueRef);
   }
 
   private workTypeForCategory(category: Parameters<WorkTypeRegistry["workTypeForCategory"]>[0]): string {
@@ -2081,9 +2603,15 @@ export class FlowWorkRuntime {
 
     const jiraAfter = await this.waitForJiraCloseout(issue.ref, options);
     const jiraVerified = isJiraCloseoutStatus(jiraAfter);
-    const status = alreadyMerged
+    const prunedWorktrees = await this.pruneMergedIssueWorktrees(evidenceIssue);
+    const cleanupBlockers = worktreeCleanupBlockers(prunedWorktrees);
+    const cleanupNeeded = cleanupBlockers.length > 0;
+    const baseStatus = alreadyMerged
       ? jiraVerified ? "already_merged_jira_verified" : "already_merged_jira_pending"
       : jiraVerified ? "merged_jira_verified" : "merged_jira_pending";
+    const status = cleanupNeeded
+      ? alreadyMerged ? "already_merged_cleanup_needed" : "merged_cleanup_needed"
+      : baseStatus;
     const writtenAt = nowIso();
     const updated = await this.ledger.writeIssue({
       ...evidenceIssue,
@@ -2103,6 +2631,9 @@ export class FlowWorkRuntime {
         "workflow.closeout.jira_status_before": jiraBefore.status ?? "",
         "workflow.closeout.jira_status_after": jiraAfter.status ?? "",
         "workflow.closeout.jira_verified": jiraVerified,
+        "workflow.closeout.pruned_worktrees": JSON.stringify(prunedWorktrees),
+        "workflow.closeout.cleanup_needed": cleanupNeeded,
+        "workflow.closeout.cleanup_blockers": JSON.stringify(cleanupBlockers),
         "workflow.closeout.checked_at": writtenAt,
       },
     });
@@ -2110,21 +2641,62 @@ export class FlowWorkRuntime {
       sessionId,
       type: "closeout.completed",
       issueRef: issue.ref,
-      message: jiraVerified
+      message: cleanupNeeded
+        ? `Merged ${pr.url}; worktree cleanup still needs attention.`
+        : jiraVerified
         ? `Merged ${pr.url} and verified Jira moved to ${jiraAfter.status ?? "a closeout status"}.`
         : `Merged ${pr.url}; Jira has not moved from ${jiraAfter.status ?? "current status"} yet.`,
-      payload: { status, pr, merge, jiraBefore, jiraAfter, acceptanceCommentUrl, writtenAt },
+      payload: { status, pr, merge, jiraBefore, jiraAfter, acceptanceCommentUrl, prunedWorktrees, writtenAt },
     });
     return {
       status,
       issue: updated,
       pr,
-      blockers: jiraVerified ? [] : ["Jira did not move to Ready for QA or Done after merge."],
+      blockers: [
+        ...(jiraVerified ? [] : ["Jira did not move to Ready for QA or Done after merge."]),
+        ...cleanupBlockers,
+      ],
       acceptanceCommentUrl,
       merge,
+      prunedWorktrees,
       jiraStatusBefore: jiraBefore.status,
       jiraStatusAfter: jiraAfter.status,
     };
+  }
+
+  private async pruneMergedIssueWorktrees(issue: WorkItem): Promise<Array<{ repoKey: string; removed: boolean; reason?: string; worktreePath: string; branch?: string }>> {
+    if (!this.sourceControl.pruneWorktree) return [];
+    const results: Array<{ repoKey: string; removed: boolean; reason?: string; worktreePath: string; branch?: string }> = [];
+    for (const repoKey of issue.repoKeys) {
+      const worktreePath = worktreePathForRepo(issue, repoKey);
+      const branch = existingString(issue.metadata[`workflow.repos.${repoKey}.branch`]) ?? existingString(issue.metadata.branch);
+      if (!worktreePath || !branch) continue;
+      const repoPath = this.topology.repoPath(this.projectRoot, repoKey);
+      let result: Awaited<ReturnType<NonNullable<SourceControlIntegration["pruneWorktree"]>>>;
+      try {
+        result = await this.sourceControl.pruneWorktree({
+          repoPath,
+          worktreePath,
+          branch,
+          requireClean: true,
+        });
+      } catch (error) {
+        result = {
+          removed: false,
+          reason: runtimeErrorMessage(error),
+          worktreePath,
+          branch,
+        };
+      }
+      results.push({
+        repoKey,
+        removed: result.removed,
+        reason: result.reason,
+        worktreePath: result.worktreePath,
+        branch: result.branch,
+      });
+    }
+    return results;
   }
 
   async recordReviewConfirmation(
@@ -2270,6 +2842,7 @@ export class FlowWorkRuntime {
       headRefName?: string;
       isDraft: boolean;
       checksPassing?: boolean;
+      checksPending?: boolean;
       reviewDecision?: string;
     },
   ): Promise<WorkItem> {
@@ -2290,6 +2863,7 @@ export class FlowWorkRuntime {
           headRefName: record.headRefName ?? "",
           isDraft: record.isDraft,
           checksPassing: record.checksPassing,
+          checksPending: record.checksPending,
           reviewDecision: record.reviewDecision,
         }),
       },
@@ -2582,10 +3156,10 @@ export class FlowWorkRuntime {
     session: WorkRuntimeSession,
     findings: ReadinessFinding[],
   ): PendingConfirmation | undefined {
-    const hasConflictBlocker = findings.some((finding) =>
+    const conflictFindings = findings.filter((finding) =>
       finding.severity === "blocker" && finding.summary === "Pull request has merge conflicts."
     );
-    if (!hasConflictBlocker) return undefined;
+    if (!conflictFindings.length) return undefined;
     const repoKey = session.selectedRepoKey ?? issue.repoKeys[0];
     if (!repoKey) return undefined;
     return {
@@ -2593,7 +3167,10 @@ export class FlowWorkRuntime {
       issueRef: issue.ref,
       action: "request_execution",
       summary: `Hand off PR merge-conflict resolution for ${issue.ref} in ${repoKey}.`,
-      payload: { repoKey },
+      payload: {
+        repoKey,
+        workerPrompt: buildMergeConflictResolutionWorkerPrompt(issue, repoKey, conflictFindings),
+      },
       createdAt: nowIso(),
     };
   }
@@ -2660,6 +3237,189 @@ export class FlowWorkRuntime {
   }
 }
 
+const INTAKE_SECTIONS = [
+  "Problem",
+  "Why now",
+  "Scope",
+  "Out of scope",
+  "Files to inspect first",
+  "Acceptance criteria",
+  "Verification commands",
+  "Dependencies",
+  "Concurrency notes",
+  "Priority",
+  "Lane",
+];
+
+function structuredIssueBody(description: string | undefined, summary: string, repoKeys: string[] | undefined): string {
+  const body = description?.trim() ?? "";
+  if (body && missingIntakeSections(body).length === 0) return body;
+  const problem = body || summary;
+  const files = repoKeys?.length ? repoKeys.map((repoKey) => `- ${repoKey}`).join("\n") : "- Not specified.";
+  const priority = proposeIssuePriority(summary, body) ?? "priority-p2";
+  const lane = proposeIssueLane(summary, body) ?? "Not specified.";
+  return [
+    "## Problem",
+    problem,
+    "",
+    "## Why now",
+    "Not specified.",
+    "",
+    "## Scope",
+    summary,
+    "",
+    "## Out of scope",
+    "Not specified.",
+    "",
+    "## Files to inspect first",
+    files,
+    "",
+    "## Acceptance criteria",
+    "- Requested behavior is implemented.",
+    "- Existing behavior is not regressed.",
+    "",
+    "## Verification commands",
+    "- npm run check",
+    "",
+    "## Dependencies",
+    "- None known.",
+    "",
+    "## Concurrency notes",
+    "- Check related open issues before editing shared files.",
+    "",
+    "## Priority",
+    priority,
+    "",
+    "## Lane",
+    lane,
+  ].join("\n");
+}
+
+function missingIntakeSections(body: string): string[] {
+  const headings = new Set(issueBodyHeadings(body).map((heading) => heading.toLowerCase()));
+  return INTAKE_SECTIONS.filter((section) => !headings.has(section.toLowerCase()));
+}
+
+function issueIntakeProblems(summary: string, description: string | undefined): string[] {
+  const reasons: string[] = [];
+  const normalized = summary.trim().toLowerCase();
+  if (summary.trim().length < 10) reasons.push("summary is too short");
+  if (["fix", "update", "change", "improve", "add", "remove", "todo", "wip", "misc", "stuff", "things"].includes(normalized)) {
+    reasons.push("summary is too vague");
+  }
+  if (!description?.trim() && summary.trim().length < 10) {
+    reasons.push("description is required when the summary is vague");
+  }
+  return reasons;
+}
+
+function extractSectionLines(body: string, section: string): string[] {
+  const lines = splitLines(body);
+  const values: string[] = [];
+  let inSection = false;
+  for (const line of lines) {
+    const heading = issueBodyHeading(line);
+    if (heading) {
+      if (inSection) break;
+      inSection = heading.toLowerCase() === section.toLowerCase();
+      continue;
+    }
+    if (inSection) values.push(stripListMarker(line));
+  }
+  return values
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function proposeIssuePriority(title: string, body: string): string | undefined {
+  const words = new Set(normalizeIssueWords(`${title}\n${body}`));
+  if (hasAny(words, ["security", "vulnerability", "cve", "critical", "blocker"]) || `${title}\n${body}`.toLowerCase().includes("data loss")) return "priority-p0";
+  if (hasAny(words, ["bug", "regression", "broken", "production", "timeout", "stuck", "runner", "autoflow", "agent"])) return "priority-p1";
+  if (hasAny(words, ["chore", "cleanup", "cosmetic", "minor", "doc", "docs", "documentation"])) return "priority-p3";
+  return "priority-p2";
+}
+
+function proposeIssueLane(title: string, body: string): string | undefined {
+  const words = new Set(normalizeIssueWords(`${title}\n${body}`));
+  if (hasAny(words, ["sql", "sqlite", "postgres", "ledger", "database", "migration"])) return "lane-sql";
+  if (hasAny(words, ["desktop", "pi", "agent", "autoflow", "runner", "prompt", "session"])) return "lane-desktop-runner";
+  if (hasAny(words, ["test", "coverage", "fixture", "harness", "ci"])) return "lane-test-infra";
+  if (hasAny(words, ["doc", "docs", "documentation", "example", "guide", "readme"])) return "lane-docs";
+  return undefined;
+}
+
+function normalizeIssueWords(text: string): string[] {
+  const words: string[] = [];
+  let current = "";
+  for (const char of text.toLowerCase()) {
+    if (isWordChar(char)) {
+      current += char;
+    } else if (current) {
+      if (current.length > 2) words.push(current);
+      current = "";
+    }
+  }
+  if (current.length > 2) words.push(current);
+  return words;
+}
+
+function issueIntakeReviewPrompt(
+  input: {
+    title?: string;
+    summary: string;
+    description?: string;
+    issueType: string;
+  },
+  proposal: IssueIntakeProposal,
+  candidates: IssueIntakeCandidate[],
+): string {
+  return [
+    "Review this issue intake request.",
+    "Decide whether it duplicates any candidate and whether the proposed issue body is detailed enough.",
+    "Return a worker result through Flow with the duplicate ref, confidence, and any improved title/body/tags in the summary or next pickup.",
+    "",
+    "Request:",
+    JSON.stringify(input, null, 2),
+    "",
+    "Proposal:",
+    JSON.stringify(proposal, null, 2),
+    "",
+    "Candidates:",
+    JSON.stringify(candidates.slice(0, 50), null, 2),
+  ].join("\n");
+}
+
+function splitLines(text: string): string[] {
+  return text.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n");
+}
+
+function issueBodyHeadings(body: string): string[] {
+  return splitLines(body).map(issueBodyHeading).filter((heading): heading is string => Boolean(heading));
+}
+
+function issueBodyHeading(line: string): string | undefined {
+  const trimmed = line.trimStart();
+  if (!trimmed.startsWith("##")) return undefined;
+  let index = 0;
+  while (trimmed[index] === "#") index++;
+  return trimmed.slice(index).trim();
+}
+
+function stripListMarker(line: string): string {
+  const trimmed = line.trimStart();
+  if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) return trimmed.slice(2);
+  return trimmed;
+}
+
+function hasAny(words: Set<string>, candidates: string[]): boolean {
+  return candidates.some((candidate) => words.has(candidate));
+}
+
+function isWordChar(char: string): boolean {
+  const code = char.charCodeAt(0);
+  return (code >= 48 && code <= 57) || (code >= 97 && code <= 122) || char === "_";
+}
+
 function investigationState(disposition: InvestigationDisposition): WorkItem["state"] {
   if (disposition === "needs_code_change") return "ready_to_run";
   return "blocked";
@@ -2710,6 +3470,21 @@ function normalizeIssueTrackerIntegration(
     postIssueComment: issueProvider.postComment
       ? async (key: string, body: string): Promise<{ url?: string; body: string }> => issueProvider.postComment?.(key, body) ?? { body }
       : undefined,
+    postComment: issueProvider.postComment
+      ? async (key: string, body: string): Promise<{ url?: string; body: string }> => issueProvider.postComment?.(key, body) ?? { body }
+      : undefined,
+    fetchOpenIssues: issueProvider.fetchOpenIssues
+      ? async (limit?: number): Promise<UnifiedIssue[]> => issueProvider.fetchOpenIssues?.(limit) ?? []
+      : undefined,
+    searchIssues: issueProvider.searchIssues
+      ? async (params): Promise<UnifiedIssue[]> => issueProvider.searchIssues?.(params) ?? []
+      : undefined,
+    addIssueTags: issueProvider.addIssueTags
+      ? async (ref: string, tags: string[]): Promise<UnifiedIssue | void> => issueProvider.addIssueTags?.(ref, tags)
+      : undefined,
+    removeIssueTags: issueProvider.removeIssueTags
+      ? async (ref: string, tags: string[]): Promise<UnifiedIssue | void> => issueProvider.removeIssueTags?.(ref, tags)
+      : undefined,
     moveIssuesToActiveSprint: issueProvider.moveIssuesToActivePlanningLane
       ? async (input): Promise<JiraSprintMoveResult> => {
         const moved = await issueProvider.moveIssuesToActivePlanningLane?.({
@@ -2746,6 +3521,20 @@ function normalizeCodeCollaborationIntegration(
       ? async (repo: string, number: number): Promise<PullRequestStatus | undefined> => {
         const review = await collaborationProvider.getCodeReview?.(repo, number);
         return review ? pullRequestStatusFromUnified(review) : undefined;
+      }
+      : undefined,
+    createPullRequest: collaborationProvider.createCodeReview
+      ? async (input): Promise<PullRequestStatus> => {
+        const review = await collaborationProvider.createCodeReview?.({
+          repo: input.repo,
+          title: input.title,
+          body: input.body,
+          sourceBranch: input.headRefName,
+          targetBranch: input.baseRefName,
+          draft: input.isDraft,
+        });
+        if (!review) throw new Error("Code review provider did not return a created review.");
+        return pullRequestStatusFromUnified(review);
       }
       : undefined,
     markPullRequestReadyForReview: collaborationProvider.markReadyForReview
@@ -2883,6 +3672,7 @@ function reviewMetadata(issue: WorkItem) {
     mergeable: typeof metadata.prMergeable === "string" ? metadata.prMergeable : undefined,
     mergeStateStatus: typeof metadata.prMergeStateStatus === "string" ? metadata.prMergeStateStatus : undefined,
     checksPassing: metadata.prChecksPassing === undefined ? undefined : metadata.prChecksPassing === true,
+    checksPending: metadata.prChecksPending === true,
     templateMissingHeadings: metadataStringArray(metadata.prTemplateMissingHeadings),
     autoReviewStatus: typeof metadata.prAutoReviewStatus === "string" ? metadata.prAutoReviewStatus : undefined,
     autoReviewMustFix: metadata.prAutoReviewMustFix === true,
@@ -2932,8 +3722,11 @@ function pullRequestCloseoutBlockers(issue: WorkItem, pr: PullRequestStatus): st
   if (isPullRequestStatusMerged(pr)) return [];
   const blockers: string[] = [];
   if (pr.isDraft) blockers.push("Pull request is still draft.");
-  if (pr.reviewDecision !== "APPROVED") blockers.push("Pull request approval review is missing.");
-  if (pr.checksPassing !== true) blockers.push("Pull request checks are not passing.");
+  if (pr.reviewDecision === "CHANGES_REQUESTED" || pr.reviewDecision === "REVIEW_REQUIRED") {
+    blockers.push("Pull request approval review is missing.");
+  }
+  if (pr.checksPending === true) blockers.push("Pull request checks are still running.");
+  else if (pr.checksPassing !== true) blockers.push("Pull request checks are not passing.");
   if (isPullRequestConflicted(pr)) blockers.push("Pull request is not mergeable.");
   if (pr.templateMissingHeadings && pr.templateMissingHeadings.length > 0) {
     blockers.push(`Pull request template is missing headings: ${pr.templateMissingHeadings.join(", ")}.`);
@@ -2951,11 +3744,168 @@ function pullRequestCloseoutBlockers(issue: WorkItem, pr: PullRequestStatus): st
   return blockers;
 }
 
+function codeReviewTargetFromMetadata(
+  issue: WorkItem,
+  review: NonNullable<ReturnType<typeof reviewMetadata>>,
+  repoOverride?: string,
+): { repo: string; number: number; url?: string } | undefined {
+  const repo = repoOverride ?? repoFromPullRequestUrl(review.prUrl) ?? issue.repoKeys[0];
+  const number = typeof issue.metadata.prNumber === "number"
+    ? issue.metadata.prNumber
+    : typeof issue.metadata["workflow.repos.flow.pr_number"] === "number"
+      ? issue.metadata["workflow.repos.flow.pr_number"]
+      : undefined;
+  if (!repo || typeof number !== "number" || !Number.isFinite(number)) return undefined;
+  return { repo, number, url: review.prUrl };
+}
+function reviewFindingsFromDiffs(diffs: any[]): any[] {
+  if (diffs.length === 0) return missingReviewFindings("Local diff reader is not configured.");
+  const changedFiles = diffs.flatMap((diff) => Array.isArray(diff.files) ? diff.files : []);
+  if (changedFiles.length === 0) return missingReviewFindings("No local diff was available to review.");
+  return [{ severity: "info", message: `Reviewed ${changedFiles.length} changed file${changedFiles.length === 1 ? "" : "s"} in local diff.`, blocking: false }];
+}
+
+function reviewFindingsFromCodeReview(review: NonNullable<ReturnType<typeof reviewMetadata>>, diff: any): any[] {
+  const findings: any[] = [];
+  if (!diff) findings.push(...missingReviewFindings("Code review diff reader is not configured."));
+  else if (!Array.isArray(diff.files) || diff.files.length === 0) findings.push(...missingReviewFindings("Code review diff is empty."));
+  else findings.push({ severity: "info", message: `Reviewed ${diff.files.length} changed file${diff.files.length === 1 ? "" : "s"} in code review diff.`, blocking: false });
+  if (review.autoReviewMustFix) findings.push({ severity: "error", message: review.autoReviewMustFixDetail ?? "Auto-review must-fix feedback is unresolved.", blocking: true });
+  if (review.autoReviewNeedsConfirmation && review.autoReviewNeedsConfirmationDisposition !== "accept") findings.push({ severity: "warning", message: review.autoReviewNeedsConfirmationDetail ?? "Auto-review confirmation is unresolved.", blocking: true });
+  return findings;
+}
+
+function missingReviewFindings(message: string): any[] {
+  return [{ severity: "error", message, blocking: true }];
+}
+
+function pullRequestBlockersFromMetadata(review: NonNullable<ReturnType<typeof reviewMetadata>>): string[] {
+  if (review.state?.toUpperCase() === "MERGED" || review.mergedAt) return [];
+  const blockers: string[] = [];
+  if (review.isDraft) blockers.push("Pull request is still draft.");
+  if (review.checksPending === true) blockers.push("Pull request checks are still running.");
+  else if (review.checksPassing === false) blockers.push("Pull request checks are not passing.");
+  if (isPullRequestConflicted(review)) blockers.push("Pull request has merge conflicts.");
+  if (review.autoReviewStatus === "failed") blockers.push("Auto-review check is failing.");
+  if (review.autoReviewStatus === "pending") blockers.push("Auto-review check is still pending.");
+  if (review.autoReviewMustFix === true) blockers.push("Auto-review must-fix feedback is unresolved.");
+  if (review.autoReviewNeedsConfirmation === true && review.autoReviewNeedsConfirmationDisposition !== "accept" && !review.autoReviewNeedsConfirmationPostedUrl) {
+    blockers.push("Auto-review confirmation is unresolved.");
+  }
+  if (review.humanReviewRequired && review.reviewDecision !== "APPROVED") blockers.push("Approval review is required.");
+  return blockers;
+}
+
+function reviewSummary(target: string, findings: any[], diffs: any[]): string {
+  const fileCount = diffs.reduce((sum, diff) => sum + (Array.isArray(diff.files) ? diff.files.length : 0), 0);
+  const blockingCount = findings.filter((finding) => finding.blocking).length;
+  if (blockingCount > 0) return `${target} review found ${blockingCount} blocking finding${blockingCount === 1 ? "" : "s"}.`;
+  return `${target} review completed for ${fileCount} changed file${fileCount === 1 ? "" : "s"}.`;
+}
+
+function flowReviewComment(findings: any[]): string {
+  const blocking = findings.filter((finding) => finding.blocking);
+  const mustFix = blocking.length ? blocking.map((finding) => `- ${finding.message}`).join("\n") : "- None identified.";
+  const notes = findings.filter((finding) => !finding.blocking).map((finding) => `- ${finding.message}`).join("\n") || "- None identified.";
+  return ["<!-- flow-pr-review -->", "## Must-fix", mustFix, "", "## Needs Confirmation", "- None identified.", "", "## Notes", notes].join("\n");
+}
+
+function collaborationCanPostReviewComments(provider: CodeCollaborationIntegration | undefined): provider is CodeCollaborationIntegration & Required<Pick<GitHubInspector, "postPullRequestComment">> {
+  return collaborationCanPostComments(provider);
+}
+
+interface RetryableWorkJobFailure {
+  jobId: string;
+  summary: string;
+}
+
+type WorktreePruneRecord = {
+  repoKey: string;
+  removed: boolean;
+  reason?: string;
+  worktreePath: string;
+  branch?: string;
+};
+
+function worktreeCleanupBlockers(prunedWorktrees: WorktreePruneRecord[]): string[] {
+  return prunedWorktrees
+    .filter((result) => !result.removed)
+    .map((result) => {
+      const reason = result.reason ? `: ${result.reason}` : "";
+      return `Worktree cleanup needed for ${result.repoKey} at ${result.worktreePath}${reason}`;
+    });
+}
+
+function hasCloseoutCleanupNeeded(issue: WorkItem): boolean {
+  if (issue.metadata["workflow.closeout.cleanup_needed"] === true) return true;
+  const status = existingString(issue.metadata["workflow.closeout.status"]);
+  if (status === "merged_cleanup_needed" || status === "already_merged_cleanup_needed") return true;
+  const rawPrunedWorktrees = existingString(issue.metadata["workflow.closeout.pruned_worktrees"]);
+  if (!rawPrunedWorktrees) return false;
+  try {
+    const parsed = JSON.parse(rawPrunedWorktrees);
+    return Array.isArray(parsed) &&
+      parsed.some((item) => item && typeof item === "object" && (item as { removed?: unknown }).removed === false);
+  } catch {
+    return false;
+  }
+}
+
+function latestRetryableWorkJobFailure(
+  workJobs: WorkJob[],
+  workJobResults: WorkJobResult[],
+  workTypes: WorkTypeRegistry,
+): RetryableWorkJobFailure | undefined {
+  const resultsByJobId = new Map(workJobResults.map((result) => [result.jobId, result]));
+  for (let index = workJobs.length - 1; index >= 0; index -= 1) {
+    const job = workJobs[index];
+    if (!job || !workTypes.isCodeProducing(job.workType)) continue;
+    if (job.status !== "blocked" && job.status !== "failed") continue;
+    const result = resultsByJobId.get(job.id);
+    if (result?.workerResult) {
+      return isRetryableWorkerFailure(result.workerResult)
+        ? { jobId: job.id, summary: result.summary }
+        : undefined;
+    }
+    if (result) {
+      const syntheticWorkerResult: WorkerTaskResult = {
+        taskId: stringFromRecord(job.input, "handoffTaskId") ?? job.id,
+        issueRef: job.issueRef,
+        repoKey: job.repoKey,
+        workJobId: job.id,
+        status: result.status === "blocked" ? "blocked" : "failed",
+        summary: result.summary,
+        changedFiles: [],
+        testsRun: [],
+        blockers: result.evidence,
+        completedAt: result.completedAt,
+      };
+      return isRetryableWorkerFailure(syntheticWorkerResult)
+        ? { jobId: job.id, summary: result.summary }
+        : undefined;
+    }
+    return {
+      jobId: job.id,
+      summary: "The latest execution job ended without a Worker result.",
+    };
+  }
+  return undefined;
+}
+
 function doctorNextAction(
   issue: WorkItem,
   findings: ReadinessFinding[],
   visibility: FlowDoctorResult["visibility"],
+  latestWorker?: WorkerTaskResult,
+  retryableWorkJobFailure?: RetryableWorkJobFailure,
 ): FlowDoctorResult["nextAction"] {
+  if (hasCloseoutCleanupNeeded(issue)) {
+    return {
+      type: "cleanup_worktrees",
+      command: `flow '{"op":"workflow","mode":"advance","id":"${issue.ref}"}'`,
+      summary: "Retry closeout worktree cleanup for the merged issue.",
+    };
+  }
   if (isFlowTerminal(issue)) {
     return {
       type: "done",
@@ -2991,6 +3941,13 @@ function doctorNextAction(
       summary: "Let Flow prepare the routed workspace or approve the prepare-workspace confirmation.",
     };
   }
+  if (isRetryableWorkerFailure(latestWorker) || retryableWorkJobFailure) {
+    return {
+      type: "retry_execution",
+      command: `flow '{"op":"workflow","mode":"advance","id":"${issue.ref}"}'`,
+      summary: "Retry the execution handoff now that the executor setup can be repaired.",
+    };
+  }
   if (
     blockerSummaries.includes("Auto review has must-fix feedback.") ||
     blockerSummaries.includes("Auto review checks failed.")
@@ -3014,6 +3971,13 @@ function doctorNextAction(
     return {
       type: "fix_checks",
       summary: "Inspect failing code review checks and remediate through the review worktree.",
+    };
+  }
+  if (blockerSummaries.includes("Pull request checks are still running.")) {
+    return {
+      type: "wait_for_checks",
+      command: `flow '{"op":"workflow","mode":"advance","id":"${issue.ref}"}'`,
+      summary: "Wait for pull request checks to finish, then rerun Flow.",
     };
   }
   if (findings.some((finding) => finding.summary === "Approval review is required.")) {
@@ -3404,6 +4368,11 @@ function stableHash(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
+function runtimeErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
 function parseNeedsConfirmationDisposition(value: unknown): "accept" | "reject" | "defer" | undefined {
   if (value === "accept" || value === "reject" || value === "defer") return value;
   return undefined;
@@ -3494,14 +4463,12 @@ function buildWorkerPrompt(issue: WorkItem, repoKey: string): string {
   return [
     "Use Flow to work this prompt.",
     "",
-    `Issue: ${issue.ref}`,
-    `Title: ${issue.title}`,
     `Repo key: ${repoKey}`,
-    issue.summary ? `Context: ${issue.summary}` : undefined,
     workspacePath ? `Prepared workspace: ${workspacePath}` : undefined,
     branch ? `Branch: ${branch}` : undefined,
     "",
     "Instructions: Make the code changes, run tests, commit with a descriptive message, and push the branch.",
+    ...workerPromptGuardrails(),
   ].filter(Boolean).join("\n");
 }
 
@@ -3513,8 +4480,6 @@ function buildReviewRemediationWorkerPrompt(
   return [
     "Use Flow to work this prompt.",
     "",
-    `Issue: ${issue.ref}`,
-    `Title: ${issue.title}`,
     `Repo key: ${repoKey}`,
     worktreePathForRepo(issue, repoKey) ? `Prepared workspace: ${worktreePathForRepo(issue, repoKey)}` : undefined,
     branchForRepo(issue, repoKey) ? `Branch: ${branchForRepo(issue, repoKey)}` : undefined,
@@ -3526,7 +4491,42 @@ function buildReviewRemediationWorkerPrompt(
         finding.detail ? finding.detail : undefined,
       ].filter(Boolean).join("\n")
     ),
+    ...workerPromptGuardrails(),
   ].filter(Boolean).join("\n");
+}
+
+function buildMergeConflictResolutionWorkerPrompt(
+  issue: WorkItem,
+  repoKey: string,
+  findings: ReadinessFinding[],
+): string {
+  return [
+    "Use Flow to work this prompt.",
+    "",
+    `Repo key: ${repoKey}`,
+    worktreePathForRepo(issue, repoKey) ? `Prepared workspace: ${worktreePathForRepo(issue, repoKey)}` : undefined,
+    branchForRepo(issue, repoKey) ? `Branch: ${branchForRepo(issue, repoKey)}` : undefined,
+    "",
+    "Prompt: resolve the merge conflicts on this pull request.",
+    ...findings.map((finding, index) =>
+      [
+        `${index + 1}. ${finding.summary}`,
+        finding.detail ? finding.detail : undefined,
+      ].filter(Boolean).join("\n")
+    ),
+    ...workerPromptGuardrails(),
+  ].filter(Boolean).join("\n");
+}
+
+function workerPromptGuardrails(): string[] {
+  return [
+    "",
+    "Agent guardrails:",
+    "- Work the task directly as the executor; do not delegate to another agent or advisor process.",
+    "- Use `rg` (ripgrep) to search files before reading them in full.",
+    "- Never read a file over 50 KB in one pass when a targeted search or line-range read gives the same answer.",
+    "- When working on tests, check the domain-specific test file (e.g. `test/readiness.test.ts`, `test/work-runtime-autoflow.test.ts`, `test/adapter-triage.test.ts`) rather than reading the full monolithic test file.",
+  ];
 }
 
 function buildLegacyLiveWorkerHandoffPrompt(

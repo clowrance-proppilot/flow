@@ -16,29 +16,29 @@
   font-family: "Open Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
-* {
+.flow-desktop * {
   box-sizing: border-box;
   scrollbar-color: rgb(100 116 139 / 0.58) transparent;
   scrollbar-width: thin;
 }
 
-*::-webkit-scrollbar {
+.flow-desktop *::-webkit-scrollbar {
   width: 0.5rem;
   height: 0.5rem;
 }
 
-*::-webkit-scrollbar-track {
+.flow-desktop *::-webkit-scrollbar-track {
   background: transparent;
 }
 
-*::-webkit-scrollbar-thumb {
+.flow-desktop *::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
   border-radius: 999px;
   background: rgb(100 116 139 / 0.58);
   background-clip: padding-box;
 }
 
-*::-webkit-scrollbar-thumb:hover {
+.flow-desktop *::-webkit-scrollbar-thumb:hover {
   background: rgb(148 163 184 / 0.72);
   background-clip: padding-box;
 }
@@ -52,22 +52,20 @@ body {
   color: var(--th-fg);
 }
 
-button,
-input,
-textarea {
+.flow-desktop button, .flow-desktop input, .flow-desktop textarea {
   font: inherit;
 }
 
-button {
+.flow-desktop button {
   cursor: pointer;
 }
 
-button:disabled {
+.flow-desktop button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
 }
 
-.desktop-shell {
+.flow-desktop .desktop-shell {
   display: grid;
   position: relative;
   grid-template-columns: 11.2rem minmax(0, 1fr);
@@ -79,14 +77,12 @@ button:disabled {
   background: rgb(3 8 20 / 0.88);
 }
 
-.project-panel,
-.issue-panel,
-.chat-panel {
+.flow-desktop .project-panel, .flow-desktop .issue-panel, .flow-desktop .chat-panel {
   min-width: 0;
   min-height: 0;
 }
 
-.project-panel {
+.flow-desktop .project-panel {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
   border-right: 1px solid var(--th-border);
@@ -95,7 +91,7 @@ button:disabled {
     var(--th-surface);
 }
 
-.project-header {
+.flow-desktop .project-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -103,7 +99,7 @@ button:disabled {
   padding: 1.45rem 1.15rem 1rem;
 }
 
-.brand {
+.flow-desktop .brand {
   display: grid;
   place-items: center;
   width: 2.2rem;
@@ -115,20 +111,20 @@ button:disabled {
   box-shadow: 0 0.8rem 1.8rem rgb(37 99 235 / 0.22);
 }
 
-.brand-title {
+.flow-desktop .brand-title {
   flex: 1 1 auto;
   color: var(--th-fg);
   font-size: 1.1rem;
   font-weight: 800;
 }
 
-.project-active-block {
+.flow-desktop .project-active-block {
   display: grid;
   gap: 0.48rem;
   padding: 0.45rem 1.15rem 1rem;
 }
 
-.project-active-name {
+.flow-desktop .project-active-name {
   position: relative;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -146,7 +142,7 @@ button:disabled {
   text-align: left;
 }
 
-.project-active-avatar {
+.flow-desktop .project-active-avatar {
   display: grid;
   place-items: center;
   width: 2.1rem;
@@ -158,37 +154,37 @@ button:disabled {
   font-weight: 900;
 }
 
-.project-active-avatar img {
+.flow-desktop .project-active-avatar img {
   width: 100%;
   height: 100%;
   border-radius: inherit;
   object-fit: cover;
 }
 
-.project-active-copy {
+.flow-desktop .project-active-copy {
   display: grid;
   min-width: 0;
   gap: 0.08rem;
 }
 
-.project-active-copy span:first-child {
+.flow-desktop .project-active-copy span:first-child {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.project-active-copy span:last-child {
+.flow-desktop .project-active-copy span:last-child {
   color: var(--th-fg-faint);
   font-size: 0.67rem;
   font-weight: 700;
 }
 
-.project-chevron {
+.flow-desktop .project-chevron {
   color: var(--th-fg-muted);
   font-size: 0.78rem;
 }
 
-.project-add-button {
+.flow-desktop .project-add-button {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -203,18 +199,18 @@ button:disabled {
   font-weight: 800;
 }
 
-.project-add-button:hover {
+.flow-desktop .project-add-button:hover {
   border-color: rgb(96 165 250 / 0.45);
   color: var(--th-fg);
 }
 
-.project-add-form {
+.flow-desktop .project-add-form {
   display: grid;
   gap: 0.5rem;
   margin: 0 1.15rem 0.85rem;
 }
 
-.project-add-form input {
+.flow-desktop .project-add-form input {
   width: 100%;
   border: 1px solid var(--th-border);
   border-radius: 0.5rem;
@@ -224,13 +220,13 @@ button:disabled {
   font-size: 0.78rem;
 }
 
-.project-add-actions {
+.flow-desktop .project-add-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 0.45rem;
 }
 
-.project-add-actions button {
+.flow-desktop .project-add-actions button {
   border: 1px solid var(--th-border);
   border-radius: 0.48rem;
   background: rgb(15 23 42 / 0.72);
@@ -240,12 +236,12 @@ button:disabled {
   font-weight: 800;
 }
 
-.project-add-actions button[type="submit"] {
+.flow-desktop .project-add-actions button[type="submit"] {
   border-color: rgb(34 197 94 / 0.42);
   color: #bbf7d0;
 }
 
-.project-list {
+.flow-desktop .project-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(2.65rem, 1fr));
   align-content: start;
@@ -255,7 +251,7 @@ button:disabled {
   padding: 0.2rem 1.15rem;
 }
 
-.project-card {
+.flow-desktop .project-card {
   position: relative;
   display: grid;
   place-items: center;
@@ -269,13 +265,13 @@ button:disabled {
   text-align: left;
 }
 
-.project-card.active {
+.flow-desktop .project-card.active {
   border-color: var(--project-color, var(--th-primary));
   background: var(--project-color-soft, rgb(56 189 248 / 0.14));
   box-shadow: 0 0 0 1px var(--project-color, var(--th-primary)) inset;
 }
 
-.project-avatar {
+.flow-desktop .project-avatar {
   display: grid;
   place-items: center;
   width: 2.35rem;
@@ -289,14 +285,14 @@ button:disabled {
   line-height: 1;
 }
 
-.project-avatar img {
+.flow-desktop .project-avatar img {
   width: 100%;
   height: 100%;
   border-radius: inherit;
   object-fit: cover;
 }
 
-.project-badge {
+.flow-desktop .project-badge {
   position: absolute;
   top: -0.05rem;
   right: -0.12rem;
@@ -313,13 +309,13 @@ button:disabled {
   font-weight: 700;
 }
 
-.project-badge.danger {
+.flow-desktop .project-badge.danger {
   border-color: rgb(239 68 68 / 0.6);
   background: rgb(239 68 68 / 0.15);
   color: #fee2e2;
 }
 
-.issue-panel {
+.flow-desktop .issue-panel {
   display: grid;
   grid-template-rows: auto auto auto minmax(0, 1fr);
   background:
@@ -327,8 +323,7 @@ button:disabled {
     var(--th-surface);
 }
 
-.issue-header,
-.chat-header {
+.flow-desktop .issue-header, .flow-desktop .chat-header {
   display: flex;
   align-items: start;
   justify-content: space-between;
@@ -337,19 +332,19 @@ button:disabled {
   padding: 1.35rem 1.45rem;
 }
 
-.issue-header-actions {
+.flow-desktop .issue-header-actions {
   display: flex;
   align-items: center;
   gap: 0.5rem;
 }
 
-.issue-updated-label {
+.flow-desktop .issue-updated-label {
   color: var(--th-fg-faint);
   font-size: 0.68rem;
   font-weight: 700;
 }
 
-.autoflow-health {
+.flow-desktop .autoflow-health {
   display: flex;
   align-items: center;
   gap: 0.42rem;
@@ -361,7 +356,7 @@ button:disabled {
   line-height: 1.25;
 }
 
-.autoflow-health-dot {
+.flow-desktop .autoflow-health-dot {
   width: 0.46rem;
   height: 0.46rem;
   flex: 0 0 auto;
@@ -369,34 +364,31 @@ button:disabled {
   background: #64748b;
 }
 
-.autoflow-health.starting .autoflow-health-dot,
-.autoflow-health.thinking .autoflow-health-dot,
-.autoflow-health.tool .autoflow-health-dot,
-.autoflow-health.responding .autoflow-health-dot {
+.flow-desktop .autoflow-health.starting .autoflow-health-dot, .flow-desktop .autoflow-health.thinking .autoflow-health-dot, .flow-desktop .autoflow-health.tool .autoflow-health-dot, .flow-desktop .autoflow-health.responding .autoflow-health-dot {
   background: #38bdf8;
   box-shadow: 0 0 0 0 rgb(56 189 248 / 0.45);
   animation: pi-pulse 1.45s ease-out infinite;
 }
 
-.autoflow-health.done .autoflow-health-dot {
+.flow-desktop .autoflow-health.done .autoflow-health-dot {
   background: #22c55e;
 }
 
-.autoflow-health.failed .autoflow-health-dot {
+.flow-desktop .autoflow-health.failed .autoflow-health-dot {
   background: #ef4444;
 }
 
-.autoflow-health.paused .autoflow-health-dot {
+.flow-desktop .autoflow-health.paused .autoflow-health-dot {
   background: #f59e0b;
 }
 
-.autoflow-health-label {
+.flow-desktop .autoflow-health-label {
   flex: 0 0 auto;
   color: var(--th-fg);
   font-weight: 800;
 }
 
-.autoflow-health-issue {
+.flow-desktop .autoflow-health-issue {
   flex: 0 0 auto;
   border: 1px solid var(--th-border);
   border-radius: 999px;
@@ -407,7 +399,7 @@ button:disabled {
   font-weight: 800;
 }
 
-.autoflow-health-detail {
+.flow-desktop .autoflow-health-detail {
   min-width: 0;
   overflow: hidden;
   color: var(--th-fg-faint);
@@ -415,7 +407,7 @@ button:disabled {
   white-space: nowrap;
 }
 
-.autoflow-switch {
+.flow-desktop .autoflow-switch {
   display: inline-flex;
   align-items: center;
   gap: 0.55rem;
@@ -429,13 +421,13 @@ button:disabled {
   font-weight: 800;
 }
 
-.autoflow-switch.enabled {
+.flow-desktop .autoflow-switch.enabled {
   border-color: rgb(34 211 238 / 0.5);
   background: rgb(8 47 73 / 0.46);
   color: var(--th-fg);
 }
 
-.switch-track {
+.flow-desktop .switch-track {
   position: relative;
   width: 1.88rem;
   height: 1.02rem;
@@ -444,7 +436,7 @@ button:disabled {
   transition: background 150ms ease;
 }
 
-.switch-track span {
+.flow-desktop .switch-track span {
   position: absolute;
   top: 0.16rem;
   left: 0.16rem;
@@ -455,16 +447,16 @@ button:disabled {
   transition: transform 150ms ease, background 150ms ease;
 }
 
-.autoflow-switch.enabled .switch-track {
+.flow-desktop .autoflow-switch.enabled .switch-track {
   background: rgb(16 185 129 / 0.58);
 }
 
-.autoflow-switch.enabled .switch-track span {
+.flow-desktop .autoflow-switch.enabled .switch-track span {
   transform: translateX(0.86rem);
   background: #ecfeff;
 }
 
-.new-issue-button {
+.flow-desktop .new-issue-button {
   display: inline-flex;
   align-items: center;
   gap: 0.38rem;
@@ -478,12 +470,12 @@ button:disabled {
   font-weight: 800;
 }
 
-.new-issue-button:hover {
+.flow-desktop .new-issue-button:hover {
   border-color: rgb(147 197 253 / 0.62);
   background: rgb(37 99 235 / 0.28);
 }
 
-.eyebrow {
+.flow-desktop .eyebrow {
   margin-bottom: 0.25rem;
   color: var(--th-fg-faint);
   font-size: 0.66rem;
@@ -492,46 +484,44 @@ button:disabled {
   letter-spacing: 0.03em;
 }
 
-h1,
-h2,
-p {
+.flow-desktop h1, .flow-desktop h2, .flow-desktop p {
   margin: 0;
 }
 
-h1 {
+.flow-desktop h1 {
   font-size: 1rem;
   line-height: 1.25;
 }
 
-h2 {
+.flow-desktop h2 {
   font-size: 1.02rem;
   line-height: 1.3;
 }
 
-.chat-header p {
+.flow-desktop .chat-header p {
   margin-top: 0.3rem;
   color: var(--th-fg-muted);
   font-size: 0.77rem;
 }
 
-.chat-title-block {
+.flow-desktop .chat-title-block {
   min-width: 0;
 }
 
-.chat-title-row {
+.flow-desktop .chat-title-row {
   display: flex;
   align-items: center;
   gap: 0.55rem;
 }
 
-.chat-title-block p {
+.flow-desktop .chat-title-block p {
   max-width: 42rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.icon-button {
+.flow-desktop .icon-button {
   display: grid;
   place-items: center;
   border: 1px solid var(--th-border);
@@ -540,12 +530,12 @@ h2 {
   color: var(--th-fg);
 }
 
-.icon-button {
+.flow-desktop .icon-button {
   width: 2rem;
   height: 2rem;
 }
 
-.search-box {
+.flow-desktop .search-box {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
@@ -558,7 +548,7 @@ h2 {
   padding: 0 0.72rem;
 }
 
-.new-issue-form {
+.flow-desktop .new-issue-form {
   display: grid;
   gap: 0.58rem;
   margin: 0 1rem 0.72rem;
@@ -568,8 +558,7 @@ h2 {
   padding: 0.78rem;
 }
 
-.new-issue-form input,
-.new-issue-form textarea {
+.flow-desktop .new-issue-form input, .flow-desktop .new-issue-form textarea {
   width: 100%;
   border: 1px solid rgb(30 43 63 / 0.95);
   border-radius: 0.55rem;
@@ -580,19 +569,19 @@ h2 {
   font-size: 0.82rem;
 }
 
-.new-issue-form textarea {
+.flow-desktop .new-issue-form textarea {
   min-height: 4.8rem;
   resize: vertical;
   line-height: 1.45;
 }
 
-.new-issue-actions {
+.flow-desktop .new-issue-actions {
   display: flex;
   justify-content: end;
   gap: 0.5rem;
 }
 
-.new-issue-actions button {
+.flow-desktop .new-issue-actions button {
   border: 1px solid var(--th-border);
   border-radius: 0.5rem;
   background: rgb(15 23 42 / 0.72);
@@ -602,13 +591,13 @@ h2 {
   font-weight: 800;
 }
 
-.new-issue-actions button[type="submit"] {
+.flow-desktop .new-issue-actions button[type="submit"] {
   border-color: rgb(96 165 250 / 0.48);
   background: rgb(37 99 235 / 0.22);
   color: #dbeafe;
 }
 
-.search-box input {
+.flow-desktop .search-box input {
   width: 100%;
   height: 2.15rem;
   border: 0;
@@ -617,14 +606,14 @@ h2 {
   color: var(--th-fg);
 }
 
-.status-row {
+.flow-desktop .status-row {
   display: flex;
   flex-wrap: wrap;
   gap: 0.42rem;
   padding: 0 1rem 0.8rem;
 }
 
-.status-chip {
+.flow-desktop .status-chip {
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
@@ -637,66 +626,64 @@ h2 {
   font-weight: 650;
 }
 
-.status-chip.active {
+.flow-desktop .status-chip.active {
   box-shadow: 0 0 0 1px currentColor inset, 0 0.45rem 1.2rem rgb(0 0 0 / 0.18);
 }
 
-.status-count {
+.flow-desktop .status-count {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.64rem;
 }
 
-.status-theme-active,
-.status-theme-all {
+.flow-desktop .status-theme-active, .flow-desktop .status-theme-all {
   color: #dbeafe;
   border-color: rgb(203 213 225 / 0.36);
   background: rgb(203 213 225 / 0.11);
 }
 
-.status-theme-queued {
+.flow-desktop .status-theme-queued {
   color: #dbeafe;
   border-color: rgb(148 163 184 / 0.42);
   background: rgb(148 163 184 / 0.14);
 }
 
-.status-theme-ready {
+.flow-desktop .status-theme-ready {
   color: #ccfbf1;
   border-color: rgb(45 212 191 / 0.46);
   background: rgb(45 212 191 / 0.15);
 }
 
-.status-theme-running,
-.status-theme-done {
+.flow-desktop .status-theme-running, .flow-desktop .status-theme-done {
   color: #dcfce7;
   border-color: rgb(34 197 94 / 0.46);
   background: rgb(34 197 94 / 0.15);
 }
 
-.status-theme-review {
+.flow-desktop .status-theme-review {
   color: #ede9fe;
   border-color: rgb(167 139 250 / 0.5);
   background: rgb(167 139 250 / 0.16);
 }
 
-.status-theme-needs-input {
+.flow-desktop .status-theme-needs-input {
   color: #fef3c7;
   border-color: rgb(245 158 11 / 0.5);
   background: rgb(245 158 11 / 0.16);
 }
 
-.status-theme-blocked {
+.flow-desktop .status-theme-blocked {
   color: #fee2e2;
   border-color: rgb(239 68 68 / 0.54);
   background: rgb(239 68 68 / 0.16);
 }
 
-.status-theme-unknown {
+.flow-desktop .status-theme-unknown {
   color: var(--th-fg-muted);
   border-color: rgb(127 149 176 / 0.36);
   background: rgb(127 149 176 / 0.12);
 }
 
-.issue-stack {
+.flow-desktop .issue-stack {
   display: flex;
   flex-direction: column;
   gap: 0.85rem;
@@ -707,7 +694,7 @@ h2 {
   padding: 0 0 1.25rem;
 }
 
-.issue-card {
+.flow-desktop .issue-card {
   display: flex;
   flex-direction: column;
   flex: 0 0 auto;
@@ -724,26 +711,26 @@ h2 {
   box-shadow: 0 0.5rem 1.35rem rgb(0 0 0 / 0.16);
 }
 
-.issue-card:hover {
+.flow-desktop .issue-card:hover {
   background: var(--th-card-hover);
   transform: translateY(-1px);
 }
 
-.issue-card.active {
+.flow-desktop .issue-card.active {
   border-left-color: var(--th-primary);
   border-color: rgb(96 165 250 / 0.56);
   box-shadow: 0 0 0 1px rgb(96 165 250 / 0.18), 0 1rem 2rem rgb(0 0 0 / 0.2);
 }
 
-.issue-card.status-theme-blocked { border-left-color: #ef4444; color: var(--th-fg); }
-.issue-card.status-theme-needs-input { border-left-color: #f59e0b; color: var(--th-fg); }
-.issue-card.status-theme-review { border-left-color: #a78bfa; color: var(--th-fg); }
-.issue-card.status-theme-running { border-left-color: #22c55e; color: var(--th-fg); }
-.issue-card.status-theme-ready { border-left-color: #2dd4bf; color: var(--th-fg); }
-.issue-card.status-theme-queued { border-left-color: #94a3b8; color: var(--th-fg); }
-.issue-card.status-theme-done { border-left-color: #22c55e; color: var(--th-fg); }
+.flow-desktop .issue-card.status-theme-blocked { border-left-color: #ef4444; color: var(--th-fg); }
+.flow-desktop .issue-card.status-theme-needs-input { border-left-color: #f59e0b; color: var(--th-fg); }
+.flow-desktop .issue-card.status-theme-review { border-left-color: #a78bfa; color: var(--th-fg); }
+.flow-desktop .issue-card.status-theme-running { border-left-color: #22c55e; color: var(--th-fg); }
+.flow-desktop .issue-card.status-theme-ready { border-left-color: #2dd4bf; color: var(--th-fg); }
+.flow-desktop .issue-card.status-theme-queued { border-left-color: #94a3b8; color: var(--th-fg); }
+.flow-desktop .issue-card.status-theme-done { border-left-color: #22c55e; color: var(--th-fg); }
 
-.issue-summary {
+.flow-desktop .issue-summary {
   display: flex;
   flex-direction: column;
   align-self: stretch;
@@ -757,21 +744,21 @@ h2 {
   white-space: normal;
 }
 
-.issue-row {
+.flow-desktop .issue-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
 }
 
-.issue-ref {
+.flow-desktop .issue-ref {
   color: var(--th-primary);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.78rem;
   font-weight: 800;
 }
 
-.issue-state {
+.flow-desktop .issue-state {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -783,44 +770,43 @@ h2 {
   white-space: nowrap;
 }
 
-.issue-state.queued {
+.flow-desktop .issue-state.queued {
   color: #dbeafe;
   border-color: rgb(148 163 184 / 0.45);
   background: rgb(148 163 184 / 0.16);
 }
 
-.issue-state.ready {
+.flow-desktop .issue-state.ready {
   color: #ccfbf1;
   border-color: rgb(45 212 191 / 0.45);
   background: rgb(45 212 191 / 0.16);
 }
 
-.issue-state.running,
-.issue-state.done {
+.flow-desktop .issue-state.running, .flow-desktop .issue-state.done {
   color: #dcfce7;
   border-color: rgb(34 197 94 / 0.45);
   background: rgb(34 197 94 / 0.16);
 }
 
-.issue-state.in-review {
+.flow-desktop .issue-state.in-review {
   color: #ede9fe;
   border-color: rgb(167 139 250 / 0.45);
   background: rgb(167 139 250 / 0.16);
 }
 
-.issue-state.needs-input {
+.flow-desktop .issue-state.needs-input {
   color: #fef3c7;
   border-color: rgb(245 158 11 / 0.5);
   background: rgb(245 158 11 / 0.16);
 }
 
-.issue-state.blocked {
+.flow-desktop .issue-state.blocked {
   color: #fee2e2;
   border-color: rgb(239 68 68 / 0.5);
   background: rgb(239 68 68 / 0.16);
 }
 
-.issue-title {
+.flow-desktop .issue-title {
   margin-top: 0.58rem;
   color: var(--th-fg);
   font-size: 0.91rem;
@@ -830,7 +816,7 @@ h2 {
   word-break: break-word;
 }
 
-.issue-note {
+.flow-desktop .issue-note {
   margin-top: 0.58rem;
   color: var(--th-fg-soft);
   font-size: 0.78rem;
@@ -839,14 +825,14 @@ h2 {
   word-break: break-word;
 }
 
-.issue-actions-preview {
+.flow-desktop .issue-actions-preview {
   display: flex;
   flex-wrap: wrap;
   gap: 0.3rem;
   margin-top: 0.62rem;
 }
 
-.issue-actions-preview span {
+.flow-desktop .issue-actions-preview span {
   border: 1px solid rgb(148 163 184 / 0.25);
   border-radius: 999px;
   background: rgb(15 26 46 / 0.72);
@@ -856,36 +842,36 @@ h2 {
   font-weight: 700;
 }
 
-.workflow-track {
+.flow-desktop .workflow-track {
   display: flex;
   align-items: center;
   gap: 0.18rem;
   margin-top: 0.35rem;
 }
 
-.track-dot {
+.flow-desktop .track-dot {
   width: 0.36rem;
   height: 0.36rem;
   border-radius: 999px;
   background: rgb(127 149 176 / 0.38);
 }
 
-.track-dot.active {
+.flow-desktop .track-dot.active {
   background: var(--th-primary);
 }
 
-.track-line {
+.flow-desktop .track-line {
   width: 0.55rem;
   height: 1px;
   border-radius: 999px;
   background: rgb(127 149 176 / 0.38);
 }
 
-.track-line.active {
+.flow-desktop .track-line.active {
   background: rgb(56 189 248 / 0.64);
 }
 
-.chat-popover-layer {
+.flow-desktop .chat-popover-layer {
   position: absolute;
   inset: 0;
   z-index: 5;
@@ -898,7 +884,7 @@ h2 {
   backdrop-filter: blur(3px);
 }
 
-.chat-panel {
+.flow-desktop .chat-panel {
   display: grid;
   width: min(58rem, calc(100vw - 4rem));
   height: min(44rem, calc(100vh - 4rem));
@@ -914,76 +900,76 @@ h2 {
   box-shadow: 0 2rem 5rem rgb(0 0 0 / 0.46);
 }
 
-.snapshot-text {
+.flow-desktop .snapshot-text {
   white-space: nowrap;
 }
 
-.status-dot {
+.flow-desktop .status-dot {
   width: 0.48rem;
   height: 0.48rem;
   border-radius: 999px;
 }
 
-.status-dot.ok {
+.flow-desktop .status-dot.ok {
   background: var(--th-primary);
 }
 
-.status-dot.loading {
+.flow-desktop .status-dot.loading {
   background: #f59e0b;
 }
 
-.status-dot.error {
+.flow-desktop .status-dot.error {
   background: #ef4444;
 }
 
-.issue-detail {
+.flow-desktop .issue-detail {
   display: grid;
   gap: 0.65rem;
   border-top: 1px solid var(--th-border);
   padding: 0.7rem;
 }
 
-.detail-section {
+.flow-desktop .detail-section {
   border: 1px solid var(--th-border);
   border-radius: 0.55rem;
   background: var(--th-card);
   padding: 0.8rem;
 }
 
-.detail-grid {
+.flow-desktop .detail-grid {
   display: grid;
   grid-template-columns: 4.8rem minmax(0, 1fr);
   gap: 0.38rem 0.65rem;
   font-size: 0.79rem;
 }
 
-.detail-label {
+.flow-desktop .detail-label {
   color: var(--th-fg-muted);
 }
 
-.detail-value {
+.flow-desktop .detail-value {
   color: var(--th-fg);
   overflow-wrap: anywhere;
 }
 
-.mono {
+.flow-desktop .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
-.record-present {
+.flow-desktop .record-present {
   color: #22c55e;
 }
 
-.record-needed {
+.flow-desktop .record-needed {
   color: #ef4444;
 }
 
-.blocker-list {
+.flow-desktop .blocker-list {
   display: grid;
   gap: 0.45rem;
 }
 
-.blocker-note {
+.flow-desktop .blocker-note {
   border: 1px solid var(--th-border);
   border-radius: 0.45rem;
   background: #0c1527;
@@ -993,19 +979,19 @@ h2 {
   line-height: 1.38;
 }
 
-.blocker-note.blocked {
+.flow-desktop .blocker-note.blocked {
   border-color: rgb(239 68 68 / 0.45);
   background: rgb(239 68 68 / 0.14);
   color: #fee2e2;
 }
 
-.chat-header-actions {
+.flow-desktop .chat-header-actions {
   display: flex;
   align-items: center;
   gap: 0.6rem;
 }
 
-.monitor-back-button {
+.flow-desktop .monitor-back-button {
   display: inline-flex;
   align-items: center;
   gap: 0.36rem;
@@ -1020,12 +1006,12 @@ h2 {
   white-space: nowrap;
 }
 
-.monitor-back-button:hover {
+.flow-desktop .monitor-back-button:hover {
   border-color: rgb(56 189 248 / 0.55);
   color: var(--th-fg);
 }
 
-.system-notice {
+.flow-desktop .system-notice {
   border-top: 1px solid var(--th-border);
   border-bottom: 1px solid var(--th-border);
   background: rgb(56 189 248 / 0.09);
@@ -1035,7 +1021,7 @@ h2 {
   line-height: 1.4;
 }
 
-.pending-action-notice {
+.flow-desktop .pending-action-notice {
   display: flex;
   align-items: center;
   gap: 0.55rem;
@@ -1047,11 +1033,11 @@ h2 {
   font-size: 0.76rem;
 }
 
-.pending-action-notice.needs-confirmation {
+.flow-desktop .pending-action-notice.needs-confirmation {
   background: rgb(245 158 11 / 0.13);
 }
 
-.pending-action-label {
+.flow-desktop .pending-action-label {
   flex: 0 0 auto;
   border: 1px solid rgb(245 158 11 / 0.5);
   border-radius: 999px;
@@ -1064,7 +1050,7 @@ h2 {
   letter-spacing: 0.045em;
 }
 
-.pending-action-text {
+.flow-desktop .pending-action-text {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -1073,7 +1059,7 @@ h2 {
   white-space: nowrap;
 }
 
-.pending-action-button {
+.flow-desktop .pending-action-button {
   flex: 0 0 auto;
   border: 1px solid rgb(245 158 11 / 0.52);
   border-radius: 999px;
@@ -1084,12 +1070,12 @@ h2 {
   font-weight: 800;
 }
 
-.pending-action-button:hover:not(:disabled) {
+.flow-desktop .pending-action-button:hover:not(:disabled) {
   border-color: #fbbf24;
   background: rgb(245 158 11 / 0.28);
 }
 
-.timeline {
+.flow-desktop .timeline {
   display: grid;
   align-content: start;
   gap: 1.1rem;
@@ -1098,13 +1084,13 @@ h2 {
   padding: 2.1rem max(2rem, calc((100% - 58rem) / 2));
 }
 
-.assistant-thread {
+.flow-desktop .assistant-thread {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
   min-height: 0;
 }
 
-.assistant-viewport {
+.flow-desktop .assistant-viewport {
   display: grid;
   align-content: start;
   gap: 1.1rem;
@@ -1115,11 +1101,11 @@ h2 {
   scroll-behavior: smooth;
 }
 
-.assistant-empty-state {
+.flow-desktop .assistant-empty-state {
   display: none;
 }
 
-.assistant-loading {
+.flow-desktop .assistant-loading {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1129,7 +1115,7 @@ h2 {
   font-size: 0.8rem;
 }
 
-.assistant-loading .accent-spinner {
+.flow-desktop .assistant-loading .accent-spinner {
   width: 1rem;
   height: 1rem;
   border-width: 1.5px;
@@ -1140,7 +1126,7 @@ h2 {
   to { transform: rotate(360deg); }
 }
 
-.message {
+.flow-desktop .message {
   min-width: 0;
   max-width: min(38rem, 74%);
   border: 1px solid rgb(30 43 63 / 0.92);
@@ -1150,34 +1136,34 @@ h2 {
   box-shadow: 0 0.8rem 2rem rgb(0 0 0 / 0.18);
 }
 
-.message.user {
+.flow-desktop .message.user {
   justify-self: end;
   border-color: rgb(59 130 246 / 0.48);
   background: linear-gradient(135deg, rgb(30 64 175 / 0.92), rgb(15 35 83 / 0.94));
 }
 
-.message.assistant {
+.flow-desktop .message.assistant {
   justify-self: start;
   border-color: rgb(51 65 85 / 0.78);
   background: linear-gradient(135deg, rgb(15 26 46 / 0.96), rgb(10 18 32 / 0.94));
 }
 
-.message.muted {
+.flow-desktop .message.muted {
   color: var(--th-fg-muted);
 }
 
-.message-role {
+.flow-desktop .message-role {
   display: none;
 }
 
-.message-text {
+.flow-desktop .message-text {
   color: var(--th-fg);
   font-size: 0.91rem;
   line-height: 1.65;
   overflow-wrap: anywhere;
 }
 
-.status-message {
+.flow-desktop .status-message {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -1191,7 +1177,7 @@ h2 {
   color: var(--th-fg-muted);
 }
 
-.status-message-dot {
+.flow-desktop .status-message-dot {
   width: 0.45rem;
   height: 0.45rem;
   flex: 0 0 auto;
@@ -1201,23 +1187,23 @@ h2 {
   animation: pi-pulse 1.45s ease-out infinite;
 }
 
-.status-message.done .status-message-dot {
+.flow-desktop .status-message.done .status-message-dot {
   animation: none;
   background: #22c55e;
 }
 
-.status-message.failed .status-message-dot {
+.flow-desktop .status-message.failed .status-message-dot {
   animation: none;
   background: #ef4444;
 }
 
-.status-message-label {
+.flow-desktop .status-message-label {
   color: var(--th-fg);
   font-weight: 700;
   white-space: nowrap;
 }
 
-.status-message-tool {
+.flow-desktop .status-message-tool {
   max-width: 11rem;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1230,54 +1216,47 @@ h2 {
   font-size: 0.68rem;
 }
 
-.status-message-detail {
+.flow-desktop .status-message-detail {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.markdown-message {
+.flow-desktop .markdown-message {
   display: grid;
   gap: 0.68rem;
 }
 
-.markdown-message p,
-.markdown-message ul,
-.markdown-message ol,
-.markdown-message pre,
-.markdown-message h3,
-.markdown-message h4 {
+.flow-desktop .markdown-message p, .flow-desktop .markdown-message ul, .flow-desktop .markdown-message ol, .flow-desktop .markdown-message pre, .flow-desktop .markdown-message h3, .flow-desktop .markdown-message h4 {
   margin: 0;
 }
 
-.markdown-message h3,
-.markdown-message h4 {
+.flow-desktop .markdown-message h3, .flow-desktop .markdown-message h4 {
   color: var(--th-fg);
   font-weight: 800;
   line-height: 1.35;
 }
 
-.markdown-message h3 {
+.flow-desktop .markdown-message h3 {
   font-size: 1rem;
 }
 
-.markdown-message h4 {
+.flow-desktop .markdown-message h4 {
   font-size: 0.94rem;
 }
 
-.markdown-message ul,
-.markdown-message ol {
+.flow-desktop .markdown-message ul, .flow-desktop .markdown-message ol {
   display: grid;
   gap: 0.34rem;
   padding-left: 1.15rem;
 }
 
-.markdown-message li {
+.flow-desktop .markdown-message li {
   padding-left: 0.1rem;
 }
 
-.markdown-message code {
+.flow-desktop .markdown-message code {
   border: 1px solid rgb(148 163 184 / 0.22);
   border-radius: 0.32rem;
   background: rgb(3 8 20 / 0.66);
@@ -1287,7 +1266,7 @@ h2 {
   font-size: 0.86em;
 }
 
-.markdown-message pre {
+.flow-desktop .markdown-message pre {
   max-width: 100%;
   overflow: auto;
   border: 1px solid rgb(30 43 63 / 0.95);
@@ -1296,7 +1275,7 @@ h2 {
   padding: 0.72rem;
 }
 
-.markdown-message pre code {
+.flow-desktop .markdown-message pre code {
   display: block;
   border: 0;
   background: transparent;
@@ -1304,13 +1283,13 @@ h2 {
   white-space: pre;
 }
 
-.markdown-message a {
+.flow-desktop .markdown-message a {
   color: #93c5fd;
   text-decoration: underline;
   text-underline-offset: 0.14rem;
 }
 
-.composer-tool-button {
+.flow-desktop .composer-tool-button {
   display: grid;
   place-items: center;
   width: 3rem;
@@ -1322,7 +1301,7 @@ h2 {
   color: var(--th-fg-muted);
 }
 
-.status-summary {
+.flow-desktop .status-summary {
   display: flex;
   align-items: center;
   gap: 0.55rem;
@@ -1337,7 +1316,7 @@ h2 {
   min-width: 0;
 }
 
-.pi-activity-pulse {
+.flow-desktop .pi-activity-pulse {
   width: 0.5rem;
   height: 0.5rem;
   flex: 0 0 auto;
@@ -1347,28 +1326,28 @@ h2 {
   animation: pi-pulse 1.45s ease-out infinite;
 }
 
-.status-summary.done .pi-activity-pulse {
+.flow-desktop .status-summary.done .pi-activity-pulse {
   animation: none;
   background: #22c55e;
 }
 
-.status-summary.idle .pi-activity-pulse {
+.flow-desktop .status-summary.idle .pi-activity-pulse {
   animation: none;
   background: #64748b;
 }
 
-.status-summary.failed .pi-activity-pulse {
+.flow-desktop .status-summary.failed .pi-activity-pulse {
   animation: none;
   background: #ef4444;
 }
 
-.pi-activity-label {
+.flow-desktop .pi-activity-label {
   color: var(--th-fg);
   font-weight: 700;
   white-space: nowrap;
 }
 
-.pi-activity-tool {
+.flow-desktop .pi-activity-tool {
   max-width: 11rem;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1381,7 +1360,7 @@ h2 {
   font-size: 0.68rem;
 }
 
-.pi-activity-detail {
+.flow-desktop .pi-activity-detail {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1394,7 +1373,7 @@ h2 {
   }
 }
 
-.composer {
+.flow-desktop .composer {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto 3rem;
   gap: 0.7rem;
@@ -1402,11 +1381,11 @@ h2 {
   background: transparent;
 }
 
-.assistant-composer {
+.flow-desktop .assistant-composer {
   border-top: 0;
 }
 
-.composer textarea {
+.flow-desktop .composer textarea {
   width: 100%;
   min-height: 4.9rem;
   max-height: 9rem;
@@ -1422,7 +1401,7 @@ h2 {
   box-shadow: 0 0.8rem 2rem rgb(0 0 0 / 0.16);
 }
 
-.composer .assistant-send-button {
+.flow-desktop .composer .assistant-send-button {
   display: grid;
   place-items: center;
   width: 3rem;
@@ -1436,39 +1415,39 @@ h2 {
 }
 
 @media (max-width: 1180px) {
-  .chat-header {
+  .flow-desktop .chat-header {
     align-items: center;
     padding: 0.78rem 0.86rem;
   }
 
-  .chat-header .eyebrow {
+  .flow-desktop .chat-header .eyebrow {
     display: none;
   }
 
-  h2 {
+  .flow-desktop h2 {
     font-size: 0.98rem;
     line-height: 1.22;
   }
 
-  .chat-header p {
+  .flow-desktop .chat-header p {
     margin-top: 0.22rem;
     font-size: 0.72rem;
   }
 
-  .chat-header-actions {
+  .flow-desktop .chat-header-actions {
     gap: 0.42rem;
   }
 
-  .snapshot-text {
+  .flow-desktop .snapshot-text {
     display: none;
   }
 
-  .timeline {
+  .flow-desktop .timeline {
     padding-top: 0.85rem;
   }
 }
 
-.error-line {
+.flow-desktop .error-line {
   border-top: 1px solid rgb(239 68 68 / 0.35);
   background: rgb(239 68 68 / 0.12);
   color: #fee2e2;
@@ -1476,7 +1455,7 @@ h2 {
   font-size: 0.78rem;
 }
 
-.shell-error {
+.flow-desktop .shell-error {
   grid-column: 2;
   align-self: end;
   margin: 0 1rem 1rem;
@@ -1484,7 +1463,7 @@ h2 {
   border-radius: 0.6rem;
 }
 
-.empty-state {
+.flow-desktop .empty-state {
   display: grid;
   place-items: center;
   min-height: 6.5rem;
@@ -1496,20 +1475,20 @@ h2 {
 }
 
 @media (max-width: 760px) {
-  .desktop-shell {
+  .flow-desktop .desktop-shell {
     grid-template-columns: 4.6rem minmax(0, 1fr);
   }
 
-  .issue-stack {
+  .flow-desktop .issue-stack {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .chat-panel {
+  .flow-desktop .chat-panel {
     width: min(100%, calc(100vw - 1rem));
     height: min(100%, calc(100vh - 1rem));
   }
 
-  .chat-popover-layer {
+  .flow-desktop .chat-popover-layer {
     padding: 0.5rem;
   }
 }

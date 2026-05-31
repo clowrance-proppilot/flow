@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { flowConfigPath, nowIso, validateFlowConfig } from "../src/index.js";
 
@@ -13,7 +15,6 @@ export const desktopProjectRecordSchema = z.object({
   valid: z.boolean(),
   icon: z.string().min(1).optional(),
   error: z.string().optional(),
-  autoflowEnabled: z.boolean().default(true),
   addedAt: z.string().datetime(),
   lastOpenedAt: z.string().datetime(),
 });
@@ -26,14 +27,19 @@ const desktopProjectRegistryStateSchema = z.object({
 type DesktopProjectRegistryState = z.infer<typeof desktopProjectRegistryStateSchema>;
 
 export interface DesktopProjectRegistryOptions {
-  statePath: string;
+  statePath?: string;
+  dbPath?: string;
 }
 
 export class DesktopProjectRegistry {
-  private readonly statePath: string;
+  private readonly statePath?: string;
+  private readonly dbPath?: string;
+  private db: DatabaseSync | null = null;
 
   constructor(options: DesktopProjectRegistryOptions) {
     this.statePath = options.statePath;
+    this.dbPath = options.dbPath;
+    if (!this.statePath && !this.dbPath) throw new Error("DesktopProjectRegistry requires statePath or dbPath.");
   }
 
   async listProjects(): Promise<DesktopProjectRecord[]> {
@@ -96,22 +102,6 @@ export class DesktopProjectRegistry {
     return refreshed;
   }
 
-  async setProjectAutoflow(projectId: string, enabled: boolean): Promise<DesktopProjectRecord> {
-    const state = await this.readState();
-    const project = state.projects.find((candidate) => candidate.id === projectId);
-    if (!project) throw new Error(`Unknown Flow project ${projectId}.`);
-    const updated = desktopProjectRecordSchema.parse({
-      ...project,
-      autoflowEnabled: enabled,
-      lastOpenedAt: nowIso(),
-    });
-    await this.writeState({
-      activeProjectId: state.activeProjectId,
-      projects: upsertProject(state.projects, updated),
-    });
-    return updated;
-  }
-
   private async projectRecord(root: string, existing?: DesktopProjectRecord): Promise<DesktopProjectRecord> {
     const now = nowIso();
     const validation = await validateFlowConfig({ projectRoot: root });
@@ -123,16 +113,17 @@ export class DesktopProjectRegistry {
       valid: validation.ok,
       icon: validation.config?.project.icon,
       error: validation.ok ? undefined : validation.errors.join("; "),
-      autoflowEnabled: existing?.autoflowEnabled ?? true,
       addedAt: existing?.addedAt ?? now,
       lastOpenedAt: now,
     });
   }
 
   private async readState(): Promise<DesktopProjectRegistryState> {
-    if (!existsSync(this.statePath)) return { projects: [] };
+    if (this.dbPath) return this.readDbState();
+    const statePath = this.requireStatePath();
+    if (!existsSync(statePath)) return { projects: [] };
     try {
-      const raw = await readFile(this.statePath, "utf8");
+      const raw = await readFile(statePath, "utf8");
       return desktopProjectRegistryStateSchema.parse(JSON.parse(raw));
     } catch {
       return { projects: [] };
@@ -140,11 +131,59 @@ export class DesktopProjectRegistry {
   }
 
   private async writeState(state: DesktopProjectRegistryState): Promise<void> {
-    await mkdir(dirname(this.statePath), { recursive: true });
     const parsed = desktopProjectRegistryStateSchema.parse(state);
-    const tempPath = `${this.statePath}.${process.pid}.${Date.now()}.tmp`;
+    if (this.dbPath) {
+      this.writeDbState(parsed);
+      return;
+    }
+    const statePath = this.requireStatePath();
+    await mkdir(dirname(statePath), { recursive: true });
+    const tempPath = `${statePath}.${process.pid}.${Date.now()}.tmp`;
     await writeFile(tempPath, `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
-    await rename(tempPath, this.statePath);
+    await rename(tempPath, statePath);
+  }
+
+  private requireStatePath(): string {
+    if (!this.statePath) throw new Error("DesktopProjectRegistry statePath is not configured.");
+    return this.statePath;
+  }
+
+  private getDb(): DatabaseSync {
+    if (this.db) return this.db;
+    if (!this.dbPath) throw new Error("DesktopProjectRegistry dbPath is not configured.");
+    mkdirSync(dirname(this.dbPath), { recursive: true });
+    this.db = new DatabaseSync(this.dbPath);
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec("PRAGMA busy_timeout = 5000");
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS desktop_project_state (
+        id TEXT PRIMARY KEY,
+        data TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
+    return this.db;
+  }
+
+  private readDbState(): DesktopProjectRegistryState {
+    try {
+      const row = this.getDb().prepare("SELECT data FROM desktop_project_state WHERE id = ?").get("projects") as { data: string } | undefined;
+      if (!row) return { projects: [] };
+      return desktopProjectRegistryStateSchema.parse(JSON.parse(row.data));
+    } catch {
+      return { projects: [] };
+    }
+  }
+
+  private writeDbState(state: DesktopProjectRegistryState): void {
+    const parsed = desktopProjectRegistryStateSchema.parse(state);
+    this.getDb().prepare(`
+      INSERT INTO desktop_project_state (id, data, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        data = excluded.data,
+        updated_at = excluded.updated_at
+    `).run("projects", JSON.stringify(parsed), nowIso());
   }
 }
 

@@ -85,7 +85,6 @@ function resolveEntry(candidates) {
 }
 
 function needsBuild(entry) {
-  if (entry.includes(join("dist", "bin"))) return false;
   const entryMtime = statSync(entry).mtimeMs;
   return latestSourceMtime(runtimeSourceDir) > entryMtime || latestExistingMtime(runtimeConfigFiles) > entryMtime;
 }

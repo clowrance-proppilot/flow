@@ -370,6 +370,7 @@ export interface PullRequestMetadataSnapshot {
   mergeStateStatus?: string;
   reviewDecision?: string;
   checksPassing?: boolean;
+  checksPending?: boolean;
   templateMissingHeadings?: string[];
   autoReviewStatus?: string;
   autoReviewMustFix?: boolean;
@@ -411,6 +412,7 @@ export function collectPullRequestSnapshots(
       mergeStateStatus: existingString(metadata[`${prefix}_merge_state_status`]),
       reviewDecision: existingString(metadata[`${prefix}_review_decision`]),
       checksPassing: metadataBoolean(metadata[`${prefix}_checks_passing`]),
+      checksPending: metadataBoolean(metadata[`${prefix}_checks_pending`]),
       templateMissingHeadings: metadataStringArray(metadata[`${prefix}_template_missing_headings`]),
       autoReviewStatus: existingString(metadata[`${prefix}_auto_review_status`]),
       autoReviewMustFix: metadataBoolean(metadata[`${prefix}_auto_review_must_fix`]),
@@ -442,6 +444,7 @@ export function collectPullRequestSnapshots(
       mergeStateStatus: existingString(metadata.prMergeStateStatus),
       reviewDecision: existingString(metadata.prReviewDecision),
       checksPassing: metadataBoolean(metadata.prChecksPassing),
+      checksPending: metadataBoolean(metadata.prChecksPending),
       templateMissingHeadings: metadataStringArray(metadata.prTemplateMissingHeadings),
       autoReviewStatus: existingString(metadata.prAutoReviewStatus),
       autoReviewMustFix: metadataBoolean(metadata.prAutoReviewMustFix),
@@ -530,6 +533,7 @@ export function pullRequestMetadata(repoKeyOrName: string, pr: PullRequestStatus
     mergeStateStatus: pr.mergeStateStatus,
     reviewDecision: pr.reviewDecision,
     checksPassing: pr.checksPassing,
+    checksPending: pr.checksPending,
     templateMissingHeadings: pr.templateMissingHeadings,
     autoReviewStatus: pr.autoReviewStatus,
     autoReviewMustFix: pr.autoReviewMustFix,
@@ -555,6 +559,7 @@ export function pullRequestMetadata(repoKeyOrName: string, pr: PullRequestStatus
     [`${prefix}_merge_state_status`]: pr.mergeStateStatus,
     [`${prefix}_review_decision`]: pr.reviewDecision,
     [`${prefix}_checks_passing`]: pr.checksPassing,
+    [`${prefix}_checks_pending`]: pr.checksPending,
     [`${prefix}_template_missing_headings`]: templateMissingHeadingsMetadata(pr.templateMissingHeadings),
     [`${prefix}_auto_review_status`]: pr.autoReviewStatus,
     [`${prefix}_auto_review_must_fix`]: pr.autoReviewMustFix,
@@ -582,6 +587,7 @@ export function globalPullRequestMetadata(pr: PullRequestMetadataSnapshot): Reco
     prReviewDecision: pr.reviewDecision,
     humanReviewRequired: pr.reviewDecision === "REVIEW_REQUIRED",
     prChecksPassing: pr.checksPassing,
+    prChecksPending: pr.checksPending,
     prTemplateMissingHeadings: templateMissingHeadingsMetadata(pr.templateMissingHeadings),
     prAutoReviewStatus: pr.autoReviewStatus,
     prAutoReviewMustFix: pr.autoReviewMustFix,
@@ -616,6 +622,7 @@ export function pullRequestStatusSnapshot(
     mergeStateStatus: pr.mergeStateStatus,
     reviewDecision: pr.reviewDecision,
     checksPassing: pr.checksPassing,
+    checksPending: pr.checksPending,
     templateMissingHeadings: pr.templateMissingHeadings,
     autoReviewStatus: pr.autoReviewStatus,
     autoReviewMustFix: pr.autoReviewMustFix,
@@ -650,6 +657,7 @@ function pullRequestBlockerScore(snapshot: PullRequestMetadataSnapshot): number 
   if (snapshot.isDraft === true) return 100;
   if (isPullRequestConflicted(snapshot)) return 90;
   if (snapshot.checksPassing === false) return 80;
+  if (snapshot.checksPending === true) return 78;
   if (snapshot.templateMissingHeadings && snapshot.templateMissingHeadings.length > 0) return 75;
   if (snapshot.autoReviewMustFix === true) return 70;
   if (snapshot.autoReviewStatus === "failed") return 60;
@@ -733,10 +741,27 @@ function aggregatePullRequestMetadata(
 }
 
 function externallyDrivenState(current: WorkItem["state"], metadata: Record<string, unknown>): WorkItem["state"] {
+  const issueStatus = existingString(metadata.issueStatus)?.toLowerCase() ?? "";
+  const issueStatusCategory = existingString(metadata.issueStatusCategory)?.toLowerCase() ?? "";
+  const issueResolution = existingString(metadata.issueResolution)?.toLowerCase() ?? "";
   const jiraStatus = existingString(metadata.jiraStatus)?.toLowerCase() ?? "";
   const jiraStatusCategory = existingString(metadata.jiraStatusCategory)?.toLowerCase() ?? "";
   const jiraResolution = existingString(metadata.jiraResolution)?.toLowerCase() ?? "";
+  const localStatus = existingString(metadata.localStatus)?.toLowerCase() ?? "";
+  const localStatusCategory = existingString(metadata.localStatusCategory)?.toLowerCase() ?? "";
   if (
+    issueStatusCategory === "done" ||
+    issueStatusCategory === "complete" ||
+    issueStatus === "done" ||
+    issueStatus === "closed" ||
+    issueStatus === "complete" ||
+    issueResolution === "done" ||
+    issueResolution === "complete" ||
+    localStatusCategory === "done" ||
+    localStatusCategory === "complete" ||
+    localStatus === "done" ||
+    localStatus === "closed" ||
+    localStatus === "complete" ||
     jiraStatusCategory === "done" ||
     jiraStatus === "done" ||
     jiraStatus === "closed" ||
@@ -747,7 +772,7 @@ function externallyDrivenState(current: WorkItem["state"], metadata: Record<stri
   }
   if (existingString(metadata.prMergedAt)) return "done";
   if (existingString(metadata.prUrl) && metadata.prIsDraft === true) return "blocked";
-  if (jiraStatus.includes("review")) return "awaiting_human";
+  if (issueStatus.includes("review") || localStatus.includes("review") || jiraStatus.includes("review")) return "awaiting_human";
   if (metadata.humanReviewRequired === true) return "awaiting_human";
   if (existingString(metadata.prUrl)) return "awaiting_review";
   return current;

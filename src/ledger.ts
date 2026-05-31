@@ -145,6 +145,15 @@ export interface WorkflowLedgerVerifyResult {
   diagnostics: WorkflowLedgerDiagnostic[];
 }
 
+export interface WorkflowLedgerMigrationResult {
+  ok: boolean;
+  sourcePath: string;
+  totalLines: number;
+  importedRecords: number;
+  invalidRecords: number;
+  diagnostics: WorkflowLedgerDiagnostic[];
+}
+
 interface IssueWorkflowProjection {
   issue?: WorkItem;
   workerRuns: WorkerRunRecord[];
@@ -414,15 +423,18 @@ function parseWorkflowLedgerRecord(value: unknown): JsonlWorkflowLedgerRecord {
 }
 
 async function applyWorkflowLedgerRecord(
-  memory: MemoryWorkflowLedger,
+  ledger: WorkflowLedger,
   record: JsonlWorkflowLedgerRecord,
 ): Promise<void> {
-  if (record.kind === "issue") await memory.writeIssue(record.value);
-  if (record.kind === "workerRun") await memory.recordWorkerRun(record.value);
-  if (record.kind === "workerResult") await memory.recordWorkerResult(record.value);
-  if (record.kind === "workJob") await memory.recordWorkJob(record.value);
-  if (record.kind === "workJobResult") await memory.recordWorkJobResult(record.value);
-  if (record.kind === "context") await memory.recordContext(record.value);
+  if (record.kind === "issue") await ledger.writeIssue(record.value);
+  if (record.kind === "workerRun") await ledger.recordWorkerRun(record.value);
+  if (record.kind === "workerResult") await ledger.recordWorkerResult(record.value);
+  if (record.kind === "workJob") await ledger.recordWorkJob(record.value);
+  if (record.kind === "workJobResult") await ledger.recordWorkJobResult(record.value);
+  if (record.kind === "context") {
+    if (!ledger.recordContext) throw new Error("Target workflow ledger does not support context records.");
+    await ledger.recordContext(record.value);
+  }
 }
 
 function workflowLedgerRecordIssueRef(record: JsonlWorkflowLedgerRecord): string | undefined {
@@ -545,6 +557,137 @@ export function createWorkflowLedger(options: WorkflowLedgerFactoryOptions): Wor
   return new JsonlWorkflowLedger({
     path: options.path ?? flowWorkflowLedgerPath(options.cwd),
   });
+}
+
+export interface MigratingWorkflowLedgerOptions {
+  sourcePath: string;
+  target: WorkflowLedger;
+}
+
+export class MigratingWorkflowLedger implements WorkflowLedger {
+  private migration?: Promise<WorkflowLedgerMigrationResult>;
+
+  constructor(private readonly options: MigratingWorkflowLedgerOptions) {}
+
+  async listIssues(limit?: number): Promise<WorkItem[]> {
+    await this.ensureMigrated();
+    return this.options.target.listIssues(limit);
+  }
+
+  async readIssue(ref: string): Promise<WorkItem | undefined> {
+    await this.ensureMigrated();
+    return this.options.target.readIssue(ref);
+  }
+
+  async readIssues(refs: string[]): Promise<Map<string, WorkItem>> {
+    await this.ensureMigrated();
+    if (this.options.target.readIssues) return this.options.target.readIssues(refs);
+    const entries = await Promise.all(refs.map(async (ref) => [ref, await this.options.target.readIssue(ref)] as const));
+    return new Map(entries.filter((entry): entry is readonly [string, WorkItem] => Boolean(entry[1])));
+  }
+
+  async ensureIssue(issue: WorkItem): Promise<WorkItem> {
+    await this.ensureMigrated();
+    return this.options.target.ensureIssue(issue);
+  }
+
+  async writeIssue(issue: WorkItem): Promise<WorkItem> {
+    await this.ensureMigrated();
+    return this.options.target.writeIssue(issue);
+  }
+
+  async listWorkerRuns(issueRef: string): Promise<WorkerRunRecord[]> {
+    await this.ensureMigrated();
+    return this.options.target.listWorkerRuns(issueRef);
+  }
+
+  async recordWorkerRun(run: WorkerRunRecord): Promise<void> {
+    await this.ensureMigrated();
+    return this.options.target.recordWorkerRun(run);
+  }
+
+  async listWorkerResults(issueRef: string): Promise<WorkerTaskResult[]> {
+    await this.ensureMigrated();
+    return this.options.target.listWorkerResults(issueRef);
+  }
+
+  async recordWorkerResult(result: WorkerTaskResult): Promise<void> {
+    await this.ensureMigrated();
+    return this.options.target.recordWorkerResult(result);
+  }
+
+  async listWorkJobs(issueRef: string): Promise<WorkJob[]> {
+    await this.ensureMigrated();
+    return this.options.target.listWorkJobs(issueRef);
+  }
+
+  async recordWorkJob(job: WorkJob): Promise<void> {
+    await this.ensureMigrated();
+    return this.options.target.recordWorkJob(job);
+  }
+
+  async listWorkJobResults(issueRef: string): Promise<WorkJobResult[]> {
+    await this.ensureMigrated();
+    return this.options.target.listWorkJobResults(issueRef);
+  }
+
+  async recordWorkJobResult(result: WorkJobResult): Promise<void> {
+    await this.ensureMigrated();
+    return this.options.target.recordWorkJobResult(result);
+  }
+
+  async recordContext(record: FlowContextRecordInput): Promise<FlowContextRecord> {
+    await this.ensureMigrated();
+    if (!this.options.target.recordContext) throw new Error("Target workflow ledger does not support context records.");
+    return this.options.target.recordContext(record);
+  }
+
+  async readContext(scope?: FlowContextScope): Promise<FlowContextProjection> {
+    await this.ensureMigrated();
+    if (!this.options.target.readContext) throw new Error("Target workflow ledger does not support context records.");
+    return this.options.target.readContext(scope);
+  }
+
+  private ensureMigrated(): Promise<WorkflowLedgerMigrationResult> {
+    this.migration ??= migrateJsonlWorkflowLedger(this.options.sourcePath, this.options.target);
+    return this.migration;
+  }
+}
+
+export async function migrateJsonlWorkflowLedger(
+  sourcePath: string,
+  target: WorkflowLedger,
+): Promise<WorkflowLedgerMigrationResult> {
+  const diagnostics: WorkflowLedgerDiagnostic[] = [];
+  let totalLines = 0;
+  let importedRecords = 0;
+
+  if (!existsSync(sourcePath)) {
+    return { ok: true, sourcePath, totalLines, importedRecords, invalidRecords: 0, diagnostics };
+  }
+
+  const raw = await readFile(sourcePath, "utf8");
+  for (const [index, line] of raw.split(/\r?\n/).entries()) {
+    if (!line.trim()) continue;
+    totalLines += 1;
+    const lineNumber = index + 1;
+    try {
+      const record = parseWorkflowLedgerRecord(JSON.parse(line));
+      await applyWorkflowLedgerRecord(target, record);
+      importedRecords += 1;
+    } catch (error) {
+      diagnostics.push({ line: lineNumber, message: errorMessage(error) });
+    }
+  }
+
+  return {
+    ok: diagnostics.length === 0,
+    sourcePath,
+    totalLines,
+    importedRecords,
+    invalidRecords: diagnostics.length,
+    diagnostics,
+  };
 }
 
 export class MirroredWorkflowLedger implements WorkflowLedger {

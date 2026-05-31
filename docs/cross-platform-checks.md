@@ -1,5 +1,7 @@
 # Cross-Platform Checks
 
+Every release must pass these checks on all supported platforms and Node versions.
+
 Release matrix:
 
 - Linux, macOS, Windows

@@ -46,6 +46,10 @@ export function flowUserWorkflowLedgerPath(projectRoot: string): string {
   return join(flowUserStateRoot(projectRoot), "ledger", "workflow.jsonl");
 }
 
+export function flowUserWorkflowLedgerDatabasePath(projectRoot: string): string {
+  return join(flowUserStateRoot(projectRoot), "ledger", "workflow.db");
+}
+
 export function flowIssueProjectionPath(projectRoot: string, issueRef: string): string {
   return join(resolve(projectRoot), ".flow", "ledger", "issues", `${flowIssueProjectionFileName(issueRef)}.json`);
 }

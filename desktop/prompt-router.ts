@@ -120,6 +120,7 @@ export class DesktopPromptRouter {
           artifactRefs,
         });
       } catch (error) {
+        console.error("[flow-desktop] agent prompt failed:", error);
         agentResult = {
           error: message(error),
           summary: `Prompt routing failed: ${message(error)}`,

@@ -17,6 +17,7 @@ import { projectThemeFor } from "../../src/theme/project-theme";
 import { actionPayload, formatActionSummary, pendingConfirmationFromActionResult } from "./action-format";
 import { errorMessage, fetchJson } from "./api";
 import { activityFromPiEvent, activityFromPiSession, conversationFromPiSession, seedConversation } from "./conversation";
+import { desktopRefreshIntervalsFromSettings } from "./refresh-settings";
 import {
   contextLine,
   isExceptionalStatus,
@@ -40,8 +41,8 @@ import type {
   DashboardIssue,
   DashboardPayload,
   DesktopAction,
+  AutoflowRunnerStatus,
   PendingConfirmationState,
-  PiAgentOrchestratorStatus,
   PiActivityState,
   PiSessionEvent,
   PiSessionSnapshot,
@@ -66,7 +67,7 @@ function App() {
   const [activeSessionStatus, setActiveSessionStatus] = useState<"idle" | "running" | "failed">("idle");
   const [piActivity, setPiActivity] = useState<PiActivityState | null>(null);
   const [autoflowActivity, setAutoflowActivity] = useState<AutoflowActivityState | null>(null);
-  const [autoflowStatus, setAutoflowStatus] = useState<PiAgentOrchestratorStatus | null>(null);
+  const [autoflowStatus, setAutoflowStatus] = useState<AutoflowRunnerStatus | null>(null);
   const [activeStatus, setActiveStatus] = useState<WorkStatusFilter>("active");
   const [query, setQuery] = useState("");
   const [prompt, setPrompt] = useState("");
@@ -94,9 +95,15 @@ function App() {
   const sendingRef = useRef(false);
   const issueSelectionRequest = useRef(0);
   const [refreshBackoff, setRefreshBackoff] = useState({ consecutiveFailures: 0, lastFailureTime: 0 });
+  const pendingSelectionRef = useRef<string | null>(null);
 
   const activeProject = projects.find((project) => project.id === activeProjectId);
   const selectedIssue = issues.find((issue) => issue.ref === selectedIssueRef);
+  const refreshIntervals = useMemo(() => desktopRefreshIntervalsFromSettings(context.desktop), [
+    context.desktop?.autoflowStatusRefreshIntervalMs,
+    context.desktop?.dashboardRefreshIntervalMs,
+    context.desktop?.refreshIntervalMs,
+  ]);
 
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -141,7 +148,7 @@ function App() {
     void refresh(true);
 
     // Calculate interval based on backoff state
-    const baseDelay = 5000;
+    const baseDelay = refreshIntervals.dashboardMs;
     const maxDelay = 60000; // 1 minute max
     const delay = refreshBackoff.consecutiveFailures > 0
       ? Math.min(baseDelay * Math.pow(2, refreshBackoff.consecutiveFailures - 1), maxDelay)
@@ -159,7 +166,7 @@ function App() {
       window.clearTimeout(interval);
       eventSourceRef.current?.close();
     };
-  }, [refreshBackoff.consecutiveFailures, refreshBackoff.lastFailureTime]);
+  }, [refreshBackoff.consecutiveFailures, refreshBackoff.lastFailureTime, refreshIntervals.dashboardMs]);
 
   useEffect(() => {
     if (!selectedIssueRef || selectedSessionId) return;
@@ -169,11 +176,11 @@ function App() {
   useEffect(() => {
     if (!activeProjectId) return;
     void refreshAutoflowStatus();
-    const interval = window.setInterval(() => void refreshAutoflowStatus(), 5000);
+    const interval = window.setInterval(() => void refreshAutoflowStatus(), refreshIntervals.autoflowStatusMs);
     return () => {
       window.clearInterval(interval);
     };
-  }, [activeProjectId]);
+  }, [activeProjectId, refreshIntervals.autoflowStatusMs]);
 
   useEffect(() => {
     if (!selectedIssueRef) return;
@@ -215,10 +222,14 @@ function App() {
         setConversation(seedConversation(contextPayload.context, nextProjectId));
       }
       setSelectedIssueRef((current) => {
+        if (pendingSelectionRef.current) return pendingSelectionRef.current;
         if (current && nextIssues.some((issue) => issue.ref === current)) return current;
         return "";
       });
-      setExpandedIssueRef((current) => current && nextIssues.some((issue) => issue.ref === current) ? current : "");
+      setExpandedIssueRef((current) => {
+        if (pendingSelectionRef.current) return pendingSelectionRef.current;
+        return current && nextIssues.some((issue) => issue.ref === current) ? current : "";
+      });
       setStatus("ok");
       hasLoaded.current = true;
       // Reset backoff on success
@@ -241,6 +252,7 @@ function App() {
     setError("");
     try {
       await fetchJson(`/api/projects/${encodeURIComponent(projectId)}/active`, { method: "POST" });
+      pendingSelectionRef.current = null;
       setSelectedIssueRef("");
       setSelectedSessionId("");
       setSessionIdByIssueRef({});
@@ -294,6 +306,7 @@ function App() {
       setActiveProjectId(result.activeProjectId || result.project.id);
       setNewProjectRoot("");
       setNewProjectOpen(false);
+      pendingSelectionRef.current = null;
       setSelectedIssueRef("");
       setSelectedSessionId("");
       setSessionIdByIssueRef({});
@@ -313,7 +326,7 @@ function App() {
 
   async function refreshAutoflowStatus(): Promise<void> {
     try {
-      const result = await fetchJson<{ ok?: boolean; status: PiAgentOrchestratorStatus }>("/api/autoflow/status");
+      const result = await fetchJson<{ ok?: boolean; status: AutoflowRunnerStatus }>("/api/autoflow/status");
       setAutoflowStatus(result.status);
       setAutoflowActivity(activityFromAutoflowStatus(result.status));
     } catch {
@@ -504,6 +517,7 @@ function App() {
   async function selectIssueThread(issueRef: string): Promise<void> {
     const requestId = issueSelectionRequest.current + 1;
     issueSelectionRequest.current = requestId;
+    pendingSelectionRef.current = issueRef;
     eventSourceRef.current?.close();
     eventSourceRef.current = null;
     subscribedSessionId.current = "";
@@ -522,6 +536,7 @@ function App() {
 
   function returnToMonitor(): void {
     issueSelectionRequest.current += 1;
+    pendingSelectionRef.current = null;
     eventSourceRef.current?.close();
     eventSourceRef.current = null;
     subscribedSessionId.current = "";
@@ -547,7 +562,10 @@ function App() {
     } catch {
       if (issueSelectionRequest.current === requestId) setError("Unable to open issue thread.");
     } finally {
-      if (issueSelectionRequest.current === requestId) setConversationLoading(false);
+      if (issueSelectionRequest.current === requestId) {
+        pendingSelectionRef.current = null;
+        setConversationLoading(false);
+      }
     }
   }
 
@@ -648,7 +666,7 @@ function App() {
   } satisfies PiActivityState : null);
 
   return (
-    <div className={selectedIssue ? "desktop-shell issue-selected" : "desktop-shell"}>
+    <div className={selectedIssue ? "flow-desktop desktop-shell issue-selected" : "flow-desktop desktop-shell"}>
       <aside className="project-panel" aria-label="Projects">
         <header className="project-header">
           <span className="brand"><Waypoints size={16} /></span>
@@ -1155,7 +1173,7 @@ function StatusSummary({
   );
 }
 
-function activityFromAutoflowStatus(status: PiAgentOrchestratorStatus): AutoflowActivityState {
+function activityFromAutoflowStatus(status: AutoflowRunnerStatus): AutoflowActivityState {
   if (!status.enabled) {
     return { phase: "idle", label: "Autoflow paused", detail: "Project automation is off.", updatedAt: status.updatedAt };
   }
@@ -1215,7 +1233,7 @@ function AutoflowHealth({
 }: {
   enabled: boolean;
   activity: AutoflowActivityState | null;
-  autoflowStatus?: PiAgentOrchestratorStatus | null;
+  autoflowStatus?: AutoflowRunnerStatus | null;
 }) {
   const stateClass = enabled ? activity?.phase ?? "idle" : "paused";
   const label = activity?.label ?? (enabled ? "Autoflow watching" : "Autoflow paused");
