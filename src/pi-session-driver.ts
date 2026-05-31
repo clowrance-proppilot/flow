@@ -305,6 +305,7 @@ export class PiSessionDriver {
           });
         }
       } catch (error) {
+        console.error(`[flow-desktop] pi session ${session.id} failed:`, error);
         session.status = "failed";
         session.error = errorMessage(error);
         const content = `Pi session failed: ${session.error}`;

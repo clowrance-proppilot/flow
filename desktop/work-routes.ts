@@ -42,6 +42,7 @@ export function registerWorkRoutes(
       const issue = await runtime.createIssue(sessionId, issueInput);
       res.json({ ok: true, project, issue });
     } catch (error) {
+      console.error("[flow-desktop] create issue failed:", error);
       res.status(400).json({ ok: false, error: message(error) });
     }
   });
@@ -60,6 +61,7 @@ export function registerWorkRoutes(
       });
       res.json(result);
     } catch (error) {
+      console.error("[flow-desktop] prompt submission failed:", error);
       res.status(400).json({ ok: false, error: message(error) });
     }
   });
@@ -71,6 +73,7 @@ export function registerWorkRoutes(
       const session = await surface.piSessionDriver.openOrCreateIssueSession(String(req.params.issueRef ?? ""));
       res.json({ ok: true, session });
     } catch (error) {
+      console.error("[flow-desktop] issue session creation failed:", error);
       res.status(400).json({ ok: false, error: message(error) });
     }
   });
@@ -92,6 +95,7 @@ export function registerWorkRoutes(
       });
       req.on("close", unsubscribe);
     } catch (error) {
+      console.error("[flow-desktop] session events subscription failed:", error);
       res.status(404).json({ ok: false, error: message(error) });
     }
   });
@@ -111,6 +115,7 @@ export function registerWorkRoutes(
       });
       res.json(result);
     } catch (error) {
+      console.error("[flow-desktop] desktop action failed:", error);
       res.status(400).json({ ok: false, error: message(error) });
     }
   });
@@ -121,6 +126,7 @@ export function registerWorkRoutes(
       const surface = await projectSurface(project);
       res.json({ ok: true, status: surface.piAgentOrchestrator.getStatus() });
     } catch (error) {
+      console.error("[flow-desktop] autoflow status failed:", error);
       res.status(400).json({ ok: false, error: message(error) });
     }
   });
@@ -132,6 +138,7 @@ export function registerWorkRoutes(
       const status = await surface.piAgentOrchestrator.reconcile();
       res.json({ ok: true, status });
     } catch (error) {
+      console.error("[flow-desktop] autoflow tick failed:", error);
       res.status(400).json({ ok: false, error: message(error) });
     }
   });
@@ -181,6 +188,7 @@ export function registerWorkRoutes(
       const session = await surface.piSessionDriver.getSession(sessionId);
       res.json({ ok: true, session });
     } catch (error) {
+      console.error("[flow-desktop] pi session fetch failed:", error);
       res.status(404).json({ ok: false, error: message(error) });
     }
   });
@@ -203,6 +211,7 @@ export function registerWorkRoutes(
       });
       res.json({ ok: true, session });
     } catch (error) {
+      console.error("[flow-desktop] pi prompt post failed:", error);
       res.status(400).json({ ok: false, error: message(error) });
     }
   });
