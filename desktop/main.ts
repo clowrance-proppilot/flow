@@ -67,7 +67,7 @@ function resolveDashboardFilePath(flowRoot: string): string {
 
 async function startDashboardServer(flowRoot: string): Promise<number> {
   const projectRegistry = new DesktopProjectRegistry({
-    statePath: join(resolveDesktopUserDataPath(), "projects.json"),
+    dbPath: join(resolveDesktopUserDataPath(), "flow-desktop-state.db"),
   });
   await projectRegistry.addProject(flowRoot);
   const projectSurfaces = new Map<string, DesktopProjectSurface>();

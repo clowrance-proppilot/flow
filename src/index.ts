@@ -12,6 +12,7 @@ export * from "./runtime-utils.js";
 export * from "./runtime-factory.js";
 export * from "./reconciliation.js";
 export * from "./work-runtime.js";
+export * from "./autoflow-service.js";
 export * from "./readiness.js";
 export * from "./ledger.js";
 export * from "./engine/ledger-contracts.js";
