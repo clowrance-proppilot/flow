@@ -129,12 +129,11 @@ function recordResult(
 /**
  * Example: Run autoflow on an issue
  */
-function autoFlow(issueId: string, maxSteps = 20): unknown {
+function autoFlow(issueId: string): unknown {
   const response = callFlow({
     op: "autoflow",
     mode: "run",
     id: issueId,
-    limit: maxSteps,
   });
   if (!response.ok) {
     throw new Error(`Flow autoflow failed: ${response.error?.message}`);

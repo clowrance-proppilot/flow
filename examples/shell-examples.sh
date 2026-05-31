@@ -122,9 +122,6 @@ flow '{"op":"workflow","mode":"audit","id":"FLOW-123"}'
 # Run autoflow (automated workflow steps)
 flow '{"op":"autoflow","mode":"run","id":"FLOW-123"}'
 
-# Run autoflow with step limit
-flow '{"op":"autoflow","mode":"run","id":"FLOW-123","limit":10}'
-
 # Check autoflow status
 flow '{"op":"autoflow","mode":"status"}'
 

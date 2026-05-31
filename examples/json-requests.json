@@ -232,10 +232,6 @@
         "request": { "op": "autoflow", "mode": "run", "id": "FLOW-123" },
         "description": "Run Autoflow on an issue"
       },
-      "run_limited": {
-        "request": { "op": "autoflow", "mode": "run", "id": "FLOW-123", "limit": 10 },
-        "description": "Run Autoflow with step limit"
-      },
       "enable": {
         "request": { "op": "autoflow", "mode": "enable" },
         "description": "Enable Autoflow"
