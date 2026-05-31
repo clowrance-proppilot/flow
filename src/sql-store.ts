@@ -1,7 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 
 import {
   type WorkRuntimeEvent,
@@ -25,13 +24,13 @@ export interface SqlStorePaths {
  */
 export class SqlFlowStore implements FlowStoreInterface {
   readonly root: string;
-  private db: Database.Database | null = null;
+  private db: DatabaseSync | null = null;
 
   constructor(paths: SqlStorePaths) {
     this.root = paths.root;
   }
 
-  private getDb(): Database.Database {
+  private getDb(): DatabaseSync {
     if (!this.db) {
       this.ensureSync();
     }
@@ -41,9 +40,9 @@ export class SqlFlowStore implements FlowStoreInterface {
   private ensureSync(): void {
     if (this.db) return;
     mkdirSync(dirname(this.dbPath()), { recursive: true });
-    this.db = new Database(this.dbPath());
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma("busy_timeout = 5000");
+    this.db = new DatabaseSync(this.dbPath());
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec("PRAGMA busy_timeout = 5000");
     this.createTables();
   }
 

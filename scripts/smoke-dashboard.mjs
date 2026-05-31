@@ -117,7 +117,7 @@ let stderr = "";
 let child;
 
 try {
-  const createdIssue = runFlow({
+  const createdIssue = createReviewedIssue({
     op: "issue",
     mode: "create",
     issueType: "Task",
@@ -577,6 +577,31 @@ function assertServedMirrorControlMarkers(assetText) {
   if (missing.length) {
     throw new Error(`dashboard assets should mark local view controls as mirror controls: ${missing.join(", ")}`);
   }
+}
+
+function createReviewedIssue(request) {
+  const intake = runFlow({ ...request, mode: "intake", dryRun: true });
+  const reviewJob = intake.reviewJob;
+  if (!reviewJob?.id || !reviewJob?.issueRef || !reviewJob?.repoKey || !reviewJob?.workType) {
+    throw new Error(`issue intake did not return review job: ${JSON.stringify(intake)}`);
+  }
+  runFlow({
+    op: "runtime",
+    method: "recordWorkJobResult",
+    params: {
+      result: {
+        jobId: reviewJob.id,
+        issueRef: reviewJob.issueRef,
+        repoKey: reviewJob.repoKey,
+        workType: reviewJob.workType,
+        status: "succeeded",
+        summary: "Executor approved issue intake.",
+        evidence: ["Smoke executor review."],
+        completedAt: new Date().toISOString(),
+      },
+    },
+  });
+  return runFlow(request);
 }
 
 function runFlow(body) {

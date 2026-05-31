@@ -24,7 +24,7 @@ try {
   if (!/collaboration:\s*\n\s*type: none/m.test(config)) throw new Error("smoke config did not use no-op collaboration.");
   if (/^\s*worker:/m.test(config)) throw new Error("smoke config should not declare runtime.worker.");
 
-  const created = callFlow({
+  const created = createReviewedIssue({
     op: "issue",
     mode: "create",
     summary: "Smoke local Flow",
@@ -38,6 +38,31 @@ try {
   console.log("flow smoke: ok");
 } finally {
   rmSync(stateDir, { recursive: true, force: true });
+}
+
+function createReviewedIssue(request) {
+  const intake = callFlow({ ...request, mode: "intake", dryRun: true });
+  const reviewJob = intake.result?.reviewJob;
+  if (!reviewJob?.id || !reviewJob?.issueRef || !reviewJob?.repoKey || !reviewJob?.workType) {
+    throw new Error(`issue intake did not return review job: ${JSON.stringify(intake.result)}`);
+  }
+  callFlow({
+    op: "runtime",
+    method: "recordWorkJobResult",
+    params: {
+      result: {
+        jobId: reviewJob.id,
+        issueRef: reviewJob.issueRef,
+        repoKey: reviewJob.repoKey,
+        workType: reviewJob.workType,
+        status: "succeeded",
+        summary: "Executor approved issue intake.",
+        evidence: ["Smoke executor review."],
+        completedAt: new Date().toISOString(),
+      },
+    },
+  });
+  return callFlow(request);
 }
 
 function callFlow(body) {
