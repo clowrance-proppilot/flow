@@ -75,10 +75,17 @@ import { normalizePullRequest, parseGitHubIssues, parsePullRequests } from "../s
 import { currentUserBacklogJql, currentUserOpenSprintJql, parseJiraCommentUrl, parseJiraIssue, parseJiraSearch } from "../src/adapters/jira.js";
 import { DesktopActionRouter, isDesktopAction } from "../desktop/action-router.js";
 import { desktopActionValues } from "../desktop/action-types.js";
+import {
+  desktopAutoflowReconcileIntervals,
+  nextAutoflowReconcileDelay,
+  runEnabledProjectAutoflowReconcile,
+} from "../desktop/autoflow-reconcile.js";
 import { PiAgentOrchestrator } from "../desktop/pi-agent-orchestrator.js";
 import { PiSessionDriver } from "../src/pi-session-driver.js";
 import { PiSdkSessionRunner } from "../src/pi-sdk-runner.js";
 import { DesktopProjectRegistry } from "../desktop/project-registry.js";
+import type { DesktopProjectRecord } from "../desktop/project-registry.js";
+import type { DesktopProjectSurface } from "../desktop/route-types.js";
 import { DesktopPromptRouter } from "../desktop/prompt-router.js";
 import { projectThemeFor } from "../src/theme/project-theme.js";
 
@@ -118,6 +125,43 @@ function testWorkRuntime(options: ConstructorParameters<typeof FlowWorkRuntime>[
     defaultJiraProjectKey: configString(legacyHostConfig.issueTracker, "projectKey"),
     ...options,
   });
+}
+
+function desktopProjectRecordStub(input: Partial<DesktopProjectRecord>): DesktopProjectRecord {
+  return {
+    id: input.id ?? "project",
+    root: input.root ?? "/tmp/project",
+    name: input.name ?? input.id ?? "project",
+    configPath: input.configPath ?? "/tmp/project/.flow/config.yaml",
+    valid: input.valid ?? true,
+    autoflowEnabled: input.autoflowEnabled ?? true,
+    addedAt: input.addedAt ?? "2026-05-31T00:00:00.000Z",
+    lastOpenedAt: input.lastOpenedAt ?? "2026-05-31T00:00:00.000Z",
+    icon: input.icon,
+    error: input.error,
+  };
+}
+
+function desktopProjectRegistryStub(projects: DesktopProjectRecord[]): DesktopProjectRegistry {
+  return {
+    listProjects: async () => projects,
+  } as unknown as DesktopProjectRegistry;
+}
+
+function desktopProjectSurfaceStub(
+  queue: Pick<WorkItem, "ref" | "state">[],
+  reconcile: () => void | Promise<void> = () => {},
+): DesktopProjectSurface {
+  return {
+    configured: {
+      runtime: {
+        inspectQueue: async () => queue,
+      },
+    },
+    piAgentOrchestrator: {
+      reconcile,
+    },
+  } as unknown as DesktopProjectSurface;
 }
 
 async function approveIssueIntake(
@@ -1975,6 +2019,50 @@ test("Desktop action router runs Autoflow as the primary issue action", async ()
   assert.equal(projection.artifacts.length, 1);
   assert.equal(projection.artifacts[0].title, "Autoflow output");
   assert.equal(projection.artifacts[0].metadata.action, "autoflow");
+});
+
+test("Desktop Autoflow reconcile skips disabled projects before loading surfaces", async () => {
+  let surfaceLoads = 0;
+  const registry = desktopProjectRegistryStub([
+    desktopProjectRecordStub({ id: "invalid", valid: false }),
+    desktopProjectRecordStub({ id: "disabled", autoflowEnabled: false }),
+  ]);
+
+  const summary = await runEnabledProjectAutoflowReconcile(registry, async () => {
+    surfaceLoads++;
+    return desktopProjectSurfaceStub([]);
+  });
+
+  assert.deepEqual(summary, { enabledProjects: 0, pendingProjects: 0, reconciledProjects: 0 });
+  assert.equal(surfaceLoads, 0);
+  assert.equal(nextAutoflowReconcileDelay(summary), desktopAutoflowReconcileIntervals.idleMs);
+});
+
+test("Desktop Autoflow reconcile checks queue before running orchestrator", async () => {
+  let reconcileCalls = 0;
+  const summary = await runEnabledProjectAutoflowReconcile(
+    desktopProjectRegistryStub([desktopProjectRecordStub({ id: "enabled" })]),
+    async () => desktopProjectSurfaceStub([], () => {
+      reconcileCalls++;
+    }),
+  );
+
+  assert.deepEqual(summary, { enabledProjects: 1, pendingProjects: 0, reconciledProjects: 0 });
+  assert.equal(reconcileCalls, 0);
+});
+
+test("Desktop Autoflow reconcile runs orchestrator for queued work", async () => {
+  let reconcileCalls = 0;
+  const summary = await runEnabledProjectAutoflowReconcile(
+    desktopProjectRegistryStub([desktopProjectRecordStub({ id: "enabled" })]),
+    async () => desktopProjectSurfaceStub([{ ref: "GH-260", state: "queued" }], () => {
+      reconcileCalls++;
+    }),
+  );
+
+  assert.deepEqual(summary, { enabledProjects: 1, pendingProjects: 1, reconciledProjects: 1 });
+  assert.equal(reconcileCalls, 1);
+  assert.equal(nextAutoflowReconcileDelay(summary), desktopAutoflowReconcileIntervals.activeMs);
 });
 
 test("Pi session driver starts issue-linked sessions and records FlowSessionLink", async () => {
