@@ -620,7 +620,14 @@ test("AutoflowService can target awaiting-review remediation without broad picku
         codeReview: true,
         codeReviewRequired: true,
       },
-      findings: [],
+      findings: [{
+        id: "finding-gh-241-conflict",
+        severity: "blocker",
+        summary: "Pull request has merge conflicts.",
+        issueRef: "GH-241",
+        source: "readiness",
+        createdAt: nowIso(),
+      }],
       nextAction: { type: "advance", summary: "Run Autoflow." },
     }),
     autoFlowIssue: async () => {
