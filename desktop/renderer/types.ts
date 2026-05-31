@@ -96,31 +96,8 @@ export type ConversationItem = {
   createdAt: string;
 };
 
-export type PiTimelineItem = {
-  id: string;
-  role: "system" | "user" | "assistant" | "tool";
-  content: string;
-  createdAt: string;
-  toolName?: string;
-};
-
-export type PiSessionSnapshot = {
-  id: string;
-  issueRef: string;
-  status: "active" | "running" | "paused" | "done" | "failed";
-  timeline: PiTimelineItem[];
-};
-
-export type PiSessionEvent = {
-  type: "assistantDelta" | "toolStarted" | "toolUpdated" | "toolFinished" | "runFailed" | "runCompleted" | "sessionUpdated";
-  timestamp: string;
-  text?: string;
-  toolName?: string;
-  callId?: string;
-  success?: boolean;
-  error?: { message?: string };
-  snapshot?: { status?: "idle" | "running" | "failed" };
-};
+export type { PiSessionSnapshot, PiSessionStatus, PiTimelineItem } from "../../src/pi-session-driver";
+export type { SessionDriverEvent as PiSessionEvent } from "../../src/session-driver";
 
 export type PendingConfirmationState = {
   id: string;
