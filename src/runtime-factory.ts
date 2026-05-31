@@ -9,6 +9,7 @@ import { createFlowStore, type FlowStoreBackend } from "./store.js";
 import { FlowWorkRuntime } from "./work-runtime.js";
 import { createWorkflowLedger, type WorkflowLedger } from "./ledger.js";
 import { flowRuntimePath, flowWorkflowLedgerPath, resolveFlowPath } from "./flow-layout.js";
+import { createKyselyFlowState, createSqliteSqlStateConfig } from "./sql-state.js";
 
 export interface ConfiguredWorkRuntimeOptions {
   projectRoot: string;
@@ -27,12 +28,7 @@ export interface ConfiguredWorkRuntime {
 
 export function createConfiguredWorkRuntime(options: ConfiguredWorkRuntimeOptions): ConfiguredWorkRuntime {
   const { projectRoot, flowConfig } = options;
-  const workflowLedgerPath = resolveWorkflowLedgerPath(projectRoot, flowConfig);
-  const workflowLedger = createWorkflowLedger({
-    cwd: projectRoot,
-    adapter: configString(flowConfig?.ledger, "type"),
-    path: workflowLedgerPath,
-  });
+  const { workflowLedger, workflowLedgerPath } = createConfiguredWorkflowLedger(projectRoot, flowConfig);
   const issueTracker = createIssueTracker(projectRoot, flowConfig, workflowLedger);
   const collaboration = createCollaboration(projectRoot, flowConfig);
   const runtimeStorePath = resolveRuntimeStorePath(projectRoot, flowConfig);
@@ -65,6 +61,37 @@ export function createConfiguredWorkRuntime(options: ConfiguredWorkRuntimeOption
   };
 }
 
+function createConfiguredWorkflowLedger(
+  projectRoot: string,
+  flowConfig: FlowConfig | undefined,
+): { workflowLedger: WorkflowLedger; workflowLedgerPath: string } {
+  const ledger = flowConfig?.ledger;
+  const type = configString(ledger, "type");
+  if (type === "sql") {
+    const dialect = configString(ledger, "dialect") ?? "sqlite";
+    if (dialect !== "sqlite") {
+      throw new Error(`Unsupported SQL workflow ledger dialect: ${dialect}.`);
+    }
+    const path = resolveSqlWorkflowLedgerPath(projectRoot, flowConfig);
+    return {
+      workflowLedgerPath: path,
+      workflowLedger: createKyselyFlowState({
+        root: projectRoot,
+        dialectConfig: createSqliteSqlStateConfig({ path }),
+      }),
+    };
+  }
+  const workflowLedgerPath = resolveWorkflowLedgerPath(projectRoot, flowConfig);
+  return {
+    workflowLedgerPath,
+    workflowLedger: createWorkflowLedger({
+      cwd: projectRoot,
+      adapter: type,
+      path: workflowLedgerPath,
+    }),
+  };
+}
+
 function resolveRuntimeStorePath(projectRoot: string, flowConfig: FlowConfig | undefined): string {
   const configured = configString(flowConfig?.runtime, "storeDir") ?? configString(flowConfig?.runtime, "stateDir");
   return configured ? resolveFlowPath(projectRoot, configured) : flowRuntimePath(projectRoot);
@@ -73,6 +100,11 @@ function resolveRuntimeStorePath(projectRoot: string, flowConfig: FlowConfig | u
 function resolveWorkflowLedgerPath(projectRoot: string, flowConfig: FlowConfig | undefined): string {
   const configured = configString(flowConfig?.runtime, "workflowLedgerPath");
   return configured ? resolveFlowPath(projectRoot, configured) : flowWorkflowLedgerPath(projectRoot);
+}
+
+function resolveSqlWorkflowLedgerPath(projectRoot: string, flowConfig: FlowConfig | undefined): string {
+  const configured = configString(flowConfig?.ledger, "path");
+  return configured ? resolveFlowPath(projectRoot, configured) : resolveFlowPath(projectRoot, ".flow/ledger/workflow.db");
 }
 
 function resolveRuntimeStoreBackend(flowConfig: FlowConfig | undefined): FlowStoreBackend {

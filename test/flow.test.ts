@@ -35,6 +35,7 @@ import {
   loadFlowConfig,
   migrateFlowConfig,
   validateFlowConfig,
+  createConfiguredWorkRuntime,
   createId,
   LocalThreadExecutor,
   LocalIssueTrackerAdapter,
@@ -453,6 +454,40 @@ test("Flow config bootstrap keeps providers local when a GitHub remote exists", 
   assert.equal(config.issueTracker?.type, "local");
   assert.equal(config.collaboration?.type, "none");
   assert.equal(config.sourceControl?.type, "git");
+});
+
+test("Configured runtime uses Kysely SQLite for SQL workflow ledger", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-sql-ledger-config-"));
+  const config = flowConfigSchema.parse({
+    version: "1",
+    project: { name: "SQL Ledger Fixture" },
+    topology: {
+      repos: {
+        main: { name: "flow", baseBranch: "main" },
+      },
+    },
+    issueTracker: { type: "local" },
+    collaboration: { type: "none" },
+    sourceControl: { type: "git" },
+    ledger: { type: "sql", dialect: "sqlite", path: ".flow/ledger/workflow.db" },
+    runtime: { store: { type: "sqlite" } },
+  });
+
+  const configured = createConfiguredWorkRuntime({ projectRoot: root, flowConfig: config });
+  await configured.workflowLedger.writeIssue({
+    ref: "FLOW-SQL-1",
+    title: "SQL workflow ledger",
+    repoKeys: ["main"],
+    state: "queued",
+    metadata: {},
+  });
+
+  const reloaded = createConfiguredWorkRuntime({ projectRoot: root, flowConfig: config });
+  assert.match(configured.workflowLedgerPath, /workflow\.db$/);
+  assert.equal((await reloaded.workflowLedger.readIssue("FLOW-SQL-1"))?.title, "SQL workflow ledger");
+
+  await (configured.workflowLedger as { close?(): Promise<void> }).close?.();
+  await (reloaded.workflowLedger as { close?(): Promise<void> }).close?.();
 });
 
 test("Flow CLI core works with only git available on PATH", async () => {
