@@ -41,6 +41,7 @@ import {
   LocalIssueTrackerAdapter,
   NoopCodeCollaborationAdapter,
   AutoflowService,
+  ReconciliationEngine,
   ProviderAdapterError,
   classifyProviderCliError,
   triageIssues as triageIssuesEngine,
@@ -4666,6 +4667,61 @@ test("Dashboard queue reconciles and hides closed issue tracker records", async 
   assert.equal(queue.some((issue) => issue.ref === "GH-166-CLOSED"), false);
   assert.equal(queue.some((issue) => issue.ref === "GH-166-OPEN"), true);
   assert.equal(closed?.state, "done");
+});
+
+test("Dashboard queue reconciles closed issue tracker status without resolution metadata", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-dashboard-closed-status-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  await ledger.writeIssue({
+    ref: "GH-163-CLOSED",
+    title: "Closed GitHub issue",
+    repoKeys: ["app_api"],
+    state: "awaiting_review",
+    metadata: {
+      issueStatus: "Closed",
+      issueStatusCategory: "Complete",
+    },
+  });
+
+  const queue = await workRuntime.inspectDashboardQueue(10);
+  const closed = await ledger.readIssue("GH-163-CLOSED");
+
+  assert.equal(queue.some((issue) => issue.ref === "GH-163-CLOSED"), false);
+  assert.equal(closed?.state, "done");
+});
+
+test("Dashboard queue reconciles merged pull requests into done state", async () => {
+  const ledger = new MemoryWorkflowLedger();
+  const reconciliation = new ReconciliationEngine({
+    topology: legacyHostTopology,
+    ledger,
+    sourceControl: {
+      async inspect() {
+        return {
+          branch: "main",
+          headSha: "abc123",
+          dirty: false,
+          entries: [],
+        };
+      },
+    },
+  });
+  const issue = await ledger.writeIssue({
+    ref: "GH-163-MERGED",
+    title: "Merged GitHub pull request",
+    repoKeys: ["app_api"],
+    state: "selected",
+    metadata: {
+      prUrl: "https://github.com/example/flow/pull/163",
+      prMergedAt: "2026-05-31T08:00:00Z",
+    },
+  });
+
+  await reconciliation.reconcile(issue);
+  const merged = await ledger.readIssue("GH-163-MERGED");
+
+  assert.equal(merged?.state, "done");
 });
 
 test("Dashboard queue omits source-control and provider internals", async () => {

@@ -733,10 +733,27 @@ function aggregatePullRequestMetadata(
 }
 
 function externallyDrivenState(current: WorkItem["state"], metadata: Record<string, unknown>): WorkItem["state"] {
+  const issueStatus = existingString(metadata.issueStatus)?.toLowerCase() ?? "";
+  const issueStatusCategory = existingString(metadata.issueStatusCategory)?.toLowerCase() ?? "";
+  const issueResolution = existingString(metadata.issueResolution)?.toLowerCase() ?? "";
   const jiraStatus = existingString(metadata.jiraStatus)?.toLowerCase() ?? "";
   const jiraStatusCategory = existingString(metadata.jiraStatusCategory)?.toLowerCase() ?? "";
   const jiraResolution = existingString(metadata.jiraResolution)?.toLowerCase() ?? "";
+  const localStatus = existingString(metadata.localStatus)?.toLowerCase() ?? "";
+  const localStatusCategory = existingString(metadata.localStatusCategory)?.toLowerCase() ?? "";
   if (
+    issueStatusCategory === "done" ||
+    issueStatusCategory === "complete" ||
+    issueStatus === "done" ||
+    issueStatus === "closed" ||
+    issueStatus === "complete" ||
+    issueResolution === "done" ||
+    issueResolution === "complete" ||
+    localStatusCategory === "done" ||
+    localStatusCategory === "complete" ||
+    localStatus === "done" ||
+    localStatus === "closed" ||
+    localStatus === "complete" ||
     jiraStatusCategory === "done" ||
     jiraStatus === "done" ||
     jiraStatus === "closed" ||
@@ -747,7 +764,7 @@ function externallyDrivenState(current: WorkItem["state"], metadata: Record<stri
   }
   if (existingString(metadata.prMergedAt)) return "done";
   if (existingString(metadata.prUrl) && metadata.prIsDraft === true) return "blocked";
-  if (jiraStatus.includes("review")) return "awaiting_human";
+  if (issueStatus.includes("review") || localStatus.includes("review") || jiraStatus.includes("review")) return "awaiting_human";
   if (metadata.humanReviewRequired === true) return "awaiting_human";
   if (existingString(metadata.prUrl)) return "awaiting_review";
   return current;
