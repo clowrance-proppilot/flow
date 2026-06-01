@@ -35,6 +35,8 @@ class FakeHatchetClient implements HatchetClientLike {
   runInput?: HatchetAutoflowPayload;
   runOptions?: unknown;
   cancelledIds: string[] = [];
+  workerStarted = false;
+  workerReady = false;
 
   readonly runs = {
     get_status: async (_runId: string) => "RUNNING",
@@ -58,7 +60,12 @@ class FakeHatchetClient implements HatchetClientLike {
   async worker(name: string, options: { workflows: HatchetTaskDeclaration[]; slots?: number }) {
     this.workerOptions = { name, ...options };
     return {
-      start: async () => undefined,
+      start: async () => {
+        this.workerStarted = true;
+      },
+      waitUntilReady: async () => {
+        this.workerReady = true;
+      },
     };
   }
 
@@ -168,6 +175,8 @@ test("Hatchet worker registration uses the Flow Autoflow worker name and slots",
   assert.equal(client.workerOptions?.name, HATCHET_AUTOFLOW_WORKER_NAME);
   assert.equal(client.workerOptions?.slots, 3);
   assert.equal(client.workerOptions?.workflows.length, 1);
+  assert.equal(client.workerStarted, true);
+  assert.equal(client.workerReady, true);
 });
 
 test("Hatchet run statuses map to Flow execution phases", () => {
