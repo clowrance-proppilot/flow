@@ -1,4 +1,5 @@
 import { createId, nowIso, WorkerStatusValue, type WorkerTaskRequest } from "./contracts.js";
+import type { DurablePiSessionHandle, HatchetAutoflowPayload, HatchetAutoflowRunResult } from "./execution-plane.js";
 import type { AdvanceIssueResult, AutoFlowIssueResult, FlowDoctorResult, FlowWorkRuntime, LocalThreadResultInput } from "./work-runtime.js";
 
 export type AutoflowServiceRuntime = Pick<
@@ -263,7 +264,26 @@ export class AutoflowService {
     return this.agentSessionDriver.sendUserMessage(target.id, { text: input.text, mode });
   }
 
-  private spawnRun(issueRef: string, repoKeys: string[] = [], title?: string, metadata: Record<string, unknown> = {}): void {
+  async runExecutionPlanePayload(input: HatchetAutoflowPayload): Promise<HatchetAutoflowRunResult> {
+    this.spawnRun(input.issueRef, input.repoKeys, input.issueRef, {
+      "flow.execution.run_id": input.runId,
+      "flow.execution.requested_by": input.requestedBy,
+      ...(input.reason ? { "flow.execution.reason": input.reason } : {}),
+    }, input.durableSession);
+    await this.activeRuns.get(input.issueRef)?.promise;
+    const status = this.issueStatuses.get(input.issueRef);
+    return {
+      issueRef: input.issueRef,
+      runId: input.runId,
+      status: hatchetResultStatus(status?.phase),
+      summary: status?.summary ?? `Autoflow finished ${input.issueRef}.`,
+      changedFiles: [],
+      testsRun: [],
+      completedAt: nowIso(),
+    };
+  }
+
+  private spawnRun(issueRef: string, repoKeys: string[] = [], title?: string, metadata: Record<string, unknown> = {}, durableSession?: DurablePiSessionHandle): void {
     const run: ActiveRun = {
       promise: Promise.resolve(),
       status: "starting",
@@ -276,7 +296,7 @@ export class AutoflowService {
       updatedAt: nowIso(),
     });
 
-    run.promise = this.runCandidate(issueRef, repoKeys, title, metadata)
+    run.promise = this.runCandidate(issueRef, repoKeys, title, metadata, durableSession)
       .catch((error) => {
         const summary = errorMessage(error);
         run.status = "failed";
@@ -298,9 +318,9 @@ export class AutoflowService {
       });
   }
 
-  private async runCandidate(issueRef: string, repoKeys: string[] = [], title?: string, metadata: Record<string, unknown> = {}): Promise<void> {
+  private async runCandidate(issueRef: string, repoKeys: string[] = [], title?: string, metadata: Record<string, unknown> = {}, durableSession?: DurablePiSessionHandle): Promise<void> {
     // Each issue gets its own session to avoid Windows EPERM on concurrent session file writes
-    const flowSessionId = `desktop-${this.projectId}-${issueRef.toLowerCase()}`;
+    const flowSessionId = durableSession?.flowSessionId ?? `desktop-${this.projectId}-${issueRef.toLowerCase()}`;
     await this.ensureFlowSession(flowSessionId);
     // selectIssue writes the issue to the ledger — must happen before doctor/autoflow
     // which call reconcileIssue (reads from ledger)
@@ -347,7 +367,9 @@ export class AutoflowService {
       adopter: "Flow Autoflow",
       summary: `Flow Autoflow started ${issueRef}.`,
     });
-    const piSession = await this.agentSessionDriver.openOrCreateIssueSession(issueRef);
+    const piSession = durableSession?.piSessionId
+      ? await this.agentSessionDriver.getSession(durableSession.piSessionId).catch(() => this.agentSessionDriver.openOrCreateIssueSession(issueRef))
+      : await this.agentSessionDriver.openOrCreateIssueSession(issueRef);
 
     const run = this.activeRuns.get(issueRef);
     if (run) {
@@ -682,6 +704,12 @@ function canCloseoutBlockedAutoflow(result: AutoFlowIssueResult): boolean {
 function phaseAfterWorkerAdvance(result: AdvanceIssueResult): AutoflowServicePhase {
   if (result.status === "awaiting_review") return "idle";
   return "needs_input";
+}
+
+function hatchetResultStatus(phase: AutoflowServicePhase | undefined): HatchetAutoflowRunResult["status"] {
+  if (phase === "failed") return "failed";
+  if (phase === "needs_input") return "blocked";
+  return "succeeded";
 }
 
 function isPendingCheckAdvance(result: AdvanceIssueResult): boolean {

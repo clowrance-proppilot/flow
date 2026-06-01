@@ -99,6 +99,7 @@
   "dependencies": {
     "@assistant-ui/react": "^0.14.11",
     "@earendil-works/pi-coding-agent": "^0.78.0",
+    "@hatchet-dev/typescript-sdk": "^1.23.0",
     "@tailwindcss/postcss": "^4.3.0",
     "@types/pg": "^8.20.0",
     "@vitejs/plugin-react": "^6.0.2",
