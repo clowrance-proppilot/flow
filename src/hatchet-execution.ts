@@ -80,7 +80,12 @@ export interface HatchetAutoflowWorkerOptions {
 
 export async function createHatchetClient(): Promise<HatchetClientLike> {
   const packageName = "@hatchet-dev/typescript-sdk";
-  const mod = await import(packageName) as unknown as HatchetSdkModule;
+  let mod: HatchetSdkModule;
+  try {
+    mod = await import(packageName) as unknown as HatchetSdkModule;
+  } catch (error) {
+    throw new Error(`Hatchet execution is optional. Install ${packageName} before creating a Hatchet client.`, { cause: error });
+  }
   const factory = mod.default?.init ? mod.default : mod.Hatchet ?? mod.default?.Hatchet;
   if (!factory?.init) throw new Error("Hatchet SDK did not expose an init() client factory.");
   return factory.init();
