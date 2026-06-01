@@ -1,10 +1,9 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const root = process.cwd();
-const blockedDirs = new Set([".git", ".worktrees", "node_modules", "dist", ".tmp"]);
-const blockedFiles = new Set(["package-lock.json", "public-readiness.mjs"]);
+const skipFiles = new Set(["package-lock.json", "public-readiness.mjs"]);
 const textExtensions = new Set([
   ".css",
   ".html",
@@ -28,34 +27,61 @@ function fail(message) {
   failures.push(message);
 }
 
-function walk(dir, visitor) {
-  for (const entry of readdirSync(dir)) {
-    if (blockedDirs.has(entry)) continue;
-    const fullPath = join(dir, entry);
-    const stats = statSync(fullPath);
-    if (stats.isDirectory()) {
-      walk(fullPath, visitor);
-    } else if (stats.isFile()) {
-      visitor(fullPath);
-    }
-  }
-}
-
 function isTextFile(file) {
-  if (blockedFiles.has(file.split(/[\\/]/).pop())) return false;
+  if (skipFiles.has(file.split(/[\\/]/).pop())) return false;
   const lower = file.toLowerCase();
   return [...textExtensions].some((ext) => lower.endsWith(ext));
 }
 
+/** Read .gitignore and convert entries to git pathspec exclusions. */
+function gitignorePathspecExclusions() {
+  let lines;
+  try {
+    lines = readFileSync(join(root, ".gitignore"), "utf8").split(/\r?\n/);
+  } catch {
+    return [];
+  }
+
+  const exclusions = [];
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    if (line.startsWith("!")) continue; // negated patterns un-ignore files
+
+    let pattern = line;
+    if (pattern.startsWith("/")) pattern = pattern.slice(1);
+
+    if (pattern.endsWith("/")) {
+      const dir = pattern.slice(0, -1);
+      exclusions.push(`:!${dir}`);
+      exclusions.push(`:!${dir}/**`);
+    } else {
+      exclusions.push(`:!${pattern}`);
+    }
+  }
+  return exclusions;
+}
+
 function scanCurrentTree() {
   const matches = [];
-  walk(root, (file) => {
-    if (!isTextFile(file)) return;
-    const rel = relative(root, file).replace(/\\/g, "/");
-    const text = readFileSync(file, "utf8");
-    if (exposurePattern.test(text)) matches.push(`${rel}: old project/company reference`);
-    if (secretPattern.test(text)) matches.push(`${rel}: possible secret`);
-  });
+  // git ls-files respects .gitignore, .git/info/exclude, and global gitignore
+  const result = runGit(["ls-files", "--cached", "--others", "--exclude-standard"]);
+  if (result.status !== 0) {
+    fail(`could not list tracked files: ${result.stderr.trim()}`);
+    return;
+  }
+
+  for (const relPath of result.stdout.split(/\r?\n/).filter(Boolean)) {
+    if (!isTextFile(relPath)) continue;
+    const fullPath = join(root, relPath);
+    try {
+      const text = readFileSync(fullPath, "utf8");
+      if (exposurePattern.test(text)) matches.push(`${relPath}: old project/company reference`);
+      if (secretPattern.test(text)) matches.push(`${relPath}: possible secret`);
+    } catch {
+      // Skip unreadable files (binary, permissions, etc.)
+    }
+  }
   if (matches.length > 0) {
     fail(`current tree exposure scan failed:\n${matches.slice(0, 20).map((m) => `  - ${m}`).join("\n")}`);
   }
@@ -80,6 +106,13 @@ function scanHistory() {
     return;
   }
 
+  const exclusions = [
+    ...gitignorePathspecExclusions(),
+    ":!package-lock.json",
+    ":!package.json",
+    ":!scripts/public-readiness.mjs",
+  ];
+
   const matches = [];
   for (const commit of commits.stdout.split(/\r?\n/).filter(Boolean)) {
     const result = runGit([
@@ -91,12 +124,7 @@ function scanHistory() {
       "beck|beckshybrids|FSB-|BecksDevTeam|farmserver|FARMserver",
       commit,
       "--",
-      ":!package-lock.json",
-      ":!package.json",
-      ":!node_modules/**",
-      ":!dist/**",
-      ":!.tmp/**",
-      ":!scripts/public-readiness.mjs",
+      ...exclusions,
     ]);
     if (result.status === 0 && result.stdout.trim()) {
       matches.push(...result.stdout.trim().split(/\r?\n/));
