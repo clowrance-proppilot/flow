@@ -41,6 +41,11 @@ export interface HandoffProjection {
   result?: unknown;
 }
 
+export interface JsonCliCommandProjection {
+  label: string;
+  request: Record<string, unknown>;
+}
+
 export interface ProjectedWorkSubject {
   subject: {
     type: string;
@@ -52,6 +57,7 @@ export interface ProjectedWorkSubject {
   links: LinkProjection[];
   records: RecordProjection[];
   handoffs: HandoffProjection[];
+  nextJsonCommands?: JsonCliCommandProjection[];
   completedAt?: string;
   completedByEventId?: string;
 }

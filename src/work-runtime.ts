@@ -83,7 +83,7 @@ import {
   mapWithConcurrency,
   workRuntimeQueueConcurrency,
 } from "./runtime-utils.js";
-import type { ProjectedWorkSubject } from "./core/work-projection.js";
+import type { JsonCliCommandProjection, ProjectedWorkSubject } from "./core/work-projection.js";
 import type { ExecutorAdapter } from "./executors/executor-contracts.js";
 
 export interface WorkRuntimeOptions {
@@ -187,6 +187,7 @@ export interface AdvanceIssueResult {
   session: WorkRuntimeSession;
   issue?: WorkItem;
   message: string;
+  nextJsonCommands?: JsonCliCommandProjection[];
   handoffRequest?: {
     id: string;
     issueRef: string;
@@ -228,6 +229,7 @@ export interface LocalThreadResultRecord {
   session: WorkRuntimeSession;
   result: WorkerTaskResult;
   adoptedRun?: WorkerRunRecord;
+  nextJsonCommands?: JsonCliCommandProjection[];
 }
 
 export interface BootstrapJiraIssueOptions {
@@ -541,13 +543,15 @@ export class FlowWorkRuntime {
         links: [],
         records: [],
         handoffs: [],
+        nextJsonCommands: [],
       };
     }
-    const [issue, jobs, jobResults, workerResults] = await Promise.all([
+    const [issue, jobs, jobResults, workerResults, workerRuns] = await Promise.all([
       this.ledger.readIssue(flowSubject.ref),
       this.ledger.listWorkJobs(flowSubject.ref),
       this.ledger.listWorkJobResults(flowSubject.ref),
       this.ledger.listWorkerResults(flowSubject.ref),
+      this.ledger.listWorkerRuns(flowSubject.ref),
     ]);
     const claims = jobs
       .filter((job) => job.claimedBy || job.claimedAt)
@@ -594,6 +598,13 @@ export class FlowWorkRuntime {
         input: { taskId: result.taskId },
         result: { handoffPrompt: result.handoffPrompt },
       }));
+    const latestActiveRun = [...workerRuns].reverse().find((run) =>
+      run.status === WorkerStatusValue.Queued || run.status === WorkerStatusValue.Running
+    );
+    const latestActiveJob = [...jobs].reverse().find((job) =>
+      !isTerminalWorkJobStatus(job.status) && this.workTypes.isCodeProducing(job.workType)
+    );
+    const latestResult = workerResults.at(-1);
     return {
       subject: flowSubject,
       state: issue?.state ?? "queued",
@@ -602,6 +613,13 @@ export class FlowWorkRuntime {
       links: [],
       records,
       handoffs,
+      nextJsonCommands: nextJsonCommandsForIssue({
+        issueRef: flowSubject.ref,
+        repoKey: issue?.repoKeys[0] ?? latestActiveRun?.repoKey ?? latestResult?.repoKey,
+        activeRun: latestActiveRun,
+        activeJob: latestActiveJob,
+        latestResult,
+      }),
       completedAt: issue?.state === "done" ? issue.updatedAt : undefined,
       completedByEventId: issue?.state === "done" ? `workflow:issue:${flowSubject.ref}` : undefined,
     };
@@ -2248,7 +2266,7 @@ export class FlowWorkRuntime {
       completedAt,
     };
     const updated = await this.recordWorkerResult(sessionId, result);
-    return { session: updated, result, adoptedRun };
+    return { session: updated, result, adoptedRun, nextJsonCommands: nextJsonCommandsAfterResult(result) };
   }
 
   async adoptLiveWorker(
@@ -3126,6 +3144,7 @@ export class FlowWorkRuntime {
         issue,
         message: `Record result for execution handoff ${handoffRequest.id}.`,
         handoffRequest,
+        nextJsonCommands: nextJsonCommandsForHandoff(handoffRequest),
       };
   }
 
@@ -4406,6 +4425,115 @@ function isObsoleteSatisfiedPrWorkerResult(result: WorkerTaskResult, issue: Work
   if (issue.metadata.prIsDraft !== false) return false;
   const text = `${result.taskId} ${result.summary} ${result.nextPickup ?? ""} ${result.handoffPrompt ?? ""}`.toLowerCase();
   return text.includes("undraft") || text.includes("ready-for-review") || text.includes("ready for review");
+}
+
+function nextJsonCommandsForHandoff(request: {
+  id: string;
+  issueRef: string;
+  repoKey: string;
+  workJobId?: string;
+}): JsonCliCommandProjection[] {
+  return [
+    jsonCliCommand("Record local thread result", {
+      op: "workflow",
+      mode: "recordResult",
+      id: request.issueRef,
+      repoKey: request.repoKey,
+      taskId: request.id,
+      ...(request.workJobId ? { workJobId: request.workJobId } : {}),
+      status: "succeeded",
+      summary: "<summary>",
+      changedFiles: [],
+      testsRun: [],
+    }),
+    jsonCliCommand("Observe issue work state", {
+      op: "workflow",
+      mode: "observe",
+      id: request.issueRef,
+    }),
+  ];
+}
+
+function nextJsonCommandsAfterResult(result: Pick<WorkerTaskResult, "issueRef" | "repoKey" | "status">): JsonCliCommandProjection[] {
+  if (result.status !== "succeeded") {
+    return [
+      jsonCliCommand("Observe issue work state", {
+        op: "workflow",
+        mode: "observe",
+        id: result.issueRef,
+      }),
+    ];
+  }
+  return [
+    jsonCliCommand("Record acceptance evidence", {
+      op: "workflow",
+      mode: "recordEvidence",
+      id: result.issueRef,
+      summary: "<verification summary>",
+      criteria: ["<acceptance criterion>"],
+    }),
+    jsonCliCommand("Record pull request", {
+      op: "workflow",
+      mode: "recordPullRequest",
+      id: result.issueRef,
+      repo: result.repoKey,
+      number: 0,
+      url: "<pull request url>",
+      isDraft: false,
+    }),
+    jsonCliCommand("Observe issue work state", {
+      op: "workflow",
+      mode: "observe",
+      id: result.issueRef,
+    }),
+    jsonCliCommand("Advance issue", {
+      op: "workflow",
+      mode: "advance",
+      id: result.issueRef,
+    }),
+  ];
+}
+
+function nextJsonCommandsForIssue(input: {
+  issueRef: string;
+  repoKey?: string;
+  activeRun?: WorkerRunRecord;
+  activeJob?: WorkJob;
+  latestResult?: WorkerTaskResult;
+}): JsonCliCommandProjection[] {
+  if (input.activeRun) {
+    return nextJsonCommandsForHandoff({
+      id: input.activeRun.taskId,
+      issueRef: input.issueRef,
+      repoKey: input.activeRun.repoKey,
+      workJobId: input.activeRun.workJobId,
+    });
+  }
+  if (input.activeJob) {
+    return nextJsonCommandsForHandoff({
+      id: stringFromRecord(input.activeJob.input, "handoffTaskId") ?? input.activeJob.id,
+      issueRef: input.issueRef,
+      repoKey: input.activeJob.repoKey,
+      workJobId: input.activeJob.id,
+    });
+  }
+  if (input.latestResult) return nextJsonCommandsAfterResult(input.latestResult);
+  return [
+    jsonCliCommand("Advance issue", {
+      op: "workflow",
+      mode: "advance",
+      id: input.issueRef,
+    }),
+    jsonCliCommand("Observe issue work state", {
+      op: "workflow",
+      mode: "observe",
+      id: input.issueRef,
+    }),
+  ];
+}
+
+function jsonCliCommand(label: string, request: Record<string, unknown>): JsonCliCommandProjection {
+  return { label, request };
 }
 
 function liveWorkerAdoptionSummary(adopter?: string): string {
