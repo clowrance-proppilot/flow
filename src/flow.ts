@@ -147,6 +147,14 @@ async function handleConfigRequest(request: Record<string, unknown>): Promise<un
     runtime: config?.runtime
       ? {
         store: config.runtime.store,
+        executionPlane: config.runtime.executionPlane
+          ? {
+            type: config.runtime.executionPlane.type,
+            workerName: config.runtime.executionPlane.workerName,
+            slots: config.runtime.executionPlane.slots,
+            dashboardUrl: config.runtime.executionPlane.dashboardUrl,
+          }
+          : undefined,
         defaultSessionId: config.runtime.defaultSessionId,
         dashboard: config.runtime.dashboard
           ? {

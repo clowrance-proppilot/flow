@@ -18,6 +18,8 @@ const defaultTestFiles = [
   "test/readiness.test.ts",
   "test/work-runtime-autoflow.test.ts",
   "test/adapter-triage.test.ts",
+  "test/execution-plane.test.ts",
+  "test/hatchet-execution.test.ts",
 ];
 
 writeCliShim();

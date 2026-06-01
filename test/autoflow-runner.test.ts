@@ -3,6 +3,8 @@ import test from "node:test";
 
 import {
   AutoflowService,
+  HATCHET_AUTOFLOW_TASK_NAME,
+  HATCHET_AUTOFLOW_VERSION,
   StandaloneAutoflowRunner,
   nowIso,
   type AutoflowAgentSessionDriver,
@@ -111,6 +113,109 @@ test("StandaloneAutoflowRunner can run a queued issue without Desktop", async ()
   assert.equal(status.issues["GH-315"]?.phase, "idle");
   assert.equal(status.issues["GH-315"]?.summary, "Ready for review.");
   assert.deepEqual(calls, ["record:GH-315:succeeded"]);
+});
+
+test("AutoflowService runs Hatchet payloads through Flow internals and durable Pi handles", async () => {
+  const sessions: string[] = [];
+  const agentSession = fakeAgentDriverSession();
+  const service = new AutoflowService({
+    projectId: "flow",
+    runtime: {
+      summarizeHandoff: async () => {
+        throw new Error("missing session");
+      },
+      createSession: async (id: string) => {
+        sessions.push(`create:${id}`);
+        return { id, findings: [], workerResults: [], createdAt: nowIso(), updatedAt: nowIso() };
+      },
+      selectIssue: async (sessionId: string) => {
+        sessions.push(`select:${sessionId}`);
+      },
+      diagnoseIssue: async () => ({
+        issueRef: "GH-416",
+        status: "ok",
+        issue: { ref: "GH-416", title: "Durable Pi session", state: "selected", repoKeys: ["flow"] },
+        visibility: {
+          ledger: true,
+          issueTracker: true,
+          repoRouting: true,
+          preparedWorktree: true,
+          codeReview: false,
+          codeReviewRequired: false,
+        },
+        findings: [],
+        nextAction: { type: "advance", summary: "Run Autoflow." },
+      }),
+      autoFlowIssue: async () => ({
+        status: "execution_handoff",
+        message: "Ready for executor.",
+        steps: [],
+        workerResults: [],
+        session: { id: "flow-session", findings: [], workerResults: [], createdAt: nowIso(), updatedAt: nowIso() },
+      }),
+      adoptPendingLiveWorker: async () => ({
+        id: "task-1",
+        issueRef: "GH-416",
+        repoKey: "flow",
+        workJobId: "job-1",
+        prompt: "Implement GH-416.",
+        workspacePath: "/tmp/flow-gh-416",
+      }),
+      recordLocalThreadResult: async (_sessionId: string, result: { issueRef: string; status: string }) => result,
+      recordEvidence: async () => undefined,
+      recordDocumentation: async () => undefined,
+      recordPullRequest: async () => undefined,
+      advanceIssue: async () => ({
+        status: "awaiting_review",
+        message: "Ready for review.",
+        issue: { ref: "GH-416", title: "Durable Pi session", repoKeys: ["flow"], state: "awaiting_review", metadata: {} },
+      }),
+    } as never,
+    autoReconcileOnSlotAvailable: false,
+    agentSessionDriver: {
+      async getSession(sessionId: string) {
+        sessions.push(`pi:${sessionId}`);
+        return { ...agentSession, id: sessionId };
+      },
+      async openOrCreateIssueSession(issueRef: string) {
+        sessions.push(`open:${issueRef}`);
+        return agentSession;
+      },
+      async sendUserMessage() {
+        return agentSession;
+      },
+      async postPrompt(sessionId: string) {
+        sessions.push(`prompt:${sessionId}`);
+        return { ...agentSession, id: sessionId };
+      },
+    },
+  });
+
+  const result = await service.runExecutionPlanePayload({
+    version: HATCHET_AUTOFLOW_VERSION,
+    taskName: HATCHET_AUTOFLOW_TASK_NAME,
+    projectId: "flow",
+    issueRef: "GH-416",
+    repoKeys: ["flow"],
+    requestedBy: "daemon",
+    runId: "hatchet-run-416",
+    concurrencyKey: "flow:flow:repos:flow",
+    semanticSteps: ["select_issue", "doctor", "prepare_workspace", "create_worker_handoff", "run_executor", "record_result", "closeout"],
+    durableSession: {
+      provider: "pi",
+      issueRef: "GH-416",
+      flowSessionId: "flow-gh-416",
+      piSessionId: "pi-gh-416",
+    },
+  });
+
+  assert.equal(result.runId, "hatchet-run-416");
+  assert.equal(result.status, "succeeded");
+  assert.ok(sessions.includes("create:flow-gh-416"));
+  assert.ok(sessions.includes("select:flow-gh-416"));
+  assert.ok(sessions.includes("pi:pi-gh-416"));
+  assert.ok(sessions.includes("prompt:pi-gh-416"));
+  assert.equal(sessions.includes("open:GH-416"), false);
 });
 
 test("StandaloneAutoflowRunner can target one issue without broad queue pickup", async () => {
