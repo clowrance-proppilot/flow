@@ -15,7 +15,7 @@ import { nowIso } from "./contracts.js";
 export const HATCHET_GROUP_ROUND_ROBIN = 3;
 
 export interface HatchetSdkModule {
-  default?: { init(): HatchetClientLike };
+  default?: { init?(): HatchetClientLike; Hatchet?: { init(): HatchetClientLike } };
   Hatchet?: { init(): HatchetClientLike };
 }
 
@@ -30,6 +30,8 @@ export interface HatchetTaskDeclaration {
 
 export interface HatchetWorkerHandle {
   start(): Promise<void>;
+  stop?(): Promise<void>;
+  waitUntilReady?(timeoutMs?: number): Promise<void>;
 }
 
 export interface HatchetClientLike {
@@ -79,7 +81,7 @@ export interface HatchetAutoflowWorkerOptions {
 export async function createHatchetClient(): Promise<HatchetClientLike> {
   const packageName = "@hatchet-dev/typescript-sdk";
   const mod = await import(packageName) as unknown as HatchetSdkModule;
-  const factory = mod.default ?? mod.Hatchet;
+  const factory = mod.default?.init ? mod.default : mod.Hatchet ?? mod.default?.Hatchet;
   if (!factory?.init) throw new Error("Hatchet SDK did not expose an init() client factory.");
   return factory.init();
 }
@@ -105,7 +107,8 @@ export async function startHatchetAutoflowWorker(options: HatchetAutoflowWorkerO
     workflows: [task],
     slots: options.slots ?? 1,
   });
-  await worker.start();
+  void worker.start();
+  await worker.waitUntilReady?.();
   return worker;
 }
 
