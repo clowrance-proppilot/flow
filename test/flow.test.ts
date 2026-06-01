@@ -1316,6 +1316,74 @@ test("Flow CLI can record evidence and documentation in one workflow call", asyn
   assert.equal(result.documentation.metadata.documentationDisposition, "not_needed");
 });
 
+test("Flow CLI workflow recordResult and observe return next JSON commands", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-cli-next-json-commands-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  const flowCli = join(process.cwd(), ".tmp", "test", "src", "flow.js");
+
+  const callFlow = async (body: Record<string, unknown>) => {
+    const { stdout } = await execFileAsync(process.execPath, [flowCli, JSON.stringify(body)], {
+      cwd: root,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+    const parsed = JSON.parse(stdout) as { ok?: boolean; result?: unknown; error?: unknown };
+    if (parsed.ok === false) throw new Error(`Flow CLI failed: ${JSON.stringify(parsed.error)}`);
+    return parsed.result as Record<string, unknown>;
+  };
+
+  await callFlow({ op: "bootstrap", storage: "repo-tracked" });
+  const issueRequest = {
+    op: "issue",
+    mode: "create",
+    summary: "Observe JSON commands",
+    issueType: "Task",
+  };
+  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true });
+  const reviewJob = intake.reviewJob as { id: string; issueRef: string; repoKey: string; workType: string };
+  await callFlow({
+    op: "runtime",
+    method: "recordWorkJobResult",
+    params: {
+      result: {
+        jobId: reviewJob.id,
+        issueRef: reviewJob.issueRef,
+        repoKey: reviewJob.repoKey,
+        workType: reviewJob.workType,
+        status: "succeeded",
+        summary: "Executor approved issue intake.",
+        evidence: ["CLI test executor review."],
+        completedAt: nowIso(),
+      },
+    },
+  });
+  const issue = await callFlow(issueRequest) as { ref: string };
+
+  const result = await callFlow({
+    op: "workflow",
+    mode: "recordResult",
+    id: issue.ref,
+    repoKey: "main",
+    status: "succeeded",
+    summary: "Thread completed the change.",
+    changedFiles: ["src/work-runtime.ts"],
+    testsRun: ["npm run check"],
+  }) as { nextJsonCommands: Array<{ label: string; request: Record<string, unknown> }> };
+  const observed = await callFlow({
+    op: "workflow",
+    mode: "observe",
+    id: issue.ref,
+  }) as { nextJsonCommands: Array<{ label: string; request: Record<string, unknown> }> };
+
+  assert.deepEqual(result.nextJsonCommands.map((command) => command.request.mode), [
+    "recordEvidence",
+    "recordPullRequest",
+    "observe",
+    "advance",
+  ]);
+  assert.equal(observed.nextJsonCommands[0].request.mode, "recordEvidence");
+  assert.equal(observed.nextJsonCommands[0].request.id, issue.ref);
+});
+
 test("Flow workflow doctor strict mode exits nonzero when readiness is not ok", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-doctor-strict-"));
   await execFileAsync("git", ["init"], { cwd: root });
@@ -5416,12 +5484,62 @@ test("Work Runtime records current local thread against a pending handoff reques
   assert.equal(record.result.taskId, requested.handoffRequest?.id);
   assert.equal(record.result.workJobId, requested.handoffRequest?.workJobId);
   assert.equal(record.result.executor, "live_agent_thread");
+  assert.deepEqual(record.nextJsonCommands?.map((command) => command.request.mode), [
+    "recordEvidence",
+    "recordPullRequest",
+    "observe",
+    "advance",
+  ]);
+  assert.deepEqual(record.nextJsonCommands?.[0]?.request, {
+    op: "workflow",
+    mode: "recordEvidence",
+    id: "ISSUE-33",
+    summary: "<verification summary>",
+    criteria: ["<acceptance criterion>"],
+  });
   assert.equal(results[0].executor, "live_agent_thread");
   assert.equal(runs.at(-1)?.status, "succeeded");
   assert.equal(jobs[0].claimedBy, "live_agent_thread");
   assert.equal(jobs[0].status, "succeeded");
   assert.equal(jobResults[0].workerResult?.taskId, requested.handoffRequest?.id);
   assert.notEqual(advanced.session.pendingConfirmation?.action, "request_execution");
+});
+
+test("Work Runtime reports next JSON commands for active handoffs in observe", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-observe-json-commands-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  const session = await workRuntime.createSession("session-observe-json-commands");
+  await workRuntime.selectIssue(session.id, {
+    ref: "ISSUE-34",
+    title: "Observe JSON commands",
+    repoKeys: ["app_api"],
+    state: "ready_to_run",
+    metadata: {
+      "workflow.repos.app_api.worktree_path": "/repo/app-api/.worktrees/feature-issue-34",
+    },
+  });
+
+  const pending = await workRuntime.advanceIssue(session.id);
+  const confirmationId = pending.session.pendingConfirmation?.id;
+  assert.ok(confirmationId);
+  const requested = await workRuntime.advanceIssue(session.id, confirmationId);
+  const observed = await workRuntime.observeFlowSubject({ ref: "ISSUE-34" });
+
+  assert.equal(requested.status, "execution_handoff");
+  assert.deepEqual(requested.nextJsonCommands?.[0]?.request, {
+    op: "workflow",
+    mode: "recordResult",
+    id: "ISSUE-34",
+    repoKey: "app_api",
+    taskId: requested.handoffRequest?.id,
+    workJobId: requested.handoffRequest?.workJobId,
+    status: "succeeded",
+    summary: "<summary>",
+    changedFiles: [],
+    testsRun: [],
+  });
+  assert.deepEqual(observed.nextJsonCommands?.[0]?.request, requested.nextJsonCommands?.[0]?.request);
 });
 
 test("Work Runtime retries retryable executor setup failures without recreating the workspace", async () => {
