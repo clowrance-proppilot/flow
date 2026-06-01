@@ -5,6 +5,7 @@ import {
   HATCHET_AUTOFLOW_TASK_NAME,
   HATCHET_AUTOFLOW_WORKER_NAME,
   createHatchetAutoflowTask,
+  createHatchetClient,
   hatchetStatusToAutoflowPhase,
   HatchetAutoflowExecutionProvider,
   startHatchetAutoflowWorker,
@@ -108,6 +109,13 @@ test("createHatchetAutoflowTask declares durable task policy outside Flow semant
     semanticSteps: ["select_issue"],
   });
   assert.equal(result?.issueRef, "GH-412");
+});
+
+test("createHatchetClient reports optional Hatchet SDK dependency clearly", async () => {
+  await assert.rejects(
+    createHatchetClient(),
+    /Hatchet execution is optional\. Install @hatchet-dev\/typescript-sdk before creating a Hatchet client\./,
+  );
 });
 
 test("Hatchet provider enqueues Autoflow payloads and returns a run handle", async () => {

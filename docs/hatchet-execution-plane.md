@@ -1,8 +1,13 @@
-# Hatchet Execution Plane Spike
+# Optional Hatchet Execution Plane Spike
 
 ## Decision
 
-Hatchet can own durable Autoflow execution. Flow keeps workflow semantics.
+Hatchet can own durable Autoflow execution, but it is not the default Flow
+runtime. Flow keeps workflow semantics and the stable JSON CLI remains the core
+control surface.
+
+This spike is a reference adapter. It should not make the default Flow install
+or normal CLI workflow depend on Hatchet.
 
 Flow should not make the CLI or desktop process the runner. Those surfaces should enqueue, pause, resume, inspect, and render status. A long-lived execution plane should own scheduling, retries, worker slots, concurrency, durable run state, and replay.
 
@@ -100,17 +105,18 @@ The CLI remains JSON-only. It should call the Flow control layer and return a si
 
 Desktop can stay as a Flow-specific UI for queue, issue detail, chat/session steering, and local project controls. Hatchet's dashboard can handle execution logs, retries, replay, and worker state.
 
-## Spike Surface
+## Optional Spike Surface
 
-The first implementation pass adds a Hatchet provider behind `AutoflowExecutionProvider`:
+The first implementation pass added a Hatchet provider behind
+`AutoflowExecutionProvider`, but it stays optional:
 
 - enable `runtime.executionPlane.type: "hatchet"` from durable config
-- connect to Hatchet with `@hatchet-dev/typescript-sdk`
+- install and connect to Hatchet with `@hatchet-dev/typescript-sdk`
 - register `flow.autoflow.run_issue` through `createHatchetAutoflowTask`
 - enqueue targeted issue runs through `HatchetAutoflowExecutionProvider`
 - map Hatchet run status into Flow Autoflow status
 - keep local execution behind existing executor adapters
 
-The first code seam is in `src/hatchet-execution.ts`. It compiles against the
-real Hatchet SDK, but normal Flow tests use a fake Hatchet client so the repo
-does not require a running Hatchet server.
+The code seam is in `src/hatchet-execution.ts`. Normal Flow tests use a fake
+Hatchet client. The default package does not require the Hatchet SDK or a
+running Hatchet server.
