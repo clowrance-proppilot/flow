@@ -12,6 +12,8 @@ export type ProjectStatusCounts = {
   total: number;
 };
 
+export type { DesktopAction } from "../action-types";
+
 export type ProjectRecord = {
   id: string;
   name: string;
@@ -80,6 +82,11 @@ export type ContextProjection = {
     summary?: string;
     updatedAt?: string;
   }>;
+  desktop?: {
+    refreshIntervalMs?: number;
+    dashboardRefreshIntervalMs?: number;
+    autoflowStatusRefreshIntervalMs?: number;
+  };
 };
 
 export type IssueType = "Bug" | "Task" | "Story";
@@ -93,38 +100,13 @@ export type ConversationItem = {
   createdAt: string;
 };
 
-export type PiTimelineItem = {
-  id: string;
-  role: "system" | "user" | "assistant" | "tool";
-  content: string;
-  createdAt: string;
-  toolName?: string;
-};
-
-export type PiSessionSnapshot = {
-  id: string;
-  issueRef: string;
-  status: "active" | "running" | "paused" | "done" | "failed";
-  timeline: PiTimelineItem[];
-};
-
-export type PiSessionEvent = {
-  type: "assistantDelta" | "toolStarted" | "toolUpdated" | "toolFinished" | "runFailed" | "runCompleted" | "sessionUpdated";
-  timestamp: string;
-  text?: string;
-  toolName?: string;
-  callId?: string;
-  success?: boolean;
-  error?: { message?: string };
-  snapshot?: { status?: "idle" | "running" | "failed" };
-};
+export type { PiSessionSnapshot, PiSessionStatus, PiTimelineItem } from "../../src/pi-session-driver";
+export type { SessionDriverEvent as PiSessionEvent } from "../../src/session-driver";
 
 export type PendingConfirmationState = {
   id: string;
   summary: string;
 };
-
-export type DesktopAction = "autoflow" | "approve_confirmation" | "record_evidence" | "record_result" | "record_documentation" | "run_doctor";
 
 export type PiActivityState = {
   phase: "idle" | "starting" | "thinking" | "tool" | "responding" | "done" | "failed";
@@ -134,8 +116,8 @@ export type PiActivityState = {
   updatedAt?: string;
 };
 
-export type PiAgentOrchestratorIssueStatus = {
-  phase: "queued" | "starting" | "running" | "blocked" | "needs_input" | "failed" | "done";
+export type AutoflowRunnerIssueStatus = {
+  phase: "paused" | "idle" | "starting" | "running" | "needs_input" | "failed";
   sessionId?: string;
   workspacePath?: string;
   summary?: string;
@@ -143,11 +125,11 @@ export type PiAgentOrchestratorIssueStatus = {
   updatedAt: string;
 };
 
-export type PiAgentOrchestratorStatus = {
+export type AutoflowRunnerStatus = {
   enabled: boolean;
   maxConcurrency: number;
   activeCount: number;
-  issues: Record<string, PiAgentOrchestratorIssueStatus>;
+  issues: Record<string, AutoflowRunnerIssueStatus>;
   summary: string;
   updatedAt: string;
 };

@@ -25,3 +25,6 @@ Rules:
   stop unless the requester approves direct recovery in the current thread.
 - Keep workflow actions inside the configured agent surface; do not ask a person
   to use raw provider UIs or raw CLI unless Flow reports a hard blocker.
+- Work as the executor. Do not delegate implementation or review work to another
+  agent or advisor process.
+- Inspect large files with `rg` or targeted line-range reads before reading the whole file. Never read a file over 50 KB in full when a targeted search gives the same answer.

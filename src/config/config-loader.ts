@@ -315,9 +315,13 @@ async function inferBootstrapFlowConfig(projectRoot: string, storage: FlowConfig
       type: "git",
     },
     ledger: {
-      type: "flow",
+      type: "sql",
+      dialect: "sqlite",
     },
     runtime: {
+      store: {
+        type: "sqlite",
+      },
       ...(storage === "user"
         ? {
           stateDir: flowUserRuntimePath(projectRoot),

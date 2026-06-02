@@ -31,14 +31,17 @@ export function registerProjectRoutes(server: Express, context: RouteContext, js
       };
       try {
         const surface = await projectSurface(project);
+        const autoflowStatus = await surface.autoflowRunner.status();
         const payload = await surface.dashboardState.payload({ limit: 50 });
         const summary = summarizeProjectIssues(payload.issues);
         return {
           ...publicProject,
+          autoflowEnabled: autoflowStatus.enabled,
           attentionCount: summary.blocked + summary.needsInput,
           statusCounts: summary,
         };
-      } catch {
+      } catch (error) {
+        console.error(`[flow-desktop] project summary failed for ${project.id}:`, error);
         return {
           ...publicProject,
           attentionCount: 0,
@@ -73,6 +76,7 @@ export function registerProjectRoutes(server: Express, context: RouteContext, js
       }
       res.sendFile(iconPath);
     } catch (error) {
+      console.error("[flow-desktop] project icon fetch failed:", error);
       res.status(400).json({ ok: false, error: message(error) });
     }
   });
@@ -88,6 +92,7 @@ export function registerProjectRoutes(server: Express, context: RouteContext, js
       invalidateProjectSurface?.(project.id);
       res.json({ ok: true, activeProjectId: project.id, project, projects: await projectRegistry.listProjects() });
     } catch (error) {
+      console.error("[flow-desktop] add project failed:", error);
       res.status(400).json({ ok: false, error: message(error) });
     }
   });
@@ -97,6 +102,7 @@ export function registerProjectRoutes(server: Express, context: RouteContext, js
       const project = await projectRegistry.setActiveProject(String(req.params.projectId ?? ""));
       res.json({ ok: true, project });
     } catch (error) {
+      console.error("[flow-desktop] set active project failed:", error);
       res.status(404).json({ ok: false, error: message(error) });
     }
   });
@@ -104,10 +110,14 @@ export function registerProjectRoutes(server: Express, context: RouteContext, js
   server.post("/api/projects/:projectId/autoflow", jsonBody, async (req, res) => {
     try {
       const enabled = req.body?.enabled !== false;
-      const project = await projectRegistry.setProjectAutoflow(String(req.params.projectId ?? ""), enabled);
-      invalidateProjectSurface?.(project.id);
-      res.json({ ok: true, project });
+      const projectId = String(req.params.projectId ?? "");
+      const project = (await projectRegistry.listProjects()).find((candidate) => candidate.id === projectId);
+      if (!project) throw new Error(`Unknown Flow project ${projectId}.`);
+      const surface = await projectSurface(project);
+      const status = await surface.autoflowRunner.setEnabled(enabled);
+      res.json({ ok: true, project: { ...project, autoflowEnabled: status.enabled } });
     } catch (error) {
+      console.error("[flow-desktop] set project autoflow failed:", error);
       res.status(404).json({ ok: false, error: message(error) });
     }
   });
@@ -123,6 +133,7 @@ export function registerProjectRoutes(server: Express, context: RouteContext, js
       const repoKeys = Object.keys(surface.configured.flowConfig?.topology?.repos ?? {});
       res.json({ ok: true, project, dashboard, context: ledgerContext, repoKeys });
     } catch (error) {
+      console.error("[flow-desktop] context snapshot failed:", error);
       res.status(503).json({ ok: false, error: message(error) });
     }
   });

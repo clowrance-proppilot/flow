@@ -6,7 +6,9 @@ import type {
   CodeCollaborationProvider,
   CollaborationCapabilities,
   IssueTrackerCapabilities,
+  IssueSearchParams,
   IssueTrackerProvider,
+  UnifiedDiff,
   UnifiedIssue,
   UnifiedCodeReview,
 } from "./provider-contracts.js";
@@ -31,6 +33,7 @@ export interface PullRequestStatus {
   reviewDecision?: string;
   templateMissingHeadings?: string[];
   checksPassing?: boolean;
+  checksPending?: boolean;
   autoReviewStatus?: "passed" | "failed" | "pending" | "missing";
   autoReviewMustFix?: boolean;
   autoReviewMustFixDetail?: string;
@@ -96,9 +99,31 @@ export class GhGitHubAdapter implements CodeCollaborationProvider {
     return prs.map(normalizePullRequest);
   }
 
+  async createCodeReview(input: {
+    repo: string;
+    title: string;
+    body: string;
+    sourceBranch: string;
+    targetBranch: string;
+    draft?: boolean;
+  }): Promise<UnifiedCodeReview> {
+    return normalizePullRequest(await this.createPullRequest({
+      repo: input.repo,
+      title: input.title,
+      body: input.body,
+      headRefName: input.sourceBranch,
+      baseRefName: input.targetBranch,
+      isDraft: input.draft,
+    }));
+  }
+
   async getCodeReview(repo: string, id: string | number): Promise<UnifiedCodeReview | undefined> {
     const pr = await this.getPullRequest(repo, Number(id));
     if (pr) return normalizePullRequest(pr);
+  }
+
+  async getCodeReviewDiff(repo: string, id: string | number): Promise<UnifiedDiff> {
+    return this.getPullRequestDiff(repo, Number(id));
   }
 
   async markReadyForReview(repo: string, id: string | number): Promise<UnifiedCodeReview | undefined> {
@@ -138,6 +163,38 @@ export class GhGitHubAdapter implements CodeCollaborationProvider {
       execFileAsync("gh", args, { cwd: this.cwd, maxBuffer: 20 * 1024 * 1024 })
     );
     return parsePullRequests(JSON.parse(stdout) as unknown, repo, this.requiredPullRequestTemplateHeadings());
+  }
+
+  async createPullRequest(input: {
+    repo: string;
+    title: string;
+    body: string;
+    headRefName: string;
+    baseRefName: string;
+    isDraft?: boolean;
+  }): Promise<PullRequestStatus> {
+    const args = [
+      "pr",
+      "create",
+      "--repo",
+      this.repoSpecifier(input.repo),
+      "--base",
+      input.baseRefName,
+      "--head",
+      input.headRefName,
+      "--title",
+      input.title,
+      "--body",
+      input.body,
+    ];
+    if (input.isDraft) args.push("--draft");
+    const { stdout } = await withPerfLog(`gh pr create ${input.repo}`, () =>
+      execFileAsync("gh", args, { cwd: this.cwd, maxBuffer: 20 * 1024 * 1024 })
+    );
+    const number = pullRequestNumberFromUrl(stdout.trim());
+    const created = await this.getPullRequest(input.repo, number);
+    if (!created) throw new Error(`Created pull request ${stdout.trim()} could not be read.`);
+    return created;
   }
 
   private repoSpecifier(repo: string): string {
@@ -189,6 +246,24 @@ export class GhGitHubAdapter implements CodeCollaborationProvider {
     );
     const url = stdout.trim();
     return { url: url || undefined, body };
+  }
+
+  async getPullRequestDiff(repo: string, number: number): Promise<UnifiedDiff> {
+    const repoSpecifier = this.repoSpecifier(repo);
+    const [files, patch] = await Promise.all([
+      execFileAsync("gh", ["pr", "diff", String(number), "--repo", repoSpecifier, "--name-only"], {
+        cwd: this.cwd,
+        maxBuffer: 20 * 1024 * 1024,
+      }),
+      execFileAsync("gh", ["pr", "diff", String(number), "--repo", repoSpecifier], {
+        cwd: this.cwd,
+        maxBuffer: 50 * 1024 * 1024,
+      }),
+    ]);
+    return {
+      files: files.stdout.split("\n").map((line) => line.trim()).filter(Boolean),
+      patch: patch.stdout.trim() || undefined,
+    };
   }
 
   async mergePullRequest(
@@ -277,6 +352,9 @@ export class GhGitHubIssueTrackerAdapter implements IssueTrackerProvider {
     canTransitionIssues: true,
     canPostComments: true,
     canManageActivePlanningLane: false,
+    canFetchOpenIssues: true,
+    canSearchIssues: true,
+    canTagIssues: true,
   };
 
   private readonly cwd: string;
@@ -331,11 +409,45 @@ export class GhGitHubIssueTrackerAdapter implements IssueTrackerProvider {
     });
   }
 
+  async fetchOpenIssues(limit = 100): Promise<UnifiedIssue[]> {
+    return this.listIssues({
+      limit,
+      labels: [],
+      assignee: undefined,
+    });
+  }
+
+  async searchIssues(params: IssueSearchParams): Promise<UnifiedIssue[]> {
+    const limit = params.limit ?? 10;
+    const args = [
+      "issue",
+      "list",
+      "--repo",
+      this.repoSpecifier(),
+      "--state",
+      params.state ?? "open",
+      "--limit",
+      String(limit),
+      "--json",
+      "number,title,url,state,body,updatedAt,labels,assignees",
+    ];
+    if (params.title || params.summary) {
+      const query = params.title || params.summary || "";
+      args.push("--search", query);
+    }
+    if (params.issueType) {
+      const label = labelForIssueType(params.issueType);
+      if (label) args.push("--label", label);
+    }
+    const { stdout } = await withPerfLog(`gh issue search ${this.repo}`, () =>
+      execFileAsync("gh", args, { cwd: this.cwd, maxBuffer: 10 * 1024 * 1024 })
+    );
+    return parseGitHubIssues(JSON.parse(stdout) as unknown).map(normalizeGitHubIssue);
+  }
+
   async createIssue(input: { issueType: string; title?: string; summary: string; description?: string }): Promise<UnifiedIssue> {
     const issueTitle = input.title?.trim() || input.summary;
-    const issueBody = input.title?.trim()
-      ? input.summary
-      : input.description ?? "";
+    const issueBody = githubIssueCreateBody(input);
     const args = [
       "issue",
       "create",
@@ -393,6 +505,28 @@ export class GhGitHubIssueTrackerAdapter implements IssueTrackerProvider {
     return { url: stdout.trim() || undefined, body };
   }
 
+  async addIssueTags(ref: string, tags: string[]): Promise<UnifiedIssue | void> {
+    const normalizedTags = tags.map((tag) => tag.trim()).filter(Boolean);
+    if (!normalizedTags.length) return this.getIssue(ref);
+    const args = ["issue", "edit", String(issueNumberFromRef(ref)), "--repo", this.repoSpecifier()];
+    for (const tag of normalizedTags) args.push("--add-label", tag);
+    await withPerfLog(`gh issue edit ${ref} add labels`, () =>
+      execFileAsync("gh", args, { cwd: this.cwd, maxBuffer: 10 * 1024 * 1024 }).then(() => undefined)
+    );
+    return this.getIssue(ref);
+  }
+
+  async removeIssueTags(ref: string, tags: string[]): Promise<UnifiedIssue | void> {
+    const normalizedTags = tags.map((tag) => tag.trim()).filter(Boolean);
+    if (!normalizedTags.length) return this.getIssue(ref);
+    const args = ["issue", "edit", String(issueNumberFromRef(ref)), "--repo", this.repoSpecifier()];
+    for (const tag of normalizedTags) args.push("--remove-label", tag);
+    await withPerfLog(`gh issue edit ${ref} remove labels`, () =>
+      execFileAsync("gh", args, { cwd: this.cwd, maxBuffer: 10 * 1024 * 1024 }).then(() => undefined)
+    );
+    return this.getIssue(ref);
+  }
+
   private async listIssues(options: { limit: number; labels: string[]; assignee?: string }): Promise<UnifiedIssue[]> {
     const args = [
       "issue",
@@ -421,6 +555,10 @@ export class GhGitHubIssueTrackerAdapter implements IssueTrackerProvider {
     }
     return `${this.owner}/${this.repo}`;
   }
+}
+
+export function githubIssueCreateBody(input: { summary: string; description?: string }): string {
+  return input.description?.trim() || input.summary;
 }
 
 async function withPerfLog<T>(label: string, operation: () => Promise<T>, defaultThresholdMs = 1000): Promise<T> {
@@ -525,6 +663,12 @@ function issueNumberFromUrl(url: string): number {
   return Number(match[1]);
 }
 
+function pullRequestNumberFromUrl(url: string): number {
+  const match = /\/pull\/(\d+)(?:\D*$|$)/.exec(url);
+  if (!match) throw new Error(`Could not read GitHub pull request number from ${url}.`);
+  return Number(match[1]);
+}
+
 function readNameList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -563,6 +707,7 @@ function parseSinglePullRequest(value: unknown, repo: string, requiredTemplateHe
     reviewDecision: typeof record.reviewDecision === "string" ? record.reviewDecision : undefined,
     templateMissingHeadings: templateMissingHeadings.length ? templateMissingHeadings : undefined,
     checksPassing: checksPassing(record.statusCheckRollup),
+    checksPending: checksPending(record.statusCheckRollup),
     autoReviewStatus: autoReviewStatus(record.statusCheckRollup),
     reviewCommentCount: reviewComments.count || undefined,
     reviewCommentAuthors: reviewComments.authors.length ? reviewComments.authors : undefined,
@@ -650,11 +795,21 @@ function normalizeHeading(value: string): string {
 function checksPassing(value: unknown): boolean | undefined {
   const checks = latestChecksByName(value);
   if (checks.length === 0) return undefined;
+  if (checksPending(value)) return undefined;
   return checks.every((item) => {
     const record = item as Record<string, unknown>;
     const status = String(record.status ?? "");
     const conclusion = String(record.conclusion ?? "");
     return status === "COMPLETED" && ["SUCCESS", "SKIPPED", "NEUTRAL"].includes(conclusion);
+  });
+}
+
+function checksPending(value: unknown): boolean | undefined {
+  const checks = latestChecksByName(value);
+  if (checks.length === 0) return undefined;
+  return checks.some((item) => {
+    const record = item as Record<string, unknown>;
+    return String(record.status ?? "") !== "COMPLETED";
   });
 }
 
@@ -745,6 +900,7 @@ export function normalizePullRequest(pr: PullRequestStatus): UnifiedCodeReview {
     isClosed: pr.state?.toUpperCase() === "CLOSED",
     mergeableState: pr.mergeable === "MERGEABLE" ? "clean" : pr.mergeable === "CONFLICTING" ? "conflicting" : "unknown",
     checksPassing: pr.checksPassing,
+    checksPending: pr.checksPending,
     state: pr.state,
     reviewDecision: pr.reviewDecision,
     templateMissingHeadings: pr.templateMissingHeadings ?? [],

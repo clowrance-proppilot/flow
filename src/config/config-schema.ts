@@ -59,9 +59,27 @@ export const serviceEndpointConfigSchema = z.object({
 
 export const dashboardRuntimeConfigSchema = serviceEndpointConfigSchema;
 
+export const runtimeStoreConfigSchema = z.object({
+  type: z.enum(["file", "sqlite"]),
+}).catchall(z.unknown());
+
+export const agentSessionConfigSchema = z.object({
+  provider: z.enum(["pi", "claude"]).default("pi"),
+}).catchall(z.unknown());
+
+export const executionPlaneConfigSchema = z.object({
+  type: z.enum(["flow-standalone", "hatchet"]).default("flow-standalone"),
+  workerName: z.string().min(1).optional(),
+  slots: z.number().int().positive().optional(),
+  dashboardUrl: z.string().min(1).optional(),
+}).catchall(z.unknown());
+
 export const runtimeConfigSchema = z.object({
   stateDir: z.string().min(1).optional(),
   storeDir: z.string().min(1).optional(),
+  store: runtimeStoreConfigSchema.optional(),
+  agentSession: agentSessionConfigSchema.optional(),
+  executionPlane: executionPlaneConfigSchema.optional(),
   eventLedgerPath: z.string().min(1).optional(),
   workflowLedgerPath: z.string().min(1).optional(),
   defaultSessionId: z.string().min(1).optional(),
@@ -196,5 +214,8 @@ export type IssueInferenceRuleConfig = z.infer<typeof issueInferenceRuleConfigSc
 export type TopologyConfig = z.infer<typeof topologyConfigSchema>;
 export type WorkTypeConfig = z.infer<typeof workTypeConfigSchema>;
 export type ExecutorConfig = z.infer<typeof executorConfigSchema>;
+export type RuntimeStoreConfig = z.infer<typeof runtimeStoreConfigSchema>;
+export type AgentSessionConfig = z.infer<typeof agentSessionConfigSchema>;
+export type ExecutionPlaneConfig = z.infer<typeof executionPlaneConfigSchema>;
 export type RuntimeConfig = z.infer<typeof runtimeConfigSchema>;
 export type FlowConfig = z.infer<typeof flowConfigSchema>;

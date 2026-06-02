@@ -29,6 +29,7 @@ export class LocalThreadExecutor implements ExecutorAdapter {
       "test.run",
       "review.remediate",
       "evidence.record",
+      "issue.intake",
     ]);
   }
 

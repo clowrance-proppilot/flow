@@ -1,10 +1,13 @@
-import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
+import { access, mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
+import type { Server } from "node:http";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { promisify } from "node:util";
+import { basename, dirname, join, resolve } from "node:path";
+import { Readable } from "node:stream";
 import assert from "node:assert/strict";
 import test from "node:test";
+import express, { type Express } from "express";
 
 import {
   FlowWorkRuntime,
@@ -27,73 +30,186 @@ import {
   configToWorkTypeRegistry,
   flowConfigPath,
   flowContextProjectionPath,
+  flowIssueProjectionFileName,
   flowIssueProjectionPath,
   flowContextRecordSchema,
   flowUserConfigPath,
+  flowUserContextProjectionPath,
+  flowUserIssueProjectionPath,
   flowUserRuntimePath,
+  flowUserStateRoot,
+  flowUserWorkflowLedgerDatabasePath,
+  flowUserWorkflowLedgerPath,
+  flowWorkflowLedgerPath,
+  resolveFlowPath,
+  resolveCliIssue,
+  canClaimWork,
+  canCompleteWork,
+  canResolveBlocker,
+  existingString,
   flowConfigSchema,
+  mapWithConcurrency,
   loadFlowConfig,
   migrateFlowConfig,
+  metadataBoolean,
+  metadataNumber,
+  metadataStringArray,
+  metadataValueEquals,
+  normalizeRepoKey,
+  normalizeRepoKeys,
+  pullRequestMetadata,
+  repoScopedPullRequestMetadata,
   validateFlowConfig,
+  createConfiguredWorkRuntime,
   createId,
   LocalThreadExecutor,
   LocalIssueTrackerAdapter,
   NoopCodeCollaborationAdapter,
+  AutoflowService,
+  StandaloneAutoflowRunner,
+  ReconciliationEngine,
   ProviderAdapterError,
   classifyProviderCliError,
+  GitAdapter,
+  triageIssues as triageIssuesEngine,
+  type CreateIssueOptions,
+  type ProjectedWorkSubject,
+  type WorkItem,
 } from "../src/index.js";
+import { JsonCliError, runJsonCli, type JsonCliOptions } from "../src/json-cli.js";
+import {
+  requireWorkItem,
+  requireCreateIssueOptions,
+  requireWorkJobExecutor,
+  requireWorkJobResult,
+} from "../src/dispatch-validators.js";
 import type { ProjectTopology } from "../src/project-topology.js";
-import { normalizePullRequest, parseGitHubIssues, parsePullRequests } from "../src/adapters/github.js";
+import { githubIssueCreateBody, normalizePullRequest, parseGitHubIssues, parsePullRequests } from "../src/adapters/github.js";
 import { currentUserBacklogJql, currentUserOpenSprintJql, parseJiraCommentUrl, parseJiraIssue, parseJiraSearch } from "../src/adapters/jira.js";
-import { DesktopActionRouter } from "../desktop/action-router.js";
-import { PiAgentOrchestrator } from "../desktop/pi-agent-orchestrator.js";
-import { PiSessionDriver } from "../desktop/pi-session-driver.js";
-import { PiSdkSessionRunner } from "../desktop/pi-sdk-runner.js";
+import { testWorkRuntime, configString, legacyHostConfig, legacyHostTopology, execFileAsync } from "./helpers/test-fixtures.js";
+import { DesktopActionRouter, isDesktopAction } from "../desktop/action-router.js";
+import { desktopActionValues } from "../desktop/action-types.js";
+import { LruMap } from "../desktop/lru-map.js";
+import {
+  desktopAutoflowReconcileIntervals,
+  nextAutoflowReconcileDelay,
+  runEnabledProjectAutoflowReconcile,
+} from "../desktop/autoflow-reconcile.js";
+import { PiSessionDriver } from "../src/pi-session-driver.js";
+import { FLOW_PI_AGENT_TOOLS, PiSdkSessionRunner, childRunnerSource } from "../src/pi-sdk-runner.js";
+import { ClaudeAgentRunner } from "../src/claude-agent-runner.js";
+import { ClaudeSessionDriver } from "../src/claude-session-driver.js";
 import { DesktopProjectRegistry } from "../desktop/project-registry.js";
+import type { DesktopProjectRecord } from "../desktop/project-registry.js";
+import type { DesktopProjectSurface } from "../desktop/route-types.js";
 import { DesktopPromptRouter } from "../desktop/prompt-router.js";
+import { defaultDesktopRefreshIntervals, desktopRefreshIntervalsFromSettings } from "../desktop/renderer/refresh-settings.js";
+import { registerWorkRoutes } from "../desktop/work-routes.js";
+import { registerStaticRoutes } from "../desktop/static-routes.js";
 import { projectThemeFor } from "../src/theme/project-theme.js";
 
-const execFileAsync = promisify(execFile);
 
-const legacyHostConfig = flowConfigSchema.parse({
-  version: "1",
-  project: { name: "Legacy Host Fixture" },
-  topology: {
-    repos: {
-      main: { name: "HostProject", baseBranch: "main" },
-      web_app: { name: "web-app", baseBranch: "develop", pathFromRoot: "web-app" },
-      mobile_app: { name: "mobile-app", baseBranch: "develop", pathFromRoot: "mobile-app" },
-      public_api: { name: "public-api", baseBranch: "develop", pathFromRoot: "public-api" },
-      app_api: { name: "app-api", baseBranch: "develop", pathFromRoot: "app-api" },
-      core_database: { name: "core-database", baseBranch: "develop", pathFromRoot: "core-database" },
-    },
-    branchPattern: "{kind}/{issueRef}-{slug}",
-    pullRequestUrlPattern: "https://github.com/ExampleOrg/{repoName}/pull/{number}",
-    issueInference: [
-      { repo: "main", keywords: ["flow", "workflow workRuntime", "worker executor"] },
-      { repo: "web_app", keywords: ["web-app", "pwa", "frontend", "react", "vite", "browser ui"] },
-      { repo: "mobile_app", keywords: ["mobile-app", "ios", "swift", "xcode", "iphone"] },
-      { repo: "public_api", keywords: ["public-api", "public api", "request-export", "endpoint contract", "nx workspace"] },
-      { repo: "app_api", keywords: ["app-api", "provider", "agi", "partnercloud", "partner", "celery", "controller data", "controller-data", "pixi", "flask"] },
-      { repo: "core_database", keywords: ["core-database", "stored procedure", "sproc", "sql revision", "sql trigger"] },
-    ],
-  },
-  issueTracker: { type: "jira", projectKey: "ISSUE", siteUrl: "https://example.atlassian.net" },
-  collaboration: { type: "github", owner: "ExampleOrg" },
-});
-const legacyHostTopology = configToProjectTopology(legacyHostConfig);
-
-function testWorkRuntime(options: ConstructorParameters<typeof FlowWorkRuntime>[0]): FlowWorkRuntime {
-  return new FlowWorkRuntime({
-    topology: legacyHostTopology,
-    defaultJiraProjectKey: configString(legacyHostConfig.issueTracker, "projectKey"),
-    ...options,
-  });
+function desktopProjectRecordStub(input: Partial<DesktopProjectRecord>): DesktopProjectRecord {
+  return {
+    id: input.id ?? "project",
+    root: input.root ?? "/tmp/project",
+    name: input.name ?? input.id ?? "project",
+    configPath: input.configPath ?? "/tmp/project/.flow/config.yaml",
+    valid: input.valid ?? true,
+    addedAt: input.addedAt ?? "2026-05-31T00:00:00.000Z",
+    lastOpenedAt: input.lastOpenedAt ?? "2026-05-31T00:00:00.000Z",
+    icon: input.icon,
+    error: input.error,
+  };
 }
 
-function configString(config: Record<string, unknown> | undefined, key: string): string | undefined {
-  const value = config?.[key];
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+function desktopProjectRegistryStub(projects: DesktopProjectRecord[]): DesktopProjectRegistry {
+  return {
+    listProjects: async () => projects,
+    activeProject: async () => projects.find((project) => project.valid) ?? projects[0],
+  } as unknown as DesktopProjectRegistry;
+}
+
+class MemoryAutoflowRunnerState {
+  private readonly values = new Map<string, unknown>();
+
+  async getProjectState<T = unknown>(projectId: string, key: string): Promise<T | undefined> {
+    return this.values.get(`${projectId}:${key}`) as T | undefined;
+  }
+
+  async setProjectState(projectId: string, key: string, value: unknown): Promise<void> {
+    this.values.set(`${projectId}:${key}`, value);
+  }
+}
+
+function desktopProjectSurfaceStub(
+  queue: Pick<WorkItem, "ref" | "state">[],
+  tick: () => void | Promise<void> = () => {},
+  autoflowEnabled = true,
+): DesktopProjectSurface {
+  return {
+    configured: {
+      runtime: {
+        inspectQueue: async () => queue,
+      },
+    },
+    autoflowRunner: {
+      status: async () => ({
+        enabled: autoflowEnabled,
+        maxConcurrency: 5,
+        activeCount: 0,
+        issues: {},
+        summary: autoflowEnabled ? "Autoflow idle." : "Autoflow is paused.",
+        updatedAt: nowIso(),
+      }),
+      tick: async () => {
+        await tick();
+        return {
+          enabled: autoflowEnabled,
+          maxConcurrency: 5,
+          activeCount: 0,
+          issues: {},
+          summary: "Autoflow idle.",
+          updatedAt: nowIso(),
+        };
+      },
+    },
+  } as unknown as DesktopProjectSurface;
+}
+
+async function listenExpress(app: Express): Promise<{ url: string; close: () => Promise<void> }> {
+  const server = await new Promise<Server>((resolveServer, reject) => {
+    const listener = app.listen(0, "127.0.0.1", () => resolveServer(listener));
+    listener.on("error", reject);
+  });
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  return {
+    url: `http://127.0.0.1:${address.port}`,
+    close: () => new Promise((resolveClose, reject) => {
+      server.close((error) => error ? reject(error) : resolveClose());
+    }),
+  };
+}
+
+async function approveIssueIntake(
+  runtime: FlowWorkRuntime,
+  sessionId: string,
+  options: CreateIssueOptions,
+): Promise<void> {
+  const intake = await runtime.intakeIssue(sessionId, { ...options, dryRun: true });
+  const reviewJob = intake.reviewJob;
+  if (!reviewJob) assert.fail("expected issue intake review job");
+  await runtime.recordWorkJobResult(sessionId, {
+    jobId: reviewJob.id,
+    issueRef: reviewJob.issueRef,
+    repoKey: reviewJob.repoKey,
+    workType: reviewJob.workType,
+    status: "succeeded",
+    summary: "Executor approved issue intake.",
+    evidence: ["Executor reviewed duplicate candidates."],
+    completedAt: nowIso(),
+  });
 }
 
 async function commandPath(command: string): Promise<string> {
@@ -103,6 +219,357 @@ async function commandPath(command: string): Promise<string> {
   if (!first) throw new Error(`Could not resolve ${command}.`);
   return first;
 }
+
+async function captureJsonCli(
+  argv: string[],
+  options: {
+    stdin?: NodeJS.ReadableStream;
+    route?: JsonCliOptions["route"];
+  } = {},
+): Promise<{ exitCode: string | number | undefined; payload: any; routeCalls: number }> {
+  const originalArgv = process.argv;
+  const originalExitCode = process.exitCode;
+  const originalWrite = process.stdout.write;
+  const stdinDescriptor = Object.getOwnPropertyDescriptor(process, "stdin");
+  let output = "";
+  let routeCalls = 0;
+
+  process.argv = ["node", "flow", ...argv];
+  process.exitCode = undefined;
+  process.stdout.write = ((chunk: string | Uint8Array, encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void), callback?: (error?: Error | null) => void) => {
+    output += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+    const done = typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
+    done?.();
+    return true;
+  }) as typeof process.stdout.write;
+  if (options.stdin) {
+    Object.defineProperty(process, "stdin", { value: options.stdin, configurable: true });
+  }
+
+  try {
+    await runJsonCli({
+      manifest: () => ({ targets: [] }),
+      route: async (request, context) => {
+        routeCalls += 1;
+        if (options.route) return options.route(request, context);
+        return { ok: true };
+      },
+    });
+    return {
+      exitCode: process.exitCode,
+      payload: parseCapturedJsonCliOutput(output),
+      routeCalls,
+    };
+  } finally {
+    process.argv = originalArgv;
+    process.exitCode = originalExitCode;
+    process.stdout.write = originalWrite;
+    if (stdinDescriptor) Object.defineProperty(process, "stdin", stdinDescriptor);
+  }
+}
+
+function parseCapturedJsonCliOutput(output: string): any {
+  const start = output.indexOf('{"ok"');
+  if (start === -1) {
+    throw new Error(`JSON CLI did not write a response envelope: ${JSON.stringify(output)}`);
+  }
+  const end = output.indexOf("\n", start);
+  const json = end === -1 ? output.slice(start) : output.slice(start, end);
+  return JSON.parse(json);
+}
+
+function projectedWorkSubject(overrides: Partial<ProjectedWorkSubject> = {}): ProjectedWorkSubject {
+  return {
+    subject: { type: "issue", ref: "GH-266" },
+    state: "queued",
+    claims: [],
+    blockers: [],
+    links: [],
+    records: [],
+    handoffs: [],
+    ...overrides,
+  };
+}
+
+async function waitForCondition(condition: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (condition()) return;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 1));
+  }
+  assert.fail("Timed out waiting for condition.");
+}
+
+test("Flow layout paths resolve under the project root", () => {
+  const root = join(tmpdir(), "Flow Root With Spaces");
+
+  assert.equal(flowConfigPath(root), join(resolve(root), ".flow", "config.yaml"));
+  assert.equal(flowWorkflowLedgerPath(root), join(resolve(root), ".flow", "ledger", "workflow.jsonl"));
+  assert.equal(flowContextProjectionPath(root), join(resolve(root), ".flow", "ledger", "context.json"));
+  assert.equal(flowIssueProjectionPath(root, "GH-267"), join(resolve(root), ".flow", "ledger", "issues", "GH-267.json"));
+});
+
+test("Flow layout sanitizes special characters in issue projection refs", () => {
+  const root = join(tmpdir(), "flow-layout-special");
+  const issueRef = "GH/267:bad?name*with spaces";
+  const expectedFileName = "GH_267_bad_name_with_spaces";
+
+  assert.equal(flowIssueProjectionFileName(issueRef), expectedFileName);
+  assert.equal(flowIssueProjectionPath(root, issueRef), join(resolve(root), ".flow", "ledger", "issues", `${expectedFileName}.json`));
+  assert.equal(flowUserIssueProjectionPath(root, issueRef), join(flowUserStateRoot(root), "ledger", "issues", `${expectedFileName}.json`));
+});
+
+test("Flow layout uses a stable fallback file name for empty issue refs", () => {
+  const root = join(tmpdir(), "flow-layout-empty-ref");
+
+  assert.equal(flowIssueProjectionFileName(""), "issue");
+  assert.equal(flowIssueProjectionFileName("///"), "___");
+  assert.equal(flowIssueProjectionPath(root, ""), join(resolve(root), ".flow", "ledger", "issues", "issue.json"));
+});
+
+test("Flow user state root includes the project basename and truncated SHA-256 digest", () => {
+  const root = resolve(join(tmpdir(), "flow layout digest"));
+  const digest = createHash("sha256").update(root).digest("hex").slice(0, 16);
+  const userStateRoot = flowUserStateRoot(root);
+
+  assert.equal(basename(userStateRoot), `${basename(root)}-${digest}`);
+  assert.equal(digest.length, 16);
+  assert.equal(flowUserConfigPath(root), join(userStateRoot, "config.yaml"));
+  assert.equal(flowUserRuntimePath(root), join(userStateRoot, "runtime"));
+  assert.equal(flowUserWorkflowLedgerPath(root), join(userStateRoot, "ledger", "workflow.jsonl"));
+  assert.equal(flowUserWorkflowLedgerDatabasePath(root), join(userStateRoot, "ledger", "workflow.db"));
+  assert.equal(flowUserContextProjectionPath(root), join(userStateRoot, "ledger", "context.json"));
+});
+
+test("Flow path resolver keeps absolute paths and resolves relative paths from the project root", () => {
+  const root = resolve(join(tmpdir(), "flow-layout-resolve"));
+  const absolute = join(root, "outside", "config.yaml");
+
+  assert.equal(resolveFlowPath(root, absolute), absolute);
+  assert.equal(resolveFlowPath(root, join(".flow", "config.yaml")), flowConfigPath(root));
+  assert.equal(resolveFlowPath(root, "config.yaml"), join(root, "config.yaml"));
+});
+
+test("Work state policy allows completion when blockers and readiness are clear", () => {
+  const projection = projectedWorkSubject();
+
+  assert.deepEqual(canCompleteWork({ projection }), { accepted: true, blockers: [] });
+  assert.deepEqual(canCompleteWork({ projection, readinessPassed: true }), { accepted: true, blockers: [] });
+});
+
+test("Work state policy blocks completion for unresolved blockers", () => {
+  const projection = projectedWorkSubject({
+    blockers: [{
+      eventId: "ask-1",
+      actorId: "executor",
+      askedAt: nowIso(),
+    }],
+  });
+
+  assert.deepEqual(canCompleteWork({ projection }), {
+    accepted: false,
+    blockers: ["Unresolved blockers remain."],
+  });
+});
+
+test("Work state policy requires linked pull requests for code-producing completion", () => {
+  const projection = projectedWorkSubject();
+  const linkedProjection = projectedWorkSubject({
+    links: [{
+      eventId: "link-1",
+      type: "code_review",
+      target: { type: "pull_request", ref: "https://github.com/camden-lowrance/flow/pull/266" },
+      linkedAt: nowIso(),
+    }],
+  });
+
+  assert.deepEqual(canCompleteWork({ projection, codeProducing: true }), {
+    accepted: false,
+    blockers: ["Code-producing work requires a linked pull request."],
+  });
+  assert.deepEqual(canCompleteWork({ projection: linkedProjection, codeProducing: true }), { accepted: true, blockers: [] });
+});
+
+test("Work state policy blocks completion when readiness has failed", () => {
+  const projection = projectedWorkSubject();
+
+  assert.deepEqual(canCompleteWork({ projection, readinessPassed: false }), {
+    accepted: false,
+    blockers: ["Readiness checks have not passed."],
+  });
+});
+
+test("Work state policy reports every completion blocker together", () => {
+  const projection = projectedWorkSubject({
+    blockers: [{
+      eventId: "ask-1",
+      actorId: "executor",
+      askedAt: nowIso(),
+    }],
+  });
+
+  assert.deepEqual(canCompleteWork({ projection, codeProducing: true, readinessPassed: false }), {
+    accepted: false,
+    blockers: [
+      "Unresolved blockers remain.",
+      "Code-producing work requires a linked pull request.",
+      "Readiness checks have not passed.",
+    ],
+  });
+});
+
+test("Work state policy allows claims for unclaimed work and optional parallel claims", () => {
+  const claimed = projectedWorkSubject({
+    state: "running",
+    claims: [{
+      eventId: "claim-1",
+      actorId: "executor",
+      claimedAt: nowIso(),
+    }],
+  });
+
+  assert.deepEqual(canClaimWork(projectedWorkSubject()), { accepted: true, blockers: [] });
+  assert.deepEqual(canClaimWork(claimed, { allowParallelClaims: true }), { accepted: true, blockers: [] });
+});
+
+test("Work state policy blocks claims for completed or actively claimed work", () => {
+  const completed = projectedWorkSubject({ state: "done", completedAt: nowIso(), completedByEventId: "done-1" });
+  const claimed = projectedWorkSubject({
+    state: "running",
+    claims: [{
+      eventId: "claim-1",
+      actorId: "executor",
+      claimedAt: nowIso(),
+    }],
+  });
+
+  assert.deepEqual(canClaimWork(completed), {
+    accepted: false,
+    blockers: ["Work is already complete."],
+  });
+  assert.deepEqual(canClaimWork(claimed), {
+    accepted: false,
+    blockers: ["An active claim already exists."],
+  });
+});
+
+test("Work state policy resolves only existing unresolved blockers", () => {
+  const projection = projectedWorkSubject({
+    blockers: [
+      {
+        eventId: "ask-open",
+        actorId: "executor",
+        askedAt: nowIso(),
+      },
+      {
+        eventId: "ask-resolved",
+        actorId: "executor",
+        askedAt: nowIso(),
+        resolvedByEventId: "resolve-1",
+        resolvedAt: nowIso(),
+      },
+    ],
+  });
+
+  assert.deepEqual(canResolveBlocker(projection, "ask-open"), { accepted: true, blockers: [] });
+  assert.deepEqual(canResolveBlocker(projection, "ask-missing"), {
+    accepted: false,
+    blockers: ["No blocker exists for ask event ask-missing."],
+  });
+  assert.deepEqual(canResolveBlocker(projection, "ask-resolved"), {
+    accepted: false,
+    blockers: ["Blocker ask-resolved is already resolved."],
+  });
+});
+
+test("Runtime utils normalize repo keys and remove duplicates", () => {
+  assert.equal(normalizeRepoKey("web-app"), "web_app");
+  assert.equal(normalizeRepoKey("Flow App/API"), "Flow_App_API");
+  assert.equal(normalizeRepoKey("already_valid_123"), "already_valid_123");
+
+  assert.deepEqual(normalizeRepoKeys([" web-app ", "web_app", "", "api/service", "api_service"]), ["web_app", "api_service"]);
+});
+
+test("Runtime utils return only existing non-empty strings", () => {
+  assert.equal(existingString("value"), "value");
+  assert.equal(existingString(""), undefined);
+  assert.equal(existingString(123), undefined);
+  assert.equal(existingString(null), undefined);
+});
+
+test("Runtime utils parse metadata booleans", () => {
+  assert.equal(metadataBoolean(true), true);
+  assert.equal(metadataBoolean("true"), true);
+  assert.equal(metadataBoolean("1"), true);
+  assert.equal(metadataBoolean(false), false);
+  assert.equal(metadataBoolean("false"), false);
+  assert.equal(metadataBoolean("0"), false);
+  assert.equal(metadataBoolean("yes"), undefined);
+});
+
+test("Runtime utils parse metadata numbers", () => {
+  assert.equal(metadataNumber(12), 12);
+  assert.equal(metadataNumber("12.5"), 12.5);
+  assert.equal(metadataNumber(""), 0);
+  assert.equal(metadataNumber("not-a-number"), undefined);
+  assert.equal(metadataNumber(Number.POSITIVE_INFINITY), undefined);
+});
+
+test("Runtime utils parse metadata string arrays", () => {
+  assert.deepEqual(metadataStringArray(["one", 2, "", false]), ["one", "2", "false"]);
+  assert.deepEqual(metadataStringArray('["one","two",""]'), ["one", "two"]);
+  assert.deepEqual(metadataStringArray("one, two, , three"), ["one", "two", "three"]);
+  assert.equal(metadataStringArray(""), undefined);
+  assert.equal(metadataStringArray("{\"not\":\"array\"}"), undefined);
+  assert.equal(metadataStringArray(123), undefined);
+});
+
+test("Runtime utils compare metadata values", () => {
+  assert.equal(metadataValueEquals("same", "same"), true);
+  assert.equal(metadataValueEquals(1, "1"), false);
+  assert.equal(metadataValueEquals(["a", "b"], ["a", "b"]), true);
+  assert.equal(metadataValueEquals(["a", "b"], ["b", "a"]), false);
+  assert.equal(metadataValueEquals(undefined, []), true);
+});
+
+test("Runtime utils mapWithConcurrency preserves result order and limits active work", async () => {
+  const started: number[] = [];
+  const release: Array<(() => void) | undefined> = [];
+  const work = mapWithConcurrency([10, 20, 30], 2, async (item, index) => {
+    started.push(index);
+    await new Promise<void>((resolvePromise) => {
+      release[index] = resolvePromise;
+    });
+    return item * 2;
+  });
+
+  await waitForCondition(() => started.length === 2);
+  assert.deepEqual(started, [0, 1]);
+
+  release[0]?.();
+  await waitForCondition(() => started.length === 3);
+  assert.deepEqual(started, [0, 1, 2]);
+
+  release[1]?.();
+  release[2]?.();
+  assert.deepEqual(await work, [20, 40, 60]);
+});
+
+test("Runtime utils mapWithConcurrency handles empty input and coerces low concurrency to one worker", async () => {
+  assert.deepEqual(await mapWithConcurrency([], 3, async (item: number) => item), []);
+
+  let active = 0;
+  let maxActive = 0;
+  const results = await mapWithConcurrency([1, 2, 3], 0, async (item) => {
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 1));
+    active -= 1;
+    return item + 1;
+  });
+
+  assert.deepEqual(results, [2, 3, 4]);
+  assert.equal(maxActive, 1);
+});
 
 test("Typed work contracts and registry validate supported jobs", () => {
   const workTypes = createDefaultFlowWorkTypeRegistry();
@@ -171,11 +638,13 @@ test("Flow config schema validates topology and adapter declarations", () => {
     },
     issueTracker: { type: "github", owner: "example", repo: "example" },
     collaboration: { type: "github", owner: "example" },
+    runtime: { store: { type: "sqlite" } },
   });
 
   assert.equal(config.project.name, "Example");
   assert.equal(config.project.icon, "./assets/example.svg");
   assert.equal(config.issueTracker?.type, "github");
+  assert.equal(config.runtime?.store?.type, "sqlite");
   assert.equal(config.topology.issueInference[0].repo, "main");
 
   const localConfig = flowConfigSchema.parse({
@@ -225,6 +694,17 @@ test("Flow config schema validates topology and adapter declarations", () => {
       issueTracker: { type: "github", owner: "example", repo: "example", activeLabels: ["ready", ""] },
     }),
     /activeLabels must be an array/,
+  );
+  assert.throws(() =>
+    flowConfigSchema.parse({
+      version: "1",
+      project: { name: "Bad store" },
+      topology: {
+        repos: { main: { name: "example" } },
+      },
+      runtime: { store: { type: "postgres" } },
+    }),
+    /Invalid option/,
   );
 });
 
@@ -378,7 +858,9 @@ test("Flow config bootstrap creates hidden user-state config by default", async 
     assert.equal(config.issueTracker?.type, "local");
     assert.equal(config.collaboration?.type, "none");
     assert.equal(config.sourceControl?.type, "git");
-    assert.equal(config.ledger?.type, "flow");
+    assert.equal(config.ledger?.type, "sql");
+    assert.equal(configString(config.ledger, "dialect"), "sqlite");
+    assert.equal(config.runtime?.store?.type, "sqlite");
     assert.equal(config.runtime?.stateDir, flowUserRuntimePath(root));
 
     await assert.rejects(
@@ -417,6 +899,177 @@ test("Flow config bootstrap keeps providers local when a GitHub remote exists", 
   assert.equal(config.sourceControl?.type, "git");
 });
 
+test("Configured runtime uses Kysely SQLite for SQL workflow ledger", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-sql-ledger-config-"));
+  const config = flowConfigSchema.parse({
+    version: "1",
+    project: { name: "SQL Ledger Fixture" },
+    topology: {
+      repos: {
+        main: { name: "flow", baseBranch: "main" },
+      },
+    },
+    issueTracker: { type: "local" },
+    collaboration: { type: "none" },
+    sourceControl: { type: "git" },
+    ledger: { type: "sql", dialect: "sqlite", path: ".flow/ledger/workflow.db" },
+    runtime: { store: { type: "sqlite" } },
+  });
+
+  const configured = createConfiguredWorkRuntime({ projectRoot: root, flowConfig: config });
+  await configured.workflowLedger.writeIssue({
+    ref: "FLOW-SQL-1",
+    title: "SQL workflow ledger",
+    repoKeys: ["main"],
+    state: "queued",
+    metadata: {},
+  });
+
+  const reloaded = createConfiguredWorkRuntime({ projectRoot: root, flowConfig: config });
+  assert.match(configured.workflowLedgerPath, /workflow\.db$/);
+  assert.equal((await reloaded.workflowLedger.readIssue("FLOW-SQL-1"))?.title, "SQL workflow ledger");
+
+  await (configured.workflowLedger as { close?(): Promise<void> }).close?.();
+  await (reloaded.workflowLedger as { close?(): Promise<void> }).close?.();
+});
+
+test("Configured SQL workflow ledger imports existing JSONL records idempotently", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-sql-ledger-migrate-"));
+  const jsonlPath = join(root, ".flow", "ledger", "workflow.jsonl");
+  await mkdir(dirname(jsonlPath), { recursive: true });
+  const completedAt = nowIso();
+  const issue = {
+    ref: "FLOW-MIG-1",
+    title: "Migrate JSONL",
+    repoKeys: ["main"],
+    state: "queued",
+    metadata: {},
+  };
+  const workerResult = {
+    taskId: "task-migrate-1",
+    issueRef: "FLOW-MIG-1",
+    repoKey: "main",
+    executor: "live_agent_thread",
+    status: "succeeded",
+    summary: "Imported.",
+    changedFiles: ["src/runtime-factory.ts"],
+    testsRun: ["npm test"],
+    blockers: [],
+    completedAt,
+  };
+  await writeFile(jsonlPath, [
+    JSON.stringify({ kind: "issue", value: issue }),
+    JSON.stringify({ kind: "workerResult", value: workerResult }),
+    "",
+  ].join("\n"), "utf8");
+  const config = flowConfigSchema.parse({
+    version: "1",
+    project: { name: "SQL Migration Fixture" },
+    topology: {
+      repos: {
+        main: { name: "flow", baseBranch: "main" },
+      },
+    },
+    issueTracker: { type: "local" },
+    collaboration: { type: "none" },
+    sourceControl: { type: "git" },
+    ledger: { type: "sql", dialect: "sqlite", path: ".flow/ledger/workflow.db" },
+    runtime: { store: { type: "sqlite" } },
+  });
+
+  const configured = createConfiguredWorkRuntime({ projectRoot: root, flowConfig: config });
+  assert.equal((await configured.workflowLedger.readIssue("FLOW-MIG-1"))?.title, "Migrate JSONL");
+  assert.equal((await configured.workflowLedger.listWorkerResults("FLOW-MIG-1")).length, 1);
+
+  const reloaded = createConfiguredWorkRuntime({ projectRoot: root, flowConfig: config });
+  assert.equal((await reloaded.workflowLedger.listWorkerResults("FLOW-MIG-1")).length, 1);
+  assert.match(await readFile(jsonlPath, "utf8"), /FLOW-MIG-1/);
+});
+
+test("Configured workflow ledger defaults to SQLite in user state", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-default-sql-ledger-"));
+  const config = flowConfigSchema.parse({
+    version: "1",
+    project: { name: "Default SQL Ledger Fixture" },
+    topology: {
+      repos: {
+        main: { name: "flow", baseBranch: "main" },
+      },
+    },
+    issueTracker: { type: "local" },
+    collaboration: { type: "none" },
+    sourceControl: { type: "git" },
+    runtime: { store: { type: "sqlite" } },
+  });
+
+  const configured = createConfiguredWorkRuntime({ projectRoot: root, flowConfig: config });
+  await configured.workflowLedger.writeIssue({
+    ref: "FLOW-DEFAULT-SQL-1",
+    title: "Default SQL workflow ledger",
+    repoKeys: ["main"],
+    state: "queued",
+    metadata: {},
+  });
+
+  assert.equal(configured.workflowLedgerPath, flowUserWorkflowLedgerDatabasePath(root));
+  assert.equal((await configured.workflowLedger.readIssue("FLOW-DEFAULT-SQL-1"))?.title, "Default SQL workflow ledger");
+  assert.equal(existsSync(join(root, ".flow", "ledger", "workflow.jsonl")), false);
+  assert.equal(existsSync(join(root, ".flow", "ledger", "issues", "FLOW-DEFAULT-SQL-1.json")), false);
+
+  await (configured.workflowLedger as { close?(): Promise<void> }).close?.();
+});
+
+test("Configured runtime can select Postgres SQL workflow ledger from urlSecret", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-postgres-ledger-config-"));
+  const original = process.env.FLOW_TEST_DATABASE_URL;
+  const config = flowConfigSchema.parse({
+    version: "1",
+    project: { name: "Postgres Ledger Fixture" },
+    topology: {
+      repos: {
+        main: { name: "flow", baseBranch: "main" },
+      },
+    },
+    issueTracker: { type: "local" },
+    collaboration: { type: "none" },
+    sourceControl: { type: "git" },
+    ledger: { type: "sql", dialect: "postgres", urlSecret: "FLOW_TEST_DATABASE_URL" },
+    runtime: { store: { type: "sqlite" } },
+  });
+  delete process.env.FLOW_TEST_DATABASE_URL;
+  assert.throws(
+    () => createConfiguredWorkRuntime({ projectRoot: root, flowConfig: config }),
+    /Postgres SQL workflow ledger requires/,
+  );
+
+  process.env.FLOW_TEST_DATABASE_URL = "postgres://flow@example.local/flow";
+  const configured = createConfiguredWorkRuntime({ projectRoot: root, flowConfig: config });
+  assert.equal(configured.workflowLedgerPath, "<postgres>");
+  await (configured.workflowLedger as { close?(): Promise<void> }).close?.();
+
+  if (original === undefined) delete process.env.FLOW_TEST_DATABASE_URL;
+  else process.env.FLOW_TEST_DATABASE_URL = original;
+});
+
+test("CLI issue resolver hydrates provider issue refs before workflow commands", async () => {
+  const hydrated: WorkItem = {
+    ref: "GH-165",
+    title: "Harden Autoflow into a real project runner",
+    repoKeys: ["flow"],
+    state: "queued",
+    metadata: { issueType: "story", branchKind: "feature" },
+  };
+
+  const resolved = await resolveCliIssue({
+    inspectQueue: async () => [],
+    inspectIssue: async () => hydrated,
+  }, "GH-165");
+
+  assert.equal(resolved.title, "Harden Autoflow into a real project runner");
+  assert.deepEqual(resolved.repoKeys, ["flow"]);
+  assert.equal(resolved.metadata.branchKind, "feature");
+});
+
 test("Flow CLI core works with only git available on PATH", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-git-only-"));
   await execFileAsync("git", ["init"], { cwd: root });
@@ -446,17 +1099,36 @@ test("Flow CLI core works with only git available on PATH", async () => {
   assert.equal(config?.sourceControl?.type, "git");
   assert.equal(config?.runtime && "worker" in config.runtime, false);
 
-  const issue = await callFlow({
+  const issueRequest = {
     op: "issue",
     mode: "create",
     summary: "Git-only Flow core",
     issueType: "Task",
+  };
+  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true });
+  const reviewJob = intake.reviewJob as { id: string; issueRef: string; repoKey: string; workType: string };
+  await callFlow({
+    op: "runtime",
+    method: "recordWorkJobResult",
+    params: {
+      result: {
+        jobId: reviewJob.id,
+        issueRef: reviewJob.issueRef,
+        repoKey: reviewJob.repoKey,
+        workType: reviewJob.workType,
+        status: "succeeded",
+        summary: "Executor approved issue intake.",
+        evidence: ["CLI test executor review."],
+        completedAt: nowIso(),
+      },
+    },
   });
+  const issue = await callFlow(issueRequest);
   assert.equal(issue.title, "Git-only Flow core");
 
   const manifest = await callFlow({ op: "manifest", target: "issue" });
   const issueTrackerManifest = manifest.issueTracker as Record<string, unknown>;
-  assert.deepEqual(manifest.modes, ["view", "select", "create", "route", "adoptBranch", "adoptWorkspace"]);
+  assert.deepEqual(manifest.modes, ["view", "select", "intake", "create", "route", "adoptBranch", "adoptWorkspace", "triage"]);
   assert.equal(issueTrackerManifest.type, "local");
   assert.match(String(issueTrackerManifest.refHint), /^FLOW-GIT-ONLY-[A-Z0-9]+-123$/);
   assert.equal(issueTrackerManifest.sourceOfTruth, ".flow/config.yaml");
@@ -467,12 +1139,259 @@ test("Flow CLI core works with only git available on PATH", async () => {
     create: true,
     transition: true,
     comments: true,
+    search: true,
+    tagging: true,
     planningLane: false,
+    triage: true,
   });
 
   const viewed = await callFlow({ op: "issue", mode: "view", id: issue.ref });
   assert.equal(viewed.ref, issue.ref);
   assert.equal(viewed.title, "Git-only Flow core");
+});
+
+test("Flow CLI honors FLOW_ROOT when invoked from another directory", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-root-env-"));
+  const otherCwd = await mkdtemp(join(tmpdir(), "flow-root-env-cwd-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  const flowBin = join(process.cwd(), "bin", "flow");
+
+  const callFlow = async (body: Record<string, unknown>) => {
+    const { stdout } = await execFileAsync(process.execPath, [flowBin, JSON.stringify(body)], {
+      cwd: otherCwd,
+      env: { ...process.env, FLOW_ROOT: root },
+      maxBuffer: 20 * 1024 * 1024,
+    });
+    const parsed = JSON.parse(stdout) as { ok?: boolean; result?: unknown; error?: unknown };
+    if (parsed.ok === false) throw new Error(`Flow CLI failed: ${JSON.stringify(parsed.error)}`);
+    return parsed.result as Record<string, unknown>;
+  };
+
+  await callFlow({ op: "bootstrap", storage: "repo-tracked" });
+  const explained = await callFlow({ op: "config", mode: "explain" });
+
+  assert.equal(explained.path, flowConfigPath(root));
+});
+
+test("JSON CLI returns INVALID_JSON for malformed argv input", async () => {
+  const result = await captureJsonCli(["not-json"]);
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.payload.ok, false);
+  assert.equal(result.payload.error.code, "INVALID_JSON");
+  assert.equal(result.payload.error.details.body, "not-json");
+  assert.equal(result.routeCalls, 0);
+});
+
+test("JSON CLI returns BAD_REQUEST when op is missing", async () => {
+  const result = await captureJsonCli([JSON.stringify({ mode: "state" })]);
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.payload.ok, false);
+  assert.equal(result.payload.error.code, "BAD_REQUEST");
+  assert.equal(result.payload.error.message, "JSON body must include a non-empty string op.");
+  assert.deepEqual(result.payload.error.details.expected, { op: "string" });
+  assert.equal(result.routeCalls, 0);
+});
+
+test("JSON CLI returns BAD_ARGS for multiple body arguments", async () => {
+  const result = await captureJsonCli(["{}", "{}"]);
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.payload.ok, false);
+  assert.equal(result.payload.error.code, "BAD_ARGS");
+  assert.equal(result.payload.error.details.expected, "flow, flow manifest, or flow '<json-body>'");
+  assert.equal(result.routeCalls, 0);
+});
+
+test("JSON CLI returns RUNTIME_ERROR for route exceptions", async () => {
+  const result = await captureJsonCli([JSON.stringify({ op: "state" })], {
+    route: () => {
+      throw new Error("route exploded");
+    },
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.payload.ok, false);
+  assert.equal(result.payload.error.code, "RUNTIME_ERROR");
+  assert.equal(result.payload.error.message, "route exploded");
+  assert.deepEqual(result.payload.error.details, { op: "state" });
+  assert.equal(result.routeCalls, 1);
+});
+
+test("JSON CLI preserves JsonCliError details and manifest target", async () => {
+  const result = await captureJsonCli([JSON.stringify({ op: "review", target: "invalid" })], {
+    route: () => {
+      throw new JsonCliError("BAD_TARGET", "Unknown review target.", {
+        manifestTarget: "review",
+        details: { target: "invalid" },
+      });
+    },
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.payload.ok, false);
+  assert.equal(result.payload.error.code, "BAD_TARGET");
+  assert.equal(result.payload.error.manifest.body.target, "review");
+  assert.equal(result.payload.error.details.op, "review");
+  assert.equal(result.payload.error.details.target, "invalid");
+  assert.deepEqual(result.payload.error.details.manifest, { op: "manifest", target: "review" });
+  assert.equal(result.routeCalls, 1);
+});
+
+test("JSON CLI returns UNHANDLED_ERROR when stdin cannot be read", async () => {
+  const stdin = new Readable({
+    read() {
+      this.destroy(new Error("stdin exploded"));
+    },
+  });
+  const result = await captureJsonCli([], { stdin });
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.payload.ok, false);
+  assert.equal(result.payload.error.code, "UNHANDLED_ERROR");
+  assert.equal(result.payload.error.message, "stdin exploded");
+  assert.equal(result.routeCalls, 0);
+});
+
+test("JSON CLI routes valid stdin bodies with stdin source context", async () => {
+  const stdin = Readable.from([JSON.stringify({ op: "state" })]);
+  const result = await captureJsonCli([], {
+    stdin,
+    route: (_request, context) => ({ source: context.source }),
+  });
+
+  assert.equal(result.exitCode, undefined);
+  assert.deepEqual(result.payload, {
+    ok: true,
+    op: "state",
+    result: { source: "stdin" },
+  });
+  assert.equal(result.routeCalls, 1);
+});
+
+test("Flow CLI can record evidence and documentation in one workflow call", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-record-acceptance-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  const flowCli = join(process.cwd(), ".tmp", "test", "src", "flow.js");
+
+  const callFlow = async (body: Record<string, unknown>) => {
+    const { stdout } = await execFileAsync(process.execPath, [flowCli, JSON.stringify(body)], {
+      cwd: root,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+    const parsed = JSON.parse(stdout) as { ok?: boolean; result?: unknown; error?: unknown };
+    if (parsed.ok === false) throw new Error(`Flow CLI failed: ${JSON.stringify(parsed.error)}`);
+    return parsed.result as Record<string, unknown>;
+  };
+
+  await callFlow({ op: "bootstrap", storage: "repo-tracked" });
+  const issueRequest = {
+    op: "issue",
+    mode: "create",
+    summary: "Record acceptance",
+    issueType: "Task",
+  };
+  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true });
+  const reviewJob = intake.reviewJob as { id: string; issueRef: string; repoKey: string; workType: string };
+  await callFlow({
+    op: "runtime",
+    method: "recordWorkJobResult",
+    params: {
+      result: {
+        jobId: reviewJob.id,
+        issueRef: reviewJob.issueRef,
+        repoKey: reviewJob.repoKey,
+        workType: reviewJob.workType,
+        status: "succeeded",
+        summary: "Executor approved issue intake.",
+        evidence: ["CLI test executor review."],
+        completedAt: nowIso(),
+      },
+    },
+  });
+  const issue = await callFlow(issueRequest) as { ref: string };
+
+  const result = await callFlow({
+    op: "workflow",
+    mode: "recordAcceptance",
+    id: issue.ref,
+    evidenceSummary: "npm test passed",
+    documentationSummary: "No docs needed for CLI acceptance metadata.",
+    disposition: "not_needed",
+    criteria: ["tests"],
+  }) as { evidence: WorkItem; documentation: WorkItem };
+
+  assert.equal(result.evidence.metadata.evidenceSummary, "npm test passed");
+  assert.equal(result.documentation.metadata.documentationDisposition, "not_needed");
+});
+
+test("Flow CLI workflow recordResult and observe return next JSON commands", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-cli-next-json-commands-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  const flowCli = join(process.cwd(), ".tmp", "test", "src", "flow.js");
+
+  const callFlow = async (body: Record<string, unknown>) => {
+    const { stdout } = await execFileAsync(process.execPath, [flowCli, JSON.stringify(body)], {
+      cwd: root,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+    const parsed = JSON.parse(stdout) as { ok?: boolean; result?: unknown; error?: unknown };
+    if (parsed.ok === false) throw new Error(`Flow CLI failed: ${JSON.stringify(parsed.error)}`);
+    return parsed.result as Record<string, unknown>;
+  };
+
+  await callFlow({ op: "bootstrap", storage: "repo-tracked" });
+  const issueRequest = {
+    op: "issue",
+    mode: "create",
+    summary: "Observe JSON commands",
+    issueType: "Task",
+  };
+  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true });
+  const reviewJob = intake.reviewJob as { id: string; issueRef: string; repoKey: string; workType: string };
+  await callFlow({
+    op: "runtime",
+    method: "recordWorkJobResult",
+    params: {
+      result: {
+        jobId: reviewJob.id,
+        issueRef: reviewJob.issueRef,
+        repoKey: reviewJob.repoKey,
+        workType: reviewJob.workType,
+        status: "succeeded",
+        summary: "Executor approved issue intake.",
+        evidence: ["CLI test executor review."],
+        completedAt: nowIso(),
+      },
+    },
+  });
+  const issue = await callFlow(issueRequest) as { ref: string };
+
+  const result = await callFlow({
+    op: "workflow",
+    mode: "recordResult",
+    id: issue.ref,
+    repoKey: "main",
+    status: "succeeded",
+    summary: "Thread completed the change.",
+    changedFiles: ["src/work-runtime.ts"],
+    testsRun: ["npm run check"],
+  }) as { nextJsonCommands: Array<{ label: string; request: Record<string, unknown> }> };
+  const observed = await callFlow({
+    op: "workflow",
+    mode: "observe",
+    id: issue.ref,
+  }) as { nextJsonCommands: Array<{ label: string; request: Record<string, unknown> }> };
+
+  assert.deepEqual(result.nextJsonCommands.map((command) => command.request.mode), [
+    "recordEvidence",
+    "recordPullRequest",
+    "observe",
+    "advance",
+  ]);
+  assert.equal(observed.nextJsonCommands[0].request.mode, "recordEvidence");
+  assert.equal(observed.nextJsonCommands[0].request.id, issue.ref);
 });
 
 test("Flow workflow doctor strict mode exits nonzero when readiness is not ok", async () => {
@@ -501,12 +1420,32 @@ test("Flow workflow doctor strict mode exits nonzero when readiness is not ok", 
   assert.equal(bootstrap.exitCode, 0);
   assert.equal(bootstrap.payload.ok, true);
 
-  const created = await callFlow({
+  const issueRequest = {
     op: "issue",
     mode: "create",
     summary: "Strict doctor check",
     issueType: "Task",
+  };
+  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true });
+  const reviewJob = (intake.payload.result as { reviewJob?: { id: string; issueRef: string; repoKey: string; workType: string } }).reviewJob;
+  assert.ok(reviewJob);
+  await callFlow({
+    op: "runtime",
+    method: "recordWorkJobResult",
+    params: {
+      result: {
+        jobId: reviewJob.id,
+        issueRef: reviewJob.issueRef,
+        repoKey: reviewJob.repoKey,
+        workType: reviewJob.workType,
+        status: "succeeded",
+        summary: "Executor approved issue intake.",
+        evidence: ["CLI test executor review."],
+        completedAt: nowIso(),
+      },
+    },
   });
+  const created = await callFlow(issueRequest);
   assert.equal(created.exitCode, 0);
   assert.equal(created.payload.ok, true);
   const issue = created.payload.result as { ref: string };
@@ -531,6 +1470,446 @@ test("Flow workflow doctor strict mode exits nonzero when readiness is not ok", 
   const error = strict.payload.error as { code: string; details?: Record<string, unknown> };
   assert.equal(error.code, "DOCTOR_STRICT_FAILED");
   assert.equal(error.details?.status, "blocked");
+});
+
+test("Flow CLI review command returns local readiness state", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-review-local-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  const flowCli = join(process.cwd(), ".tmp", "test", "src", "flow.js");
+
+  const callFlow = async (body: Record<string, unknown>) => {
+    const { stdout } = await execFileAsync(process.execPath, [flowCli, JSON.stringify(body)], {
+      cwd: root,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+    const parsed = JSON.parse(stdout) as { ok?: boolean; result?: unknown; error?: unknown };
+    if (parsed.ok === false) throw new Error(`Flow CLI failed: ${JSON.stringify(parsed.error)}`);
+    return parsed.result as Record<string, unknown>;
+  };
+
+  await callFlow({ op: "bootstrap", storage: "repo-tracked" });
+  const issueRequest = {
+    op: "issue",
+    mode: "create",
+    summary: "Review local test",
+    issueType: "Task",
+  };
+  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true });
+  const reviewJob = intake.reviewJob as { id: string; issueRef: string; repoKey: string; workType: string };
+  await callFlow({
+    op: "runtime",
+    method: "recordWorkJobResult",
+    params: {
+      result: {
+        jobId: reviewJob.id,
+        issueRef: reviewJob.issueRef,
+        repoKey: reviewJob.repoKey,
+        workType: reviewJob.workType,
+        status: "succeeded",
+        summary: "Executor approved issue intake.",
+        evidence: ["CLI test executor review."],
+        completedAt: nowIso(),
+      },
+    },
+  });
+  const issue = await callFlow(issueRequest) as { ref: string };
+
+  const review = await callFlow({
+    op: "review",
+    id: issue.ref,
+  }) as { issueRef: string; state: string; repoKeys: string[]; readiness: { readyToAdvance: boolean; reviewReady: boolean; findings: unknown[] }; evidenceRecorded: boolean; documentationRecorded: boolean };
+
+  assert.equal(review.issueRef, issue.ref);
+  assert.ok(review.state);
+  assert.ok(Array.isArray(review.repoKeys));
+  assert.ok(typeof review.readiness === "object");
+  assert.ok(typeof review.readiness.readyToAdvance === "boolean");
+  assert.ok(typeof review.readiness.reviewReady === "boolean");
+  assert.ok(Array.isArray(review.readiness.findings));
+  assert.equal(review.evidenceRecorded, false);
+  assert.equal(review.documentationRecorded, false);
+});
+
+test("Flow CLI review command accepts explicit local target", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-review-local-explicit-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  const flowCli = join(process.cwd(), ".tmp", "test", "src", "flow.js");
+
+  const callFlow = async (body: Record<string, unknown>) => {
+    const { stdout } = await execFileAsync(process.execPath, [flowCli, JSON.stringify(body)], {
+      cwd: root,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+    const parsed = JSON.parse(stdout) as { ok?: boolean; result?: unknown; error?: unknown };
+    if (parsed.ok === false) throw new Error(`Flow CLI failed: ${JSON.stringify(parsed.error)}`);
+    return parsed.result as Record<string, unknown>;
+  };
+
+  await callFlow({ op: "bootstrap", storage: "repo-tracked" });
+  const issueRequest = {
+    op: "issue",
+    mode: "create",
+    summary: "Review local explicit target",
+    issueType: "Task",
+  };
+  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true });
+  const reviewJob = intake.reviewJob as { id: string; issueRef: string; repoKey: string; workType: string };
+  await callFlow({
+    op: "runtime",
+    method: "recordWorkJobResult",
+    params: {
+      result: {
+        jobId: reviewJob.id,
+        issueRef: reviewJob.issueRef,
+        repoKey: reviewJob.repoKey,
+        workType: reviewJob.workType,
+        status: "succeeded",
+        summary: "Executor approved issue intake.",
+        evidence: ["CLI test executor review."],
+        completedAt: nowIso(),
+      },
+    },
+  });
+  const issue = await callFlow(issueRequest) as { ref: string };
+
+  const review = await callFlow({
+    op: "review",
+    id: issue.ref,
+    target: "local",
+  }) as { issueRef: string; readiness: { readyToAdvance: boolean } };
+
+  assert.equal(review.issueRef, issue.ref);
+  assert.ok(typeof review.readiness.readyToAdvance === "boolean");
+});
+
+test("Flow CLI review command returns code_review state", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-review-code-review-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  const flowCli = join(process.cwd(), ".tmp", "test", "src", "flow.js");
+
+  const callFlow = async (body: Record<string, unknown>) => {
+    const { stdout } = await execFileAsync(process.execPath, [flowCli, JSON.stringify(body)], {
+      cwd: root,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+    const parsed = JSON.parse(stdout) as { ok?: boolean; result?: unknown; error?: unknown };
+    if (parsed.ok === false) throw new Error(`Flow CLI failed: ${JSON.stringify(parsed.error)}`);
+    return parsed.result as Record<string, unknown>;
+  };
+
+  await callFlow({ op: "bootstrap", storage: "repo-tracked" });
+  const issueRequest = {
+    op: "issue",
+    mode: "create",
+    summary: "Review code review test",
+    issueType: "Task",
+  };
+  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true });
+  const reviewJob = intake.reviewJob as { id: string; issueRef: string; repoKey: string; workType: string };
+  await callFlow({
+    op: "runtime",
+    method: "recordWorkJobResult",
+    params: {
+      result: {
+        jobId: reviewJob.id,
+        issueRef: reviewJob.issueRef,
+        repoKey: reviewJob.repoKey,
+        workType: reviewJob.workType,
+        status: "succeeded",
+        summary: "Executor approved issue intake.",
+        evidence: ["CLI test executor review."],
+        completedAt: nowIso(),
+      },
+    },
+  });
+  const issue = await callFlow(issueRequest) as { ref: string };
+
+  const review = await callFlow({
+    op: "review",
+    id: issue.ref,
+    target: "code_review",
+  }) as { issueRef: string; codeReviewRequired: boolean; collaboration: string; pullRequest: unknown; blockers: string[] };
+
+  assert.equal(review.issueRef, issue.ref);
+  assert.equal(review.codeReviewRequired, false);
+  assert.equal(review.collaboration, "none");
+  assert.equal(review.pullRequest, undefined);
+  assert.ok(Array.isArray(review.blockers));
+});
+
+test("Flow CLI review manifest includes review target", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-review-manifest-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  const flowCli = join(process.cwd(), ".tmp", "test", "src", "flow.js");
+
+  const callFlow = async (body: Record<string, unknown>) => {
+    const { stdout } = await execFileAsync(process.execPath, [flowCli, JSON.stringify(body)], {
+      cwd: root,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+    const parsed = JSON.parse(stdout) as { ok?: boolean; result?: unknown; error?: unknown };
+    if (parsed.ok === false) throw new Error(`Flow CLI failed: ${JSON.stringify(parsed.error)}`);
+    return parsed.result as Record<string, unknown>;
+  };
+
+  const manifest = await callFlow({ op: "manifest" }) as { targets: string[]; ops: Record<string, string> };
+  assert.ok(manifest.targets.includes("review"));
+  assert.ok(typeof manifest.ops.review === "string");
+
+  const reviewManifest = await callFlow({ op: "manifest", target: "review" }) as { target: string; targets: string[]; id: string };
+  assert.equal(reviewManifest.target, "review");
+  assert.deepEqual(reviewManifest.targets, ["local", "code_review"]);
+  assert.ok(typeof reviewManifest.id === "string");
+});
+
+test("Flow CLI review command rejects invalid target", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-review-bad-target-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  const flowCli = join(process.cwd(), ".tmp", "test", "src", "flow.js");
+
+  try {
+    const { stdout } = await execFileAsync(process.execPath, [flowCli, JSON.stringify({
+      op: "review",
+      id: "FLOW-1",
+      target: "invalid",
+    })], {
+      cwd: root,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+    const parsed = JSON.parse(stdout) as { ok?: boolean; error?: { code?: string } };
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.error?.code, "BAD_MODE");
+  } catch (error) {
+    const failed = error as { stdout?: string };
+    if (failed.stdout) {
+      const parsed = JSON.parse(failed.stdout) as { ok?: boolean; error?: { code?: string } };
+      assert.equal(parsed.ok, false);
+      assert.equal(parsed.error?.code, "BAD_MODE");
+    } else {
+      throw error;
+    }
+  }
+});
+
+test("Flow CLI workflow command rejects autoflow mode", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-workflow-autoflow-reject-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  const flowCli = join(process.cwd(), ".tmp", "test", "src", "flow.js");
+
+  try {
+    const { stdout } = await execFileAsync(process.execPath, [flowCli, JSON.stringify({
+      op: "workflow",
+      mode: "autoflow",
+      id: "FLOW-1",
+    })], {
+      cwd: root,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+    const parsed = JSON.parse(stdout) as { ok?: boolean; error?: { code?: string; details?: { supportedModes?: string[] } } };
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.error?.code, "BAD_MODE");
+    assert.ok(parsed.error?.details?.supportedModes?.includes("advance"));
+    assert.ok(parsed.error?.details?.supportedModes?.includes("doctor"));
+    assert.ok(!parsed.error?.details?.supportedModes?.includes("autoflow"));
+  } catch (error) {
+    const failed = error as { stdout?: string };
+    if (failed.stdout) {
+      const parsed = JSON.parse(failed.stdout) as { ok?: boolean; error?: { code?: string; details?: { supportedModes?: string[] } } };
+      assert.equal(parsed.ok, false);
+      assert.equal(parsed.error?.code, "BAD_MODE");
+      assert.ok(!parsed.error?.details?.supportedModes?.includes("autoflow"));
+    } else {
+      throw error;
+    }
+  }
+});
+
+test("reviewLocal runtime method returns complete readiness state", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-review-local-runtime-"));
+  const ledger = new MemoryWorkflowLedger();
+  await ledger.writeIssue({
+    ref: "FLOW-LOCAL-1",
+    title: "Local review runtime test",
+    repoKeys: ["main"],
+    state: "running",
+    metadata: {},
+  });
+  const runtime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    issueTracker: new LocalIssueTrackerAdapter({ ledger, projectName: "Flow" }),
+  });
+  await runtime.createSession("review-local-session");
+  await runtime.selectIssue("review-local-session", {
+    ref: "FLOW-LOCAL-1",
+    title: "Local review runtime test",
+    repoKeys: ["main"],
+    state: "running",
+    metadata: {},
+  });
+
+  const result = await runtime.reviewLocal("review-local-session", "FLOW-LOCAL-1");
+
+  assert.equal(result.issueRef, "FLOW-LOCAL-1");
+  assert.equal(result.state, "selected");
+  assert.deepEqual(result.repoKeys, ["main"]);
+  assert.ok(typeof result.readiness.readyToAdvance === "boolean");
+  assert.ok(typeof result.readiness.reviewReady === "boolean");
+  assert.ok(Array.isArray(result.readiness.findings));
+  assert.equal(result.worker, undefined);
+  assert.equal(result.evidenceRecorded, false);
+  assert.equal(result.documentationRecorded, false);
+});
+
+test("reviewCodeReview runtime method returns provider-neutral state", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-review-cr-runtime-"));
+  const ledger = new MemoryWorkflowLedger();
+  await ledger.writeIssue({
+    ref: "FLOW-CR-1",
+    title: "Code review runtime test",
+    repoKeys: ["main"],
+    state: "running",
+    metadata: {},
+  });
+  const runtime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    issueTracker: new LocalIssueTrackerAdapter({ ledger, projectName: "Flow" }),
+    collaboration: new NoopCodeCollaborationAdapter(),
+  });
+  await runtime.createSession("review-cr-session");
+  await runtime.selectIssue("review-cr-session", {
+    ref: "FLOW-CR-1",
+    title: "Code review runtime test",
+    repoKeys: ["main"],
+    state: "selected",
+    metadata: {},
+  });
+
+  const result = await runtime.reviewCodeReview("review-cr-session", "FLOW-CR-1");
+
+  assert.equal(result.issueRef, "FLOW-CR-1");
+  assert.deepEqual(result.repoKeys, ["main"]);
+  assert.equal(result.codeReviewRequired, false);
+  assert.equal(result.collaboration, "none");
+  assert.equal(result.pullRequest, undefined);
+  assert.deepEqual(result.blockers, []);
+});
+
+test("reviewCodeReview runtime method returns pull request metadata when present", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-review-cr-pr-"));
+  const ledger = new MemoryWorkflowLedger();
+  const prUrl = "https://github.com/example/repo/pull/42";
+  await ledger.writeIssue({
+    ref: "FLOW-CR-2",
+    title: "Code review with PR",
+    repoKeys: ["main"],
+    state: "awaiting_review",
+    metadata: {
+      prUrl,
+      prState: "OPEN",
+      prIsDraft: false,
+      prChecksPassing: true,
+      prReviewDecision: "APPROVED",
+      prMergeable: "MERGEABLE",
+    },
+  });
+  const runtime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    issueTracker: new LocalIssueTrackerAdapter({ ledger, projectName: "Flow" }),
+    collaboration: new NoopCodeCollaborationAdapter(),
+  });
+  await runtime.createSession("review-cr-pr-session");
+  await runtime.selectIssue("review-cr-pr-session", {
+    ref: "FLOW-CR-2",
+    title: "Code review with PR",
+    repoKeys: ["main"],
+    state: "selected",
+    metadata: {
+      prUrl,
+      prState: "OPEN",
+      prIsDraft: false,
+      prChecksPassing: true,
+      prReviewDecision: "APPROVED",
+      prMergeable: "MERGEABLE",
+    },
+  });
+
+  const result = await runtime.reviewCodeReview("review-cr-pr-session", "FLOW-CR-2");
+
+  assert.equal(result.issueRef, "FLOW-CR-2");
+  assert.equal(result.codeReviewRequired, false);
+  assert.ok(result.pullRequest);
+  assert.equal(result.pullRequest?.url, prUrl);
+  assert.equal(result.pullRequest?.isDraft, false);
+  assert.equal(result.pullRequest?.reviewDecision, "APPROVED");
+  assert.equal(result.pullRequest?.mergeable, "MERGEABLE");
+  assert.equal(result.pullRequest?.autoReviewMustFix, false);
+  assert.equal(result.pullRequest?.autoReviewNeedsConfirmation, false);
+});
+
+test("reviewCodeReview runtime method posts provider-neutral review comment when requested", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-review-cr-post-"));
+  const ledger = new MemoryWorkflowLedger();
+  const prUrl = "https://github.com/example/repo/pull/42";
+  let posted: { repo: string; id: string | number; body: string } | undefined;
+  await ledger.writeIssue({
+    ref: "FLOW-CR-3",
+    title: "Code review post test",
+    repoKeys: ["main"],
+    state: "awaiting_review",
+    metadata: {
+      prUrl,
+      prNumber: 42,
+      prState: "OPEN",
+      prIsDraft: false,
+      prChecksPassing: true,
+      prReviewDecision: "APPROVED",
+      prMergeable: "MERGEABLE",
+    },
+  });
+  const runtime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    issueTracker: new LocalIssueTrackerAdapter({ ledger, projectName: "Flow" }),
+    collaboration: {
+      capabilities: { requiresCodeReview: false, canMarkReady: true, canPostComments: true, canMerge: true },
+      async findCodeReviews() {
+        return [];
+      },
+      async getCodeReviewDiff(repo, id) {
+        return { files: ["src/review.ts"], patch: `diff --git a/src/review.ts b/src/review.ts` };
+      },
+      async postReviewComment(repo, id, body) {
+        posted = { repo, id, body };
+        return { url: `https://github.com/example/repo/pull/${id}#issuecomment-1`, body };
+      },
+    },
+  });
+  await runtime.createSession("review-cr-post-session");
+  await runtime.selectIssue("review-cr-post-session", {
+    ref: "FLOW-CR-3",
+    title: "Code review post test",
+    repoKeys: ["main"],
+    state: "selected",
+    metadata: {
+      prUrl,
+      prNumber: 42,
+      prState: "OPEN",
+      prIsDraft: false,
+      prChecksPassing: true,
+      prReviewDecision: "APPROVED",
+      prMergeable: "MERGEABLE",
+    },
+  });
+
+  const result = await runtime.reviewCodeReview("review-cr-post-session", "FLOW-CR-3", { post: true });
+
+  assert.equal(posted?.repo, "repo");
+  assert.equal(posted?.id, 42);
+  assert.match(posted?.body ?? "", /<!-- flow-pr-review -->/);
+  assert.equal(result.postedComment?.url, "https://github.com/example/repo/pull/42#issuecomment-1");
 });
 
 test("Flow config bootstrap can keep repo-local config in local git exclude", async () => {
@@ -569,6 +1948,22 @@ test("Desktop project registry tracks active Flow projects from config roots", a
   assert.equal(active?.id, secondProject.id);
   assert.equal(reactivated.id, project.id);
   assert.equal((await registry.activeProject())?.id, project.id);
+});
+
+test("Desktop project registry can store active project state in SQLite", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-desktop-project-db-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  await bootstrapFlowConfig({ projectRoot: root, storage: "repo-tracked" });
+  const stateRoot = await mkdtemp(join(tmpdir(), "flow-desktop-db-state-"));
+  const dbPath = join(stateRoot, "desktop-state.db");
+  const registry = new DesktopProjectRegistry({ dbPath });
+
+  const project = await registry.addProject(root);
+  const reloaded = new DesktopProjectRegistry({ dbPath });
+  const active = await reloaded.activeProject();
+
+  assert.equal(active?.id, project.id);
+  assert.equal(active?.root, root);
 });
 
 test("Project theme generates stable colors and initials", () => {
@@ -751,6 +2146,21 @@ test("Desktop action router records evidence, result, docs, and doctor output", 
   assert.equal(projection.artifacts.length, 4);
 });
 
+test("Desktop action router and renderer share action values", () => {
+  assert.deepEqual([...desktopActionValues], [
+    "autoflow",
+    "approve_confirmation",
+    "record_evidence",
+    "record_result",
+    "record_documentation",
+    "run_doctor",
+  ]);
+  for (const action of desktopActionValues) {
+    assert.equal(isDesktopAction(action), true);
+  }
+  assert.equal(isDesktopAction("missing_action"), false);
+});
+
 test("Desktop action router runs Autoflow as the primary issue action", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-desktop-autoflow-"));
   await execFileAsync("git", ["init"], { cwd: root });
@@ -787,7 +2197,153 @@ test("Desktop action router runs Autoflow as the primary issue action", async ()
   assert.equal(projection.artifacts[0].metadata.action, "autoflow");
 });
 
-test("Pi session driver starts issue-linked sessions and records FlowSessionLink", async () => {
+test("Desktop Autoflow reconcile skips invalid projects and honors disabled runner state", async () => {
+  let surfaceLoads = 0;
+  const registry = desktopProjectRegistryStub([
+    desktopProjectRecordStub({ id: "invalid", valid: false }),
+    desktopProjectRecordStub({ id: "disabled" }),
+  ]);
+
+  const summary = await runEnabledProjectAutoflowReconcile(registry, async () => {
+    surfaceLoads++;
+    return desktopProjectSurfaceStub([], undefined, false);
+  });
+
+  assert.deepEqual(summary, { enabledProjects: 0, pendingProjects: 0, reconciledProjects: 0 });
+  assert.equal(surfaceLoads, 1);
+  assert.equal(nextAutoflowReconcileDelay(summary), desktopAutoflowReconcileIntervals.idleMs);
+});
+
+test("Desktop Autoflow reconcile checks queue before ticking runner", async () => {
+  let tickCalls = 0;
+  const summary = await runEnabledProjectAutoflowReconcile(
+    desktopProjectRegistryStub([desktopProjectRecordStub({ id: "enabled" })]),
+    async () => desktopProjectSurfaceStub([], () => {
+      tickCalls++;
+    }),
+  );
+
+  assert.deepEqual(summary, { enabledProjects: 1, pendingProjects: 0, reconciledProjects: 0 });
+  assert.equal(tickCalls, 0);
+});
+
+test("Desktop Autoflow reconcile ticks runner for queued work", async () => {
+  let tickCalls = 0;
+  const summary = await runEnabledProjectAutoflowReconcile(
+    desktopProjectRegistryStub([desktopProjectRecordStub({ id: "enabled" })]),
+    async () => desktopProjectSurfaceStub([{ ref: "GH-260", state: "queued" }], () => {
+      tickCalls++;
+    }),
+  );
+
+  assert.deepEqual(summary, { enabledProjects: 1, pendingProjects: 1, reconciledProjects: 1 });
+  assert.equal(tickCalls, 1);
+  assert.equal(nextAutoflowReconcileDelay(summary), desktopAutoflowReconcileIntervals.activeMs);
+});
+
+test("Desktop Autoflow routes call the shared runner surface", async () => {
+  let tickCalls = 0;
+  const app = express();
+  const project = desktopProjectRecordStub({ id: "enabled" });
+  registerWorkRoutes(
+    app,
+    {
+      projectRegistry: desktopProjectRegistryStub([project]),
+      projectSurface: async () => desktopProjectSurfaceStub([{ ref: "GH-385", state: "queued" }], () => {
+        tickCalls++;
+      }),
+    },
+    {
+      promptRouter: {} as never,
+      actionRouter: {} as never,
+    },
+    express.json(),
+  );
+  const server = await listenExpress(app);
+  try {
+    const statusResponse = await fetch(`${server.url}/api/autoflow/status`);
+    const statusPayload = await statusResponse.json() as { ok?: boolean; status?: { enabled?: boolean; summary?: string } };
+    const tickResponse = await fetch(`${server.url}/api/autoflow/tick`, { method: "POST" });
+    const tickPayload = await tickResponse.json() as { ok?: boolean; status?: { enabled?: boolean } };
+
+    assert.equal(statusPayload.ok, true);
+    assert.equal(statusPayload.status?.enabled, true);
+    assert.equal(statusPayload.status?.summary, "Autoflow idle.");
+    assert.equal(tickPayload.ok, true);
+    assert.equal(tickPayload.status?.enabled, true);
+    assert.equal(tickCalls, 1);
+  } finally {
+    await server.close();
+  }
+});
+
+test("Desktop refresh intervals use defaults and settings overrides", () => {
+  assert.deepEqual(desktopRefreshIntervalsFromSettings(), defaultDesktopRefreshIntervals);
+  assert.deepEqual(desktopRefreshIntervalsFromSettings({ refreshIntervalMs: 12_000 }), {
+    dashboardMs: 12_000,
+    autoflowStatusMs: 12_000,
+  });
+  assert.deepEqual(desktopRefreshIntervalsFromSettings({
+    refreshIntervalMs: 12_000,
+    dashboardRefreshIntervalMs: 7_500,
+    autoflowStatusRefreshIntervalMs: 30_000,
+  }), {
+    dashboardMs: 7_500,
+    autoflowStatusMs: 30_000,
+  });
+  assert.deepEqual(desktopRefreshIntervalsFromSettings({
+    refreshIntervalMs: -1,
+    dashboardRefreshIntervalMs: Number.NaN,
+    autoflowStatusRefreshIntervalMs: 0,
+  }), defaultDesktopRefreshIntervals);
+});
+
+test("Desktop LruMap evicts least recently used entries", () => {
+  const cache = new LruMap<string, number>(2);
+  cache.set("a", 1);
+  cache.set("b", 2);
+
+  assert.equal(cache.get("a"), 1);
+  cache.set("c", 3);
+
+  assert.equal(cache.has("a"), true);
+  assert.equal(cache.has("b"), false);
+  assert.equal(cache.has("c"), true);
+  assert.equal(cache.size, 2);
+});
+
+test("Desktop LruMap rejects empty cache sizes", () => {
+  assert.throws(() => new LruMap<string, number>(0), /maxSize must be at least 1/);
+});
+
+test("Desktop static routes serve built HTML and keep missing UI 404s", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-desktop-static-"));
+  const desktopDir = join(root, "desktop");
+  const dashboardDir = join(root, "dashboard");
+  await mkdir(desktopDir, { recursive: true });
+  await mkdir(dashboardDir, { recursive: true });
+  const desktopFilePath = join(desktopDir, "index.html");
+  const dashboardFilePath = join(dashboardDir, "missing.html");
+  await writeFile(desktopFilePath, "<!doctype html><title>Desktop</title>");
+
+  const app = express();
+  registerStaticRoutes(app, { desktopFilePath, dashboardFilePath });
+  const server = await listenExpress(app);
+  try {
+    const desktopResponse = await fetch(`${server.url}/`);
+    assert.equal(desktopResponse.status, 200);
+    assert.equal(await desktopResponse.text(), "<!doctype html><title>Desktop</title>");
+    assert.equal((desktopResponse.headers.get("content-type") ?? "").includes("text/html"), true);
+
+    const dashboardResponse = await fetch(`${server.url}/dashboard`);
+    assert.equal(dashboardResponse.status, 404);
+    assert.equal(await dashboardResponse.text(), "Dashboard UI not built.");
+  } finally {
+    await server.close();
+  }
+});
+
+test("Pi session driver starts issue-linked sessions and records provider-neutral session link", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-session-start-"));
   const ledger = new MemoryWorkflowLedger();
   const runtime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
@@ -815,10 +2371,11 @@ test("Pi session driver starts issue-linked sessions and records FlowSessionLink
   assert.match(session.timeline[0].content, /Agent session started/);
 
   const linksRaw = await readFile(join(root, ".flow", "runtime", "pi-session-links.json"), "utf8");
-  const linksPayload = JSON.parse(linksRaw) as { links: Array<{ issueRef: string; flowSessionId: string; piSessionId: string }> };
+  const linksPayload = JSON.parse(linksRaw) as { links: Array<{ issueRef: string; flowSessionId: string; provider: string; sessionId: string }> };
   assert.equal(linksPayload.links[0].issueRef, "GH-34");
   assert.equal(linksPayload.links[0].flowSessionId, "desktop");
-  assert.equal(linksPayload.links[0].piSessionId, session.id);
+  assert.equal(linksPayload.links[0].provider, "pi");
+  assert.equal(linksPayload.links[0].sessionId, session.id);
 });
 
 test("Pi session driver appends user prompt and assistant response", async () => {
@@ -848,6 +2405,213 @@ test("Pi session driver appends user prompt and assistant response", async () =>
   assert.equal(userMessage?.content, "Please draft implementation steps.");
   assert.match(assistantMessage?.content ?? "", /Queued prompt for GH-35/);
   assert.equal(updated.timeline.length >= 3, true);
+});
+
+test("Pi session driver persists clean agent summaries", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-agent-summary-"));
+  const ledger = new MemoryWorkflowLedger();
+  const runtime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  await ledger.writeIssue({
+    ref: "GH-427",
+    title: "Persist agent summary",
+    repoKeys: [],
+    state: "queued",
+    metadata: {},
+  });
+
+  const driver = new PiSessionDriver({
+    runtime,
+    repoRoot: root,
+    flowSessionId: "desktop",
+    agent: {
+      async prompt(input) {
+        return {
+          sessionId: input.sessionId,
+          status: "active",
+          summary: "Clean executor summary.",
+          timeline: [{
+            id: "assistant-noisy",
+            role: "assistant",
+            content: "[tool:Bash] noisy progress output",
+            createdAt: new Date().toISOString(),
+          }],
+        };
+      },
+    },
+  });
+
+  const started = await driver.startSession("GH-427");
+  const updated = await driver.postPrompt(started.id, "Run the executor.");
+
+  assert.equal(updated.summary, "Clean executor summary.");
+  const stateRaw = await readFile(join(root, ".flow", "runtime", "pi-session-state.json"), "utf8");
+  const state = JSON.parse(stateRaw) as { sessions: Array<{ summary?: string }> };
+  assert.equal(state.sessions[0]?.summary, "Clean executor summary.");
+});
+
+test("Claude session driver starts issue-linked sessions and records provider-neutral session link", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-claude-session-start-"));
+  const ledger = new MemoryWorkflowLedger();
+  const runtime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  await ledger.writeIssue({
+    ref: "GH-425",
+    title: "Add Claude agent session runner",
+    repoKeys: ["flow"],
+    state: "queued",
+    metadata: {
+      "workflow.repos.flow.worktree_path": "/repo/flow/.worktrees/feature-gh-425",
+    },
+  });
+
+  const driver = new ClaudeSessionDriver({
+    runtime,
+    repoRoot: root,
+    flowSessionId: "desktop",
+    agent: false,
+  });
+
+  const session = await driver.startSession("gh-425");
+  assert.equal(session.issueRef, "GH-425");
+  assert.equal(session.provider, "claude");
+  assert.equal(session.workspacePath, "/repo/flow/.worktrees/feature-gh-425");
+
+  const linksRaw = await readFile(join(root, ".flow", "runtime", "claude-session-links.json"), "utf8");
+  const linksPayload = JSON.parse(linksRaw) as { links: Array<{ issueRef: string; flowSessionId: string; provider: string; sessionId: string }> };
+  assert.equal(linksPayload.links[0].issueRef, "GH-425");
+  assert.equal(linksPayload.links[0].flowSessionId, "desktop");
+  assert.equal(linksPayload.links[0].provider, "claude");
+  assert.equal(linksPayload.links[0].sessionId, session.id);
+});
+
+test("Claude agent runner maps SDK messages into AgentRunner result", async () => {
+  const calls: Array<{ prompt: string; options?: Record<string, unknown> }> = [];
+  const runner = new ClaudeAgentRunner({
+    allowedTools: ["Read", "Edit"],
+    loadModule: async () => ({
+      query({ prompt, options }) {
+        calls.push({ prompt, options: options as Record<string, unknown> });
+        return (async function* () {
+          yield {
+            type: "system",
+            subtype: "init",
+            session_id: "123e4567-e89b-12d3-a456-426614174000",
+            uuid: "init-1",
+            cwd: "/repo/flow",
+          };
+          yield {
+            type: "assistant",
+            session_id: "123e4567-e89b-12d3-a456-426614174000",
+            uuid: "assistant-1",
+            message: { content: [{ type: "text", text: "Implemented Claude runner." }] },
+          };
+          yield {
+            type: "tool_progress",
+            session_id: "123e4567-e89b-12d3-a456-426614174000",
+            uuid: "tool-1",
+            tool_use_id: "tool-call-1",
+            tool_name: "Edit",
+            elapsed_time_seconds: 1.25,
+          };
+          yield {
+            type: "result",
+            subtype: "success",
+            session_id: "123e4567-e89b-12d3-a456-426614174000",
+            uuid: "result-1",
+            is_error: false,
+            result: "Claude prompt completed with edits.",
+          };
+        })();
+      },
+    }),
+  });
+  const events: string[] = [];
+
+  const result = await runner.prompt({
+    sessionId: "123e4567-e89b-12d3-a456-426614174000",
+    issueRef: "GH-425",
+    prompt: "Implement the runner.",
+    repoRoot: "/repo/flow",
+    workspacePath: "/repo/flow/.worktrees/gh-425",
+    onEvent: (event) => { events.push(event.type); },
+  });
+
+  assert.equal(calls[0]?.prompt, "Implement the runner.");
+  assert.equal(calls[0]?.options?.cwd, "/repo/flow/.worktrees/gh-425");
+  assert.deepEqual(calls[0]?.options?.allowedTools, ["Read", "Edit"]);
+  assert.equal("settingSources" in (calls[0]?.options ?? {}), false);
+  assert.equal((calls[0]?.options?.systemPrompt as { preset?: string })?.preset, "claude_code");
+  assert.equal(calls[0]?.options?.sessionId, "123e4567-e89b-12d3-a456-426614174000");
+  assert.equal(result.sessionId, "123e4567-e89b-12d3-a456-426614174000");
+  assert.equal(result.status, "active");
+  assert.equal(result.summary, "Claude prompt completed with edits.");
+  assert.ok(result.timeline?.some((item) => item.content.includes("Implemented Claude runner.")));
+  assert.ok(result.timeline?.some((item) => item.role === "tool" && item.toolName === "Edit"));
+  assert.ok(events.includes("assistantDelta"));
+  assert.ok(events.includes("toolUpdated"));
+});
+
+test("Claude agent runner resumes follow-up sessions", async () => {
+  const calls: Array<{ options?: Record<string, unknown> }> = [];
+  const runner = new ClaudeAgentRunner({
+    loadModule: async () => ({
+      query({ options }) {
+        calls.push({ options: options as Record<string, unknown> });
+        return (async function* () {
+          yield {
+            type: "result",
+            subtype: "success",
+            session_id: "123e4567-e89b-12d3-a456-426614174111",
+            uuid: "result-1",
+            is_error: false,
+            result: "Follow-up done.",
+          };
+        })();
+      },
+    }),
+  });
+
+  await runner.prompt({
+    sessionId: "123e4567-e89b-12d3-a456-426614174111",
+    issueRef: "GH-425",
+    mode: "followUp",
+    prompt: "Continue.",
+    repoRoot: "/repo/flow",
+  });
+
+  assert.equal(calls[0]?.options?.resume, "123e4567-e89b-12d3-a456-426614174111");
+  assert.equal(calls[0]?.options?.sessionId, undefined);
+});
+
+test("Claude agent runner honors explicit SDK setting sources", async () => {
+  const calls: Array<{ options?: Record<string, unknown> }> = [];
+  const runner = new ClaudeAgentRunner({
+    settingSources: ["project"],
+    loadModule: async () => ({
+      query({ options }) {
+        calls.push({ options: options as Record<string, unknown> });
+        return (async function* () {
+          yield {
+            type: "result",
+            subtype: "success",
+            session_id: "123e4567-e89b-12d3-a456-426614174222",
+            uuid: "result-1",
+            is_error: false,
+            result: "Settings scoped.",
+          };
+        })();
+      },
+    }),
+  });
+
+  await runner.prompt({
+    sessionId: "123e4567-e89b-12d3-a456-426614174222",
+    issueRef: "GH-425",
+    prompt: "Scope settings.",
+    repoRoot: "/repo/flow",
+    workspacePath: "/repo/flow/.worktrees/gh-425",
+  });
+
+  assert.deepEqual(calls[0]?.options?.settingSources, ["project"]);
 });
 
 test("Pi session driver queues follow-up prompts while a run is active", async () => {
@@ -896,6 +2660,8 @@ test("Pi session driver queues follow-up prompts while a run is active", async (
   assert.equal(prompts.length, 2);
   assert.match(prompts[0], /First prompt/);
   assert.match(prompts[1], /Second prompt/);
+  assert.doesNotMatch(prompts[0], /Issue: GH-168/);
+  assert.match(started.timeline.find((item) => item.role === "system")?.content ?? "", /Issue: GH-168/);
 });
 
 test("Pi session driver persists issue-linked session state for reopen", async () => {
@@ -965,8 +2731,8 @@ test("Pi session driver records clear failure when pi runtime fails", async () =
   assert.equal(linksPayload.links[0].status, "failed");
 });
 
-test("Pi agent orchestrator starts the next ready issue and records a result", async () => {
-  const root = await mkdtemp(join(tmpdir(), "flow-pi-orchestrator-"));
+test("Standalone Autoflow runner starts the next ready issue and records a result", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-autoflow-runner-"));
   const ledger = new MemoryWorkflowLedger();
   const runtime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
   await ledger.writeIssue({
@@ -992,20 +2758,34 @@ test("Pi agent orchestrator starts the next ready issue and records a result", a
           timeline: [{
             id: "assistant-1",
             role: "assistant",
-            content: "Implemented by Pi.",
+            content: "Implemented by Pi and committed the changes.",
+            createdAt: nowIso(),
+          }, {
+            id: "write-1",
+            role: "tool",
+            toolName: "write",
+            content: "Wrote test file.",
+            diff: { path: "test/flowstore.test.ts", content: "test" },
+            createdAt: nowIso(),
+          }, {
+            id: "test-1",
+            role: "tool",
+            toolName: "npm test",
+            content: "Tests passed.",
             createdAt: nowIso(),
           }],
         };
       },
     },
   });
-  const orchestrator = new PiAgentOrchestrator({
+  const runner = new StandaloneAutoflowRunner({
     projectId: "project",
     runtime,
-    piSessionDriver: driver,
+    state: new MemoryAutoflowRunnerState(),
+    agentSessionDriver: driver,
   });
 
-  await orchestrator.reconcile();
+  await runner.tick();
   for (let index = 0; index < 100; index += 1) {
     if ((await ledger.listWorkerResults("GH-56")).length) break;
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -1015,10 +2795,87 @@ test("Pi agent orchestrator starts the next ready issue and records a result", a
   assert.equal(results.length, 1);
   assert.equal(results[0].status, "succeeded");
   assert.match(results[0].summary, /Implemented by Pi/);
+  for (let index = 0; index < 100; index += 1) {
+    const issueStatus = (await runner.status()).issues["GH-56"];
+    if (issueStatus?.phase === "needs_input") break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  const issueStatus = (await runner.status()).issues["GH-56"];
+  assert.equal(issueStatus?.phase, "needs_input");
+  assert.match(issueStatus?.summary ?? "", /Pull request is missing/);
 });
 
-test("Pi agent orchestrator sends follow-up messages to running sessions", async () => {
-  const root = await mkdtemp(join(tmpdir(), "flow-pi-orchestrator-followup-"));
+test("Standalone Autoflow runner records timed-out worker jobs as terminal", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-autoflow-runner-timeout-"));
+  const ledger = new MemoryWorkflowLedger();
+  const runtime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  await ledger.writeIssue({
+    ref: "GH-379",
+    title: "Fix standalone Autoflow timeout and running-status drift",
+    repoKeys: ["flow"],
+    state: "queued",
+    metadata: {
+      "workflow.repos.flow.worktree_path": root,
+    },
+  });
+  const driver = new PiSessionDriver({
+    runtime,
+    repoRoot: root,
+    flowSessionId: "desktop-project",
+    agent: {
+      async prompt() {
+        return new Promise(() => undefined);
+      },
+    },
+  });
+  const runner = new StandaloneAutoflowRunner({
+    projectId: "project",
+    runtime,
+    state: new MemoryAutoflowRunnerState(),
+    agentSessionDriver: driver,
+    postPromptTimeoutMs: 20,
+  });
+
+  const status = await runner.tick({ wait: true });
+  const jobs = await ledger.listWorkJobs("GH-379");
+  const results = await ledger.listWorkJobResults("GH-379");
+
+  assert.equal(status.issues["GH-379"]?.phase, "failed");
+  assert.equal(jobs.at(-1)?.status, "failed");
+  assert.equal(results.at(-1)?.status, "failed");
+  assert.match(results.at(-1)?.summary ?? "", /timed out/);
+});
+
+test("Autoflow service can be instantiated without Desktop modules", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-autoflow-service-"));
+  const runtime = testWorkRuntime({ store: new FlowStore({ root }), ledger: new MemoryWorkflowLedger() });
+  const service = new AutoflowService({
+    projectId: "project",
+    runtime,
+    enabled: () => false,
+    agentSessionDriver: {
+      async getSession() {
+        throw new Error("not used");
+      },
+      async openOrCreateIssueSession() {
+        throw new Error("not used");
+      },
+      async sendUserMessage() {
+        throw new Error("not used");
+      },
+      async postPrompt() {
+        throw new Error("not used");
+      },
+    },
+  });
+
+  const status = service.getStatus();
+  assert.equal(status.enabled, false);
+  assert.equal(status.summary, "Autoflow is paused.");
+});
+
+test("Standalone Autoflow runner sends follow-up messages to running sessions", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-autoflow-runner-followup-"));
   const ledger = new MemoryWorkflowLedger();
   const runtime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
   await ledger.writeIssue({
@@ -1047,18 +2904,19 @@ test("Pi agent orchestrator sends follow-up messages to running sessions", async
   });
   const started = await driver.startSession("GH-57");
   started.status = "running";
-  const orchestrator = new PiAgentOrchestrator({
+  const runner = new StandaloneAutoflowRunner({
     projectId: "project",
     runtime,
-    piSessionDriver: driver,
+    state: new MemoryAutoflowRunnerState(),
+    agentSessionDriver: driver,
   });
 
-  await orchestrator.sendUserMessage({ issueRef: "GH-57", sessionId: started.id, text: "More detail." });
+  await runner.sendUserMessage({ issueRef: "GH-57", sessionId: started.id, text: "More detail." });
   assert.deepEqual(modes, ["followUp"]);
 });
 
-test("Pi agent orchestrator doctors stale external issues instead of starting Pi", async () => {
-  const root = await mkdtemp(join(tmpdir(), "flow-pi-orchestrator-stale-"));
+test("Standalone Autoflow runner doctors stale external issues instead of starting Pi", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-autoflow-runner-stale-"));
   const ledger = new MemoryWorkflowLedger();
   const runtime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
   await ledger.writeIssue({
@@ -1082,20 +2940,21 @@ test("Pi agent orchestrator doctors stale external issues instead of starting Pi
   doctorRuntime.diagnoseIssue = async () => {
     throw new Error("GraphQL: Could not resolve to an issue or pull request with the number of 58. (repository.issue)");
   };
-  const orchestrator = new PiAgentOrchestrator({
+  const runner = new StandaloneAutoflowRunner({
     projectId: "project",
     runtime: doctorRuntime,
-    piSessionDriver: driver,
+    state: new MemoryAutoflowRunnerState(),
+    agentSessionDriver: driver,
   });
 
-  await orchestrator.reconcile();
+  await runner.tick();
   for (let index = 0; index < 20; index += 1) {
-    const issueStatus = orchestrator.getStatus().issues["GH-58"];
+    const issueStatus = (await runner.status()).issues["GH-58"];
     if (issueStatus?.phase === "needs_input") break;
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
 
-  const status = orchestrator.getStatus();
+  const status = await runner.status();
   const issueStatus = status.issues["GH-58"];
   assert.equal(status.summary, "1 issue needs input.");
   assert.equal(issueStatus?.phase, "needs_input");
@@ -1107,33 +2966,37 @@ test("Pi SDK session runner maps real SDK events into desktop timeline", async (
   const root = await mkdtemp(join(tmpdir(), "flow-pi-sdk-runner-"));
   let listener: ((event: Record<string, unknown>) => void) | undefined;
   const driverEvents: string[] = [];
+  let sessionOptions: Record<string, unknown> | undefined;
   const runner = new PiSdkSessionRunner({
     loadModule: async () => ({
       SessionManager: {
         create: () => ({ mode: "create" }),
         open: () => ({ mode: "open" }),
       },
-      createAgentSession: async () => ({
-        session: {
-          sessionId: "real-pi-session",
-          sessionFile: join(root, "session.jsonl"),
-          subscribe(next) {
-            listener = next;
-            return () => {
-              listener = undefined;
-            };
+      createAgentSession: async (options) => {
+        sessionOptions = options;
+        return {
+          session: {
+            sessionId: "real-pi-session",
+            sessionFile: join(root, "session.jsonl"),
+            subscribe(next) {
+              listener = next;
+              return () => {
+                listener = undefined;
+              };
+            },
+            async prompt() {
+              listener?.({ type: "tool_execution_start", toolCallId: "tool-1", toolName: "read", args: {} });
+              listener?.({ type: "tool_execution_end", toolCallId: "tool-1", toolName: "read", result: "ok", isError: false });
+              listener?.({
+                type: "message_update",
+                assistantMessageEvent: { type: "text_delta", delta: "Done from pi." },
+              });
+            },
+            dispose() {},
           },
-          async prompt() {
-            listener?.({ type: "tool_execution_start", toolCallId: "tool-1", toolName: "read", args: {} });
-            listener?.({ type: "tool_execution_end", toolCallId: "tool-1", toolName: "read", result: "ok", isError: false });
-            listener?.({
-              type: "message_update",
-              assistantMessageEvent: { type: "text_delta", delta: "Done from pi." },
-            });
-          },
-          dispose() {},
-        },
-      }),
+        };
+      },
     }),
   });
 
@@ -1155,6 +3018,15 @@ test("Pi SDK session runner maps real SDK events into desktop timeline", async (
   assert.match(result.summary ?? "", /Done from pi/);
   assert.equal(result.timeline?.some((item) => item.role === "tool" && item.toolName === "read"), true);
   assert.deepEqual(driverEvents, ["toolStarted", "toolFinished", "assistantDelta"]);
+  assert.deepEqual(sessionOptions?.tools, [...FLOW_PI_AGENT_TOOLS]);
+  assert.equal((sessionOptions?.tools as string[]).includes("claude"), false);
+  assert.equal((sessionOptions?.tools as string[]).includes("subagent"), false);
+});
+
+test("Pi SDK child runner source forwards Flow-owned tool policy", () => {
+  const source = childRunnerSource();
+  assert.match(source, /const tools = Array\.isArray\(input\.tools\)/);
+  assert.match(source, /createAgentSession\(\{ cwd, sessionManager, tools \}\)/);
 });
 
 test("Local issue tracker creates issues through the Flow ledger surface", async () => {
@@ -1170,11 +3042,13 @@ test("Local issue tracker creates issues through the Flow ledger surface", async
   });
 
   await runtime.createSession("local-session");
-  const issue = await runtime.createIssue("local-session", {
+  const options = {
     issueType: "Task",
     summary: "Spike local surface",
     description: "Keep Flow usable without GitHub.",
-  });
+  } satisfies CreateIssueOptions;
+  await approveIssueIntake(runtime, "local-session", options);
+  const issue = await runtime.createIssue("local-session", options);
 
   assert.equal(issue.ref, "FLOW-1");
   assert.equal(issue.title, "Spike local surface");
@@ -1182,18 +3056,339 @@ test("Local issue tracker creates issues through the Flow ledger surface", async
   assert.deepEqual(await new NoopCodeCollaborationAdapter().findCodeReviews("flow"), []);
 });
 
-test("Flow config builds default and custom work type registries", () => {
+test("Work Runtime triages local issues without mutating during dry-run", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-triage-dry-run-"));
+  const ledger = new MemoryWorkflowLedger();
+  const runtime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    issueTracker: new LocalIssueTrackerAdapter({ ledger, projectName: "Flow" }),
+  });
+  await ledger.writeIssue({
+    ref: "FLOW-1",
+    title: "Add SQL workflow ledger",
+    summary: "Needs implementation.",
+    repoKeys: ["main"],
+    state: "queued",
+    metadata: {},
+  });
+  await ledger.writeIssue({
+    ref: "FLOW-2",
+    title: "Add SQL workflow ledger",
+    summary: "Needs implementation.",
+    repoKeys: ["main"],
+    state: "queued",
+    metadata: {},
+  });
+
+  const result = await runtime.triageIssues({ dryRun: true, ids: ["FLOW-1", "FLOW-2"] });
+
+  assert.equal(result.dryRun, true);
+  assert.equal(result.issuesScanned, 2);
+  assert.equal(result.appliedActions, undefined);
+  assert.ok(result.proposedActions.some((action) => action.type === "add_tag" && action.target === "FLOW-1"));
+  assert.ok(result.issues[0].missingSections.some((section) => section.section === "Acceptance criteria"));
+  assert.ok(result.issues[0].duplicateCandidates.some((candidate) => candidate.ref === "FLOW-2"));
+  assert.deepEqual((await ledger.readIssue("FLOW-1"))?.metadata.issueLabels, undefined);
+});
+
+test("Work Runtime triage apply can tag and comment through provider capabilities", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-triage-apply-"));
+  const ledger = new MemoryWorkflowLedger();
+  const runtime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    issueTracker: new LocalIssueTrackerAdapter({ ledger, projectName: "Flow" }),
+  });
+  await ledger.writeIssue({
+    ref: "FLOW-1",
+    title: "Fix desktop runner timeout",
+    summary: "Short body.",
+    repoKeys: ["main"],
+    state: "queued",
+    metadata: {},
+  });
+
+  const result = await runtime.triageIssues({ apply: true, ids: ["FLOW-1"] });
+  const issue = await ledger.readIssue("FLOW-1");
+
+  assert.equal(result.dryRun, false);
+  assert.ok((result.appliedActions ?? []).some((action) => action.type === "add_tag"));
+  assert.ok((result.appliedActions ?? []).some((action) => action.type === "add_comment"));
+  assert.deepEqual(issue?.metadata.issueLabels, ["priority-p1", "lane-desktop-runner"]);
+  assert.equal(Array.isArray(issue?.metadata.localComments), true);
+});
+
+test("Issue creation dedupes existing issues with matching title", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-local-dedupe-"));
+  const ledger = new MemoryWorkflowLedger();
+  const runtime = new FlowWorkRuntime({
+    store: new FlowStore({ root: join(root, ".flow/runtime") }),
+    ledger,
+    issueTracker: new LocalIssueTrackerAdapter({ ledger, projectName: "Flow" }),
+    collaboration: new NoopCodeCollaborationAdapter(),
+    projectRoot: root,
+    readiness: { assess: assessIssue },
+  });
+
+  await runtime.createSession("dedupe-session");
+  
+  // Create first issue
+  const firstOptions = {
+    issueType: "Task",
+    summary: "Fix authentication bug",
+    description: "Users cannot login.",
+  } satisfies CreateIssueOptions;
+  await approveIssueIntake(runtime, "dedupe-session", firstOptions);
+  const first = await runtime.createIssue("dedupe-session", firstOptions);
+  assert.equal(first.ref, "FLOW-1");
+  assert.equal(first.title, "Fix authentication bug");
+
+  // Try to create duplicate - should return existing issue
+  const duplicate = await runtime.createIssue("dedupe-session", {
+    issueType: "Task",
+    summary: "Fix authentication bug",
+    description: "Different description.",
+  });
+  assert.equal(duplicate.ref, "FLOW-1");
+  assert.equal(duplicate.title, "Fix authentication bug");
+
+  // Verify only one issue exists in ledger
+  const allIssues = await ledger.listIssues(100);
+  assert.equal(allIssues.length, 1);
+  assert.equal(allIssues[0].ref, "FLOW-1");
+});
+
+test("Issue intake dry-run proposes structured issue without creating", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-intake-dry-run-"));
+  const ledger = new MemoryWorkflowLedger();
+  const runtime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    issueTracker: new LocalIssueTrackerAdapter({ ledger, projectName: "Flow" }),
+  });
+  await runtime.createSession("intake-session");
+
+  const result = await runtime.intakeIssue("intake-session", {
+    issueType: "Task",
+    summary: "Add SQLite workflow ledger",
+    description: "Persist workflow state in SQLite before adding Postgres.",
+    repoKeys: ["main"],
+    dryRun: true,
+  });
+
+  assert.equal(result.dryRun, true);
+  assert.equal(result.status, "ready");
+  assert.equal(result.proposal.body.includes("## Problem"), true);
+  assert.equal(result.proposal.body.includes("## Acceptance criteria"), true);
+  assert.equal(result.proposal.tags.includes("lane-sql"), true);
+  assert.equal((await ledger.listIssues(10)).length, 0);
+});
+
+test("Issue intake blocks vague apply requests", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-intake-vague-"));
+  const ledger = new MemoryWorkflowLedger();
+  const runtime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    issueTracker: new LocalIssueTrackerAdapter({ ledger, projectName: "Flow" }),
+  });
+  await runtime.createSession("intake-session");
+
+  const dryRun = await runtime.intakeIssue("intake-session", {
+    issueType: "Task",
+    summary: "Fix",
+    dryRun: true,
+  });
+  assert.equal(dryRun.status, "needs_input");
+  assert.equal(dryRun.reasons.length > 0, true);
+
+  await assert.rejects(
+    runtime.intakeIssue("intake-session", {
+      issueType: "Task",
+      summary: "Fix",
+      apply: true,
+    }),
+    /Issue intake needs more detail/,
+  );
+});
+
+test("Issue intake can submit executor review job for semantic dedupe", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-intake-executor-"));
+  const ledger = new MemoryWorkflowLedger();
+  await ledger.writeIssue({
+    ref: "FLOW-99",
+    title: "Persist workflow state in SQLite",
+    summary: "Existing semantic duplicate.",
+    repoKeys: ["main"],
+    state: "queued",
+    metadata: {},
+  });
+  const runtime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    issueTracker: new LocalIssueTrackerAdapter({ ledger, projectName: "Flow" }),
+  });
+  await runtime.createSession("intake-session");
+
+  const result = await runtime.intakeIssue("intake-session", {
+    issueType: "Task",
+    summary: "Add a local database backed ledger",
+    description: "Use SQLite for durable workflow state.",
+    dryRun: true,
+    review: true,
+  });
+
+  assert.equal(result.status, "ready");
+  assert.equal(result.reviewJob?.workType, "flow.issue_intake");
+  assert.equal(result.reviewJob?.requiredCapabilities.includes("issue.intake"), true);
+  assert.equal(JSON.stringify(result.reviewJob?.input).includes("FLOW-99"), true);
+});
+
+test("Issue creation requires completed executor intake review", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-intake-review-required-"));
+  const ledger = new MemoryWorkflowLedger();
+  const runtime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    issueTracker: new LocalIssueTrackerAdapter({ ledger, projectName: "Flow" }),
+  });
+  await runtime.createSession("intake-session");
+
+  try {
+    await runtime.createIssue("intake-session", {
+      issueType: "Task",
+      summary: "Add SQLite workflow ledger",
+      description: "Persist workflow state in SQLite before adding Postgres.",
+      repoKeys: ["main"],
+    });
+    assert.fail("issue creation should require executor review");
+  } catch (error) {
+    assert.equal(error instanceof Error, true);
+    assert.equal((error as Error).message.includes("completed executor review"), true);
+  }
+
+  assert.equal((await ledger.listIssues(10)).length, 0);
+  const intake = await runtime.intakeIssue("intake-session", {
+    issueType: "Task",
+    summary: "Add SQLite workflow ledger",
+    description: "Persist workflow state in SQLite before adding Postgres.",
+    repoKeys: ["main"],
+    dryRun: true,
+  });
+  assert.equal(intake.reviewJob?.workType, "flow.issue_intake");
+
+  await runtime.recordWorkJobResult("intake-session", {
+    jobId: intake.reviewJob?.id ?? assert.fail("expected review job"),
+    issueRef: intake.reviewJob?.issueRef ?? assert.fail("expected review issue ref"),
+    repoKey: "main",
+    workType: "flow.issue_intake",
+    status: "succeeded",
+    summary: "Executor approved issue intake.",
+    evidence: ["Live executor reviewed duplicate candidates."],
+    completedAt: nowIso(),
+  });
+
+  const created = await runtime.createIssue("intake-session", {
+    issueType: "Task",
+    summary: "Add SQLite workflow ledger",
+    description: "Persist workflow state in SQLite before adding Postgres.",
+    repoKeys: ["main"],
+  });
+  assert.equal(created.title, "Add SQLite workflow ledger");
+});
+
+test("Issue intake works through Flow CLI without creating during dry-run", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-intake-cli-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  const flowCli = join(process.cwd(), ".tmp", "test", "src", "flow.js");
+  const callFlow = async (body: Record<string, unknown>) => {
+    const { stdout } = await execFileAsync(process.execPath, [flowCli, JSON.stringify(body)], {
+      cwd: root,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+    return JSON.parse(stdout) as { ok?: boolean; result?: unknown; error?: unknown };
+  };
+
+  await callFlow({ op: "bootstrap", storage: "repo-tracked" });
+  const result = await callFlow({
+    op: "issue",
+    mode: "intake",
+    dryRun: true,
+    review: true,
+    issueType: "Task",
+    summary: "Add SQLite workflow ledger",
+    description: "Persist workflow state in SQLite before adding Postgres.",
+  });
+
+  assert.equal(result.ok, true);
+  const intake = result.result as { status: string; dryRun: boolean; reviewJob?: { workType: string }; proposal: { body: string; tags: string[] } };
+  assert.equal(intake.dryRun, true);
+  assert.equal(intake.status, "ready");
+  assert.equal(intake.reviewJob?.workType, "flow.issue_intake");
+  assert.equal(intake.proposal.body.includes("## Problem"), true);
+  assert.equal(intake.proposal.tags.includes("lane-sql"), true);
+});
+
+test("Flow config builds the default work type registry when no work types are configured", () => {
   const baseConfig = flowConfigSchema.parse({
     version: "1",
     project: { name: "Example" },
     topology: { repos: { main: { name: "example" } } },
   });
+
   const defaultRegistry = configToWorkTypeRegistry(baseConfig);
+
   assert.equal(defaultRegistry.workTypeForCategory("implement"), "flow.implement");
+  assert.equal(defaultRegistry.workTypeForCategory("remediate"), "flow.remediate");
+  assert.equal(defaultRegistry.has("flow.issue_intake"), true);
   assert.equal(defaultRegistry.executorCanRun("live_agent_thread", "flow.implement", ["code.edit"]), true);
+});
+
+test("Flow config builds a custom work type registry from configured definitions", () => {
+  const baseConfig = flowConfigSchema.parse({
+    version: "1",
+    project: { name: "Example" },
+    topology: { repos: { main: { name: "example" } } },
+  });
 
   const customRegistry = configToWorkTypeRegistry(flowConfigSchema.parse({
     ...baseConfig,
+    workTypes: [
+      {
+        name: "project.fix",
+        category: "implement",
+        requiredCapabilities: ["code.edit"],
+        allowedExecutors: ["live_agent_thread"],
+        outputType: "worker_result",
+      },
+      {
+        name: "project.verify",
+        category: "verify",
+        requiredCapabilities: ["test.run"],
+        allowedExecutors: ["live_agent_thread"],
+        outputType: "evidence_result",
+      },
+    ],
+    executors: [{
+      name: "live_agent_thread",
+      capabilities: ["code.edit", "test.run"],
+      outputs: ["worker_result", "evidence_result"],
+    }],
+  }));
+
+  assert.equal(customRegistry.workTypeForCategory("implement"), "project.fix");
+  assert.equal(customRegistry.workTypeForCategory("verify"), "project.verify");
+  assert.equal(customRegistry.get("project.fix")?.outputType, "worker_result");
+  assert.equal(customRegistry.executorCanRun("live_agent_thread", "project.fix", ["code.edit"]), true);
+  assert.equal(customRegistry.executorCanRun("live_agent_thread", "project.verify", ["test.run"]), true);
+});
+
+test("Flow config work type registry falls back to the default executor definition", () => {
+  const registry = configToWorkTypeRegistry(flowConfigSchema.parse({
+    version: "1",
+    project: { name: "Example" },
+    topology: { repos: { main: { name: "example" } } },
     workTypes: [{
       name: "project.fix",
       category: "implement",
@@ -1201,14 +3396,11 @@ test("Flow config builds default and custom work type registries", () => {
       allowedExecutors: ["live_agent_thread"],
       outputType: "worker_result",
     }],
-    executors: [{
-      name: "live_agent_thread",
-      capabilities: ["code.edit"],
-      outputs: ["worker_result"],
-    }],
   }));
-  assert.equal(customRegistry.workTypeForCategory("implement"), "project.fix");
-  assert.equal(customRegistry.executorCanRun("live_agent_thread", "project.fix", ["code.edit"]), true);
+
+  assert.equal(registry.executorCanRun("live_agent_thread", "project.fix"), true);
+  assert.equal(registry.executorCanRun("live_agent_thread", "project.fix", ["deploy.prod"]), false);
+  assert.deepEqual(registry.getExecutor("live_agent_thread")?.canSubmit, ["project.fix"]);
 });
 
 test("Local thread executor advertises capabilities and returns a reportable handoff result", async () => {
@@ -1234,6 +3426,13 @@ test("Local thread executor advertises capabilities and returns a reportable han
   assert.deepEqual(progress, ["Local thread executor prepared a handoff request."]);
 });
 
+function expectRecord(value: unknown): Record<string, unknown> {
+  assert.equal(typeof value, "object");
+  assert.notEqual(value, null);
+  assert.equal(Array.isArray(value), false);
+  return value as Record<string, unknown>;
+}
+
 test("Work envelopes parse YAML frontmatter and preserve Markdown body", () => {
   const envelope = parseWorkEnvelope(`---
 workType: flow.remediate
@@ -1256,6 +3455,75 @@ Address only the unresolved review blockers.
   assert.equal(envelope.executionMode, "local_thread");
   assert.equal(envelope.metadata.prNumber, 2914);
   assert.match(envelope.body, /Address only the unresolved review blockers/);
+});
+
+test("Work envelopes parse nested metadata, arrays, booleans, nulls, and quoted scalars", () => {
+  const envelope = parseWorkEnvelope(`---
+workType: flow.implement
+issueRef: ISSUE-125
+repoKey: app_api
+executionMode: background
+metadata:
+  review:
+    required: true
+    owner: "agent:pi"
+    blocker: null
+  tags: ["coverage", 'edge:case', true, null, 42]
+---
+
+Implement the nested metadata case.
+`);
+
+  const review = expectRecord(envelope.metadata.review);
+  assert.equal(review.required, true);
+  assert.equal(review.owner, "agent:pi");
+  assert.equal(review.blocker, null);
+  assert.deepEqual(envelope.metadata.tags, ["coverage", "edge:case", true, null, 42]);
+});
+
+test("Work envelopes reject malformed frontmatter lines without a colon", () => {
+  assert.throws(
+    () => parseWorkEnvelope(`---
+workType: flow.implement
+issueRef ISSUE-126
+repoKey: app_api
+---
+
+Body.
+`),
+    /Invalid work envelope frontmatter line: issueRef ISSUE-126/,
+  );
+});
+
+test("Work envelopes reject an empty body after valid frontmatter", () => {
+  assert.throws(
+    () => parseWorkEnvelope(`---
+workType: flow.implement
+issueRef: ISSUE-127
+repoKey: app_api
+executionMode: background
+---
+`),
+    /expected string to have >=1 characters/,
+  );
+});
+
+test("Work envelopes preserve quoted strings with special characters", () => {
+  const envelope = parseWorkEnvelope(`---
+workType: flow.remediate
+issueRef: ISSUE-128
+repoKey: public_api
+executionMode: local_thread
+metadata:
+  command: "npm run test:fast -- test/work-envelope.test.ts"
+  path: 'src/work-envelope.ts:42'
+---
+
+Handle quoted punctuation.
+`);
+
+  assert.equal(envelope.metadata.command, "npm run test:fast -- test/work-envelope.test.ts");
+  assert.equal(envelope.metadata.path, "src/work-envelope.ts:42");
 });
 
 test("Work Runtime submits work envelopes idempotently", async () => {
@@ -1291,666 +3559,6 @@ Implement the bounded change.
   assert.equal(jobs[0].input.idempotencyKey, "ISSUE-124:implementation");
 });
 
-test("Readiness blocks failed worker results", () => {
-  const assessment = assessIssue({
-    issue: {
-      ref: "ISSUE-1",
-      title: "Test issue",
-      repoKeys: ["app_api"],
-      state: "running",
-      metadata: {},
-    },
-    workerResults: [
-      {
-        taskId: "worker-1",
-        issueRef: "ISSUE-1",
-        repoKey: "app_api",
-        status: "failed",
-        summary: "Tests failed",
-        changedFiles: [],
-        testsRun: ["pytest"],
-        blockers: ["pytest failed"],
-        completedAt: nowIso(),
-      },
-    ],
-  });
-
-  assert.equal(assessment.readyToAdvance, false);
-  assert.equal(assessment.findings.some((finding) => finding.severity === "blocker"), true);
-});
-
-test("Readiness blocks successful Worker output until handoff records exist", () => {
-  const assessment = assessIssue({
-    issue: {
-      ref: "ISSUE-11",
-      title: "Needs handoff",
-      repoKeys: ["app_api"],
-      state: "ready_to_run",
-      metadata: {},
-    },
-    workerResults: [
-      {
-        taskId: "worker-11",
-        issueRef: "ISSUE-11",
-        repoKey: "app_api",
-        status: "succeeded",
-        summary: "Changed code",
-        changedFiles: ["worker/src/example.py"],
-        testsRun: ["pytest"],
-        blockers: [],
-        completedAt: nowIso(),
-      },
-    ],
-  });
-
-  assert.equal(assessment.readyToAdvance, false);
-  assert.equal(
-    assessment.findings.map((finding) => finding.summary).join(","),
-    "Acceptance evidence is missing.,Documentation disposition is missing.,Pull request is missing.",
-  );
-});
-
-test("Readiness supports local no-PR workflows when code review is disabled", () => {
-  const assessment = assessIssue({
-    issue: {
-      ref: "LOCAL-11",
-      title: "Needs local closeout",
-      repoKeys: ["app_api"],
-      state: "ready_to_run",
-      metadata: {},
-    },
-    workerResults: [
-      {
-        taskId: "worker-local-11",
-        issueRef: "LOCAL-11",
-        repoKey: "app_api",
-        status: "succeeded",
-        summary: "Changed code",
-        changedFiles: ["worker/src/example.py"],
-        testsRun: ["pytest"],
-        blockers: [],
-        completedAt: nowIso(),
-      },
-    ],
-    evidenceRecorded: true,
-    documentationRecorded: true,
-    codeReviewRequired: false,
-  });
-
-  assert.equal(assessment.readyToAdvance, true);
-  assert.equal(assessment.reviewReady, true);
-  assert.equal(assessment.findings.some((finding) => finding.summary === "Pull request is missing."), false);
-});
-
-test("Readiness treats retryable handoff timeout after success as warning", () => {
-  const assessment = assessIssue({
-    issue: {
-      ref: "ISSUE-12",
-      title: "Retryable timeout after success",
-      repoKeys: ["app_api"],
-      state: "ready_to_run",
-      metadata: {},
-    },
-    workerResults: [
-      {
-        taskId: "worker-success",
-        issueRef: "ISSUE-12",
-        repoKey: "app_api",
-        executor: "live_agent_thread",
-        status: "succeeded",
-        summary: "Existing agent-thread evidence is valid",
-        changedFiles: [],
-        testsRun: ["pixi run pytest shared/provider/tests/test_panorama_one_click_contract.py"],
-        blockers: [],
-        completedAt: nowIso(),
-      },
-      {
-        taskId: "worker-timeout",
-        issueRef: "ISSUE-12",
-        repoKey: "app_api",
-        status: "blocked",
-        summary: "Agent handoff timed out or was interrupted before returning a structured result.",
-        changedFiles: [],
-        testsRun: [],
-        blockers: ["Agent handoff timed out or was interrupted before returning a structured result."],
-        completedAt: nowIso(),
-      },
-    ],
-    review: {
-      prUrl: "https://github.com/ExampleOrg/app-api/pull/12",
-      isDraft: false,
-      mergeable: "MERGEABLE",
-      mergeStateStatus: "CLEAN",
-      checksPassing: true,
-      autoReviewStatus: "passed",
-      humanReviewRequired: true,
-      reviewDecision: "REVIEW_REQUIRED",
-      reviewCommentCount: 2,
-      reviewCommentAuthors: ["khwiri", "developer-hla"],
-    },
-    evidenceRecorded: true,
-    documentationRecorded: true,
-  });
-
-  assert.equal(assessment.readyToAdvance, true);
-  assert.equal(assessment.reviewReady, true);
-  assert.equal(assessment.findings.some((finding) => finding.severity === "blocker"), false);
-  assert.equal(assessment.findings.some((finding) => finding.summary.includes("timed out")), true);
-  const approvalFinding = assessment.findings.find((finding) => finding.summary === "Approval review is required.");
-  assert.match(approvalFinding?.detail ?? "", /Comment-only reviews do not satisfy approval-required review policy/);
-  const commentFinding = assessment.findings.find((finding) => finding.summary === "Review comments are present.");
-  assert.match(commentFinding?.detail ?? "", /khwiri, developer-hla/);
-});
-
-test("Readiness ignores obsolete undraft executor blockers once PR is ready", () => {
-  const assessment = assessIssue({
-    issue: {
-      ref: "ISSUE-15272",
-      title: "Coverage PR",
-      repoKeys: ["app_api"],
-      state: "blocked",
-      metadata: {},
-    },
-    workerResults: [
-      {
-        taskId: "worker-issue-15272-implementation",
-        issueRef: "ISSUE-15272",
-        repoKey: "app_api",
-        status: "succeeded",
-        summary: "Implemented coverage changes.",
-        changedFiles: ["scripts/check_coverage.py"],
-        testsRun: ["pixi run coverage-check"],
-        blockers: [],
-        completedAt: nowIso(),
-      },
-      {
-        taskId: "worker-issue-15272-undraft-pr1406",
-        issueRef: "ISSUE-15272",
-        repoKey: "app_api",
-        status: "blocked",
-        summary: "Agent handoff could not find provider credentials.",
-        changedFiles: [],
-        testsRun: [],
-        blockers: ["Agent handoff could not find provider credentials."],
-        nextPickup: "Configure credentials, then undraft PR #1406.",
-        handoffPrompt: "Convert PR https://github.com/ExampleOrg/app-api/pull/1406 from draft to ready for review.",
-        completedAt: nowIso(),
-      },
-    ],
-    review: {
-      prUrl: "https://github.com/ExampleOrg/app-api/pull/1344",
-      isDraft: false,
-      mergeable: "MERGEABLE",
-      mergeStateStatus: "CLEAN",
-      checksPassing: true,
-      autoReviewStatus: "passed",
-    },
-    evidenceRecorded: true,
-    documentationRecorded: true,
-  });
-
-  assert.equal(assessment.readyToAdvance, true);
-  assert.equal(assessment.findings.some((finding) => finding.summary.includes("provider credentials")), false);
-  assert.equal(assessment.findings.some((finding) => finding.summary.includes("Pull request is still draft")), false);
-});
-
-test("Readiness ignores obsolete missing-workspace blockers once a worktree exists", () => {
-  const assessment = assessIssue({
-    issue: {
-      ref: "ISSUE-15389",
-      title: "Evaluate Celery locking",
-      repoKeys: ["app_api"],
-      state: "ready_to_run",
-      metadata: {
-        "workflow.repos.app_api.worktree_path": "/repo/app-api/.worktrees/feature-issue-15389",
-      },
-    },
-    workerResults: [
-      {
-        taskId: "worker-retry-1",
-        issueRef: "ISSUE-15389",
-        repoKey: "app_api",
-        status: "blocked",
-        summary: "Handoff workspace path is missing for app_api.",
-        changedFiles: [],
-        testsRun: [],
-        blockers: ["Handoff workspace path is missing."],
-        nextPickup: "Run prepare workspace for the routed repo, then retry advance/autoflow.",
-        completedAt: nowIso(),
-      },
-    ],
-  });
-
-  assert.equal(assessment.readyToAdvance, true);
-  assert.equal(assessment.reviewReady, false);
-  assert.equal(assessment.findings.some((finding) => finding.severity === "blocker"), false);
-  assert.equal(assessment.findings.some((finding) => finding.summary.includes("workspace path is missing")), false);
-});
-
-test("Readiness treats provider-credential executor failures as retryable", () => {
-  const assessment = assessIssue({
-    issue: {
-      ref: "ISSUE-15738",
-      title: "Review remediation",
-      repoKeys: ["app_api"],
-      state: "blocked",
-      metadata: {
-        "workflow.repos.app_api.worktree_path": "/repo/app-api/.worktrees/feature-issue-15738",
-      },
-    },
-    workerResults: [
-      {
-        taskId: "worker-issue-15738-implementation",
-        issueRef: "ISSUE-15738",
-        repoKey: "app_api",
-        status: "succeeded",
-        summary: "Implemented GeoParquet compatibility fix.",
-        changedFiles: ["worker/src/services/controller_data/etl/provider_parquet.py"],
-        testsRun: ["pixi run pytest worker/tests/services/controller_data/etl/test_provider_parquet.py"],
-        blockers: [],
-        completedAt: nowIso(),
-      },
-      {
-        taskId: "worker-issue-15738-remediate",
-        issueRef: "ISSUE-15738",
-        repoKey: "app_api",
-        status: "blocked",
-        summary: "Agent handoff could not find provider credentials.",
-        changedFiles: [],
-        testsRun: [],
-        blockers: ["Agent handoff could not find provider credentials."],
-        nextPickup: "Configure provider credentials, then retry the handoff.",
-        completedAt: nowIso(),
-      },
-    ],
-    review: {
-      prUrl: "https://github.com/ExampleOrg/app-api/pull/1411",
-      isDraft: false,
-      checksPassing: false,
-      autoReviewStatus: "failed",
-    },
-  });
-
-  assert.equal(assessment.findings.some((finding) => finding.summary.includes("provider credentials")), false);
-  assert.equal(assessment.findings.some((finding) => finding.summary === "Pull request checks are not passing."), true);
-  assert.equal(assessment.findings.some((finding) => finding.summary === "Auto review checks failed."), true);
-});
-
-test("Readiness blocks duplicate review remediation when executor changes are unpushed", () => {
-  const assessment = assessIssue({
-    issue: {
-      ref: "ISSUE-15738",
-      title: "Review remediation",
-      repoKeys: ["app_api"],
-      state: "awaiting_human",
-      metadata: {
-        "workflow.repos.app_api.worktree_path": "/repo/app-api/.worktrees/feature-issue-15738",
-        "workflow.repos.app_api.dirty": true,
-      },
-    },
-    workerResults: [
-      {
-        taskId: "worker-issue-15738-remediate",
-        issueRef: "ISSUE-15738",
-        repoKey: "app_api",
-        status: "succeeded",
-        summary: "Fixed import ordering.",
-        changedFiles: ["worker/src/services/controller_data/etl/provider_parquet.py"],
-        testsRun: ["pre-commit run --files worker/src/services/controller_data/etl/provider_parquet.py"],
-        blockers: [],
-        completedAt: nowIso(),
-      },
-    ],
-    review: {
-      prUrl: "https://github.com/ExampleOrg/app-api/pull/1411",
-      isDraft: false,
-      checksPassing: false,
-      autoReviewStatus: "failed",
-    },
-  });
-
-  assert.equal(assessment.findings.some((finding) => finding.summary === "Executor changes are not pushed."), true);
-  assert.equal(assessment.readyToAdvance, false);
-});
-
-test("Readiness ignores stale review blockers once the pull request is merged", () => {
-  const assessment = assessIssue({
-    issue: {
-      ref: "ISSUE-1393",
-      title: "Merged PR",
-      repoKeys: ["app_api"],
-      state: "blocked",
-      metadata: {},
-    },
-    workerResults: [
-      {
-        taskId: "worker-1393",
-        issueRef: "ISSUE-1393",
-        repoKey: "app_api",
-        status: "succeeded",
-        summary: "Implemented fix",
-        changedFiles: [],
-        testsRun: [],
-        blockers: [],
-        completedAt: nowIso(),
-      },
-    ],
-    review: {
-      prUrl: "https://github.com/ExampleOrg/app-api/pull/1393",
-      state: "MERGED",
-      mergedAt: "2026-05-11T19:11:01Z",
-      isDraft: false,
-      checksPassing: false,
-      autoReviewStatus: "failed",
-      humanReviewRequired: true,
-    },
-    evidenceRecorded: true,
-    documentationRecorded: true,
-  });
-
-  assert.equal(assessment.reviewReady, true);
-  assert.equal(assessment.findings.some((finding) => finding.severity === "blocker"), false);
-});
-
-test("Readiness reports external provider escalation as a blocker", () => {
-  const assessment = assessIssue({
-    issue: {
-      ref: "ISSUE-15",
-      title: "Provider needs samples",
-      repoKeys: ["app_api"],
-      state: "blocked",
-      metadata: {
-        externalProviderEscalation: {
-          provider: "Provider",
-          summary: "Provider may need to investigate the sample files.",
-          blocker: "Need affected Provider file IDs or batch IDs.",
-          recordedAt: nowIso(),
-        },
-      },
-    },
-  });
-
-  assert.equal(assessment.readyToAdvance, false);
-  assert.equal(assessment.reviewReady, false);
-  assert.equal(
-    assessment.findings.some((finding) => finding.summary === "Blocked on Provider escalation."),
-    true,
-  );
-  const escalationFinding = assessment.findings.find((finding) => finding.summary === "Blocked on Provider escalation.");
-  assert.equal(escalationFinding?.detail, "Need affected Provider file IDs or batch IDs.");
-});
-
-test("Readiness blocks draft pull requests", () => {
-  const assessment = assessIssue({
-    issue: {
-      ref: "ISSUE-13",
-      title: "Draft PR",
-      repoKeys: ["app_api"],
-      state: "ready_to_run",
-      metadata: {},
-    },
-    workerResults: [
-      {
-        taskId: "worker-13",
-        issueRef: "ISSUE-13",
-        repoKey: "app_api",
-        status: "succeeded",
-        summary: "Changed code",
-        changedFiles: ["worker/src/example.py"],
-        testsRun: ["pytest"],
-        blockers: [],
-        completedAt: nowIso(),
-      },
-    ],
-    evidenceRecorded: true,
-    documentationRecorded: true,
-    review: {
-      prUrl: "https://github.com/ExampleOrg/app-api/pull/1",
-      isDraft: true,
-    },
-  });
-
-  assert.equal(assessment.readyToAdvance, false);
-  assert.equal(assessment.findings[0].summary, "Pull request is still draft.");
-});
-
-test("Readiness blocks pull requests missing the repo template", () => {
-  const assessment = assessIssue({
-    issue: {
-      ref: "ISSUE-22",
-      title: "Missing PR template",
-      repoKeys: ["app_api"],
-      state: "ready_to_run",
-      metadata: {},
-    },
-    workerResults: [
-      {
-        taskId: "worker-22",
-        issueRef: "ISSUE-22",
-        repoKey: "app_api",
-        status: "succeeded",
-        summary: "Changed code",
-        changedFiles: ["worker/src/example.py"],
-        testsRun: ["pytest"],
-        blockers: [],
-        completedAt: nowIso(),
-      },
-    ],
-    evidenceRecorded: true,
-    documentationRecorded: true,
-    review: {
-      prUrl: "https://github.com/ExampleOrg/app-api/pull/1402",
-      isDraft: false,
-      checksPassing: true,
-      autoReviewStatus: "passed",
-      templateMissingHeadings: [
-        "Issue or Reason for Change",
-        "Description",
-        "Summary of Changes",
-        "Related PRs or Issues",
-      ],
-    },
-  });
-
-  assert.equal(assessment.readyToAdvance, false);
-  assert.equal(assessment.reviewReady, false);
-  assert.equal(assessment.findings[0].summary, "Pull request does not follow the repo template.");
-  assert.match(assessment.findings[0].detail ?? "", /Issue or Reason for Change/);
-});
-
-test("Readiness blocks conflicted pull requests", () => {
-  const assessment = assessIssue({
-    issue: {
-      ref: "ISSUE-16",
-      title: "Conflicted PR",
-      repoKeys: ["app_api"],
-      state: "ready_to_run",
-      metadata: {},
-    },
-    workerResults: [
-      {
-        taskId: "worker-16",
-        issueRef: "ISSUE-16",
-        repoKey: "app_api",
-        status: "succeeded",
-        summary: "Changed code",
-        changedFiles: ["worker/src/example.py"],
-        testsRun: ["pytest"],
-        blockers: [],
-        completedAt: nowIso(),
-      },
-    ],
-    evidenceRecorded: true,
-    documentationRecorded: true,
-    review: {
-      prUrl: "https://github.com/ExampleOrg/app-api/pull/1",
-      isDraft: false,
-      mergeable: "CONFLICTING",
-      mergeStateStatus: "DIRTY",
-      checksPassing: true,
-    },
-  });
-
-  assert.equal(assessment.readyToAdvance, false);
-  assert.equal(assessment.reviewReady, false);
-  assert.equal(assessment.findings[0].summary, "Pull request has merge conflicts.");
-});
-
-test("Readiness blocks auto-review must-fix feedback", () => {
-  const assessment = assessIssue({
-    issue: {
-      ref: "ISSUE-21",
-      title: "Must fix PR",
-      repoKeys: ["public_api"],
-      state: "ready_to_run",
-      metadata: {},
-    },
-    workerResults: [
-      {
-        taskId: "worker-21",
-        issueRef: "ISSUE-21",
-        repoKey: "public_api",
-        status: "succeeded",
-        summary: "Changed code",
-        changedFiles: ["packages/example.ts"],
-        testsRun: ["pnpm test"],
-        blockers: [],
-        completedAt: nowIso(),
-      },
-    ],
-    evidenceRecorded: true,
-    documentationRecorded: true,
-    review: {
-      prUrl: "https://github.com/ExampleOrg/public-api/pull/2971",
-      isDraft: false,
-      checksPassing: true,
-      autoReviewStatus: "passed",
-      autoReviewMustFix: true,
-      autoReviewMustFixDetail: "New test files use // @ts-nocheck.",
-    },
-  });
-
-  assert.equal(assessment.readyToAdvance, false);
-  assert.equal(assessment.reviewReady, false);
-  assert.equal(assessment.findings[0].summary, "Auto review has must-fix feedback.");
-  assert.equal(assessment.findings[0].detail, "New test files use // @ts-nocheck.");
-});
-
-test("Readiness ignores empty auto-review must-fix text from stale metadata", () => {
-  const assessment = assessIssue({
-    issue: {
-      ref: "ISSUE-22",
-      title: "Empty must-fix metadata",
-      repoKeys: ["app_api"],
-      state: "ready_to_run",
-      metadata: {},
-    },
-    workerResults: [
-      {
-        taskId: "worker-22",
-        issueRef: "ISSUE-22",
-        repoKey: "app_api",
-        status: "succeeded",
-        summary: "Changed code",
-        changedFiles: ["worker/src/example.py"],
-        testsRun: ["pytest"],
-        blockers: [],
-        completedAt: nowIso(),
-      },
-    ],
-    evidenceRecorded: true,
-    documentationRecorded: true,
-    review: {
-      prUrl: "https://github.com/ExampleOrg/app-api/pull/1405",
-      isDraft: false,
-      checksPassing: true,
-      autoReviewStatus: "passed",
-      autoReviewMustFix: true,
-      autoReviewMustFixDetail: "None found.",
-    },
-  });
-
-  assert.equal(assessment.reviewReady, true);
-  assert.equal(assessment.findings.some((finding) => finding.summary === "Auto review has must-fix feedback."), false);
-});
-
-test("Readiness requires auto-review confirmations to be posted to the code review", () => {
-  const base = {
-    issue: {
-      ref: "ISSUE-23",
-      title: "Needs confirmation",
-      repoKeys: ["app_api"],
-      state: "ready_to_run" as const,
-      metadata: {},
-    },
-    workerResults: [
-      {
-        taskId: "worker-23",
-        issueRef: "ISSUE-23",
-        repoKey: "app_api",
-        status: "succeeded" as const,
-        summary: "Changed code",
-        changedFiles: ["worker/src/example.py"],
-        testsRun: ["pytest"],
-        blockers: [],
-        completedAt: nowIso(),
-      },
-    ],
-    evidenceRecorded: true,
-    documentationRecorded: true,
-  };
-
-  const missingPost = assessIssue({
-    ...base,
-    review: {
-      prUrl: "https://github.com/ExampleOrg/app-api/pull/1402",
-      isDraft: false,
-      checksPassing: true,
-      autoReviewStatus: "passed",
-      autoReviewNeedsConfirmation: true,
-      autoReviewNeedsConfirmationDetail: "Confirm Provider semantics.",
-      autoReviewNeedsConfirmationDisposition: "accept",
-    },
-  });
-
-  assert.equal(missingPost.reviewReady, false);
-  assert.equal(missingPost.findings[0].summary, "Auto review confirmation has not been posted to the code review.");
-
-  const posted = assessIssue({
-    ...base,
-    review: {
-      prUrl: "https://github.com/ExampleOrg/app-api/pull/1402",
-      isDraft: false,
-      checksPassing: true,
-      autoReviewStatus: "passed",
-      autoReviewNeedsConfirmation: true,
-      autoReviewNeedsConfirmationDetail: "Confirm Provider semantics.",
-      autoReviewNeedsConfirmationDisposition: "accept",
-      autoReviewNeedsConfirmationPostedUrl: "https://github.com/ExampleOrg/app-api/pull/1402#issuecomment-1",
-    },
-  });
-
-  assert.equal(posted.reviewReady, true);
-  assert.equal(
-    posted.findings.some((finding) => finding.summary === "Auto review requires confirmation."),
-    false,
-  );
-});
-
-test("Readiness blocks worker spawn when repo routing is missing", () => {
-  const assessment = assessIssue({
-    issue: {
-      ref: "ISSUE-18",
-      title: "Missing route",
-      repoKeys: [],
-      state: "queued",
-      metadata: {},
-    },
-  });
-
-  assert.equal(assessment.readyToAdvance, false);
-  assert.equal(assessment.findings[0].summary, "Repo routing is missing.");
-});
 
 test("Work Runtime advances by reconciling then requesting confirmation", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
@@ -2487,20 +4095,22 @@ test("Work Runtime creates Jira issues through Flow without generated labels", a
   });
   const session = await workRuntime.createSession("session-create-jira");
 
-  const issue = await workRuntime.createJiraIssue(session.id, {
+  const options = {
     issueType: "Bug",
     summary: "GeoParquet Provider ETL fails on GeoArrow WKB parquet schema",
     description: "Follow-up from ISSUE-15461.",
     repoKeys: ["app_api"],
-  });
+  } satisfies CreateIssueOptions;
+  await approveIssueIntake(workRuntime, session.id, options);
+  const issue = await workRuntime.createJiraIssue(session.id, options);
   const selectedSession = await store.readSession(session.id);
 
-  assert.deepEqual(createdInput, {
-    projectKey: "ISSUE",
-    issueType: "Bug",
-    summary: "GeoParquet Provider ETL fails on GeoArrow WKB parquet schema",
-    description: "Follow-up from ISSUE-15461.",
-  });
+  const jiraCreatedInput = createdInput as { projectKey?: string; issueType?: string; summary?: string; description?: string; title?: string };
+  assert.equal(jiraCreatedInput.projectKey, "ISSUE");
+  assert.equal(jiraCreatedInput.issueType, "Bug");
+  assert.equal(jiraCreatedInput.summary, "GeoParquet Provider ETL fails on GeoArrow WKB parquet schema");
+  assert.equal(jiraCreatedInput.title, "GeoParquet Provider ETL fails on GeoArrow WKB parquet schema");
+  assert.equal(jiraCreatedInput.description?.includes("## Problem"), true);
   assert.equal(issue.ref, "ISSUE-15738");
   assert.equal(issue.metadata.jiraIssueType, "Bug");
   assert.deepEqual(issue.metadata.jiraLabels, []);
@@ -2552,23 +4162,35 @@ test("Work Runtime creates provider-neutral issues without requiring a Jira proj
   });
   const session = await workRuntime.createSession("session-create-provider-neutral");
 
-  const issue = await workRuntime.createIssue(session.id, {
+  const options = {
     issueType: "Task",
     summary: "Harden Flow issue creation",
     description: "Provider-neutral issue creation should not require Jira config.",
     repoKeys: ["main"],
-  });
+  } satisfies CreateIssueOptions;
+  await approveIssueIntake(workRuntime, session.id, options);
+  const issue = await workRuntime.createIssue(session.id, options);
 
-  assert.deepEqual(createdInput, {
-    projectKey: undefined,
-    issueType: "Task",
-    summary: "Harden Flow issue creation",
-    description: "Provider-neutral issue creation should not require Jira config.",
-  });
+  const neutralCreatedInput = createdInput as { projectKey?: string; issueType?: string; summary?: string; description?: string; title?: string };
+  assert.equal(neutralCreatedInput.projectKey, undefined);
+  assert.equal(neutralCreatedInput.issueType, "Task");
+  assert.equal(neutralCreatedInput.summary, "Harden Flow issue creation");
+  assert.equal(neutralCreatedInput.title, "Harden Flow issue creation");
+  assert.equal(neutralCreatedInput.description?.includes("## Problem"), true);
   assert.equal(issue.ref, "GH-15738");
   assert.equal(issue.metadata.issueType, "task");
   assert.equal(issue.metadata.jiraIssueType, undefined);
   assert.deepEqual(issue.repoKeys, ["main"]);
+});
+
+test("GitHub issue creation keeps structured descriptions in the issue body", () => {
+  const body = githubIssueCreateBody({
+    summary: "Add first-class Flow review command",
+    description: "## Problem\nDetailed issue body.",
+  });
+
+  assert.equal(body, "## Problem\nDetailed issue body.");
+  assert.equal(githubIssueCreateBody({ summary: "Fallback summary" }), "Fallback summary");
 });
 
 test("Work Runtime keeps local provider issue metadata provider-neutral", async () => {
@@ -2582,10 +4204,12 @@ test("Work Runtime keeps local provider issue metadata provider-neutral", async 
   });
   const session = await workRuntime.createSession("session-create-local");
 
-  const issue = await workRuntime.createIssue(session.id, {
+  const options = {
     issueType: "Task",
     summary: "Local provider metadata",
-  });
+  } satisfies CreateIssueOptions;
+  await approveIssueIntake(workRuntime, session.id, options);
+  const issue = await workRuntime.createIssue(session.id, options);
 
   assert.equal(issue.ref, "FLOW-1");
   assert.equal(issue.metadata.issueStatus, "To Do");
@@ -3585,6 +5209,61 @@ test("Dashboard queue reconciles and hides closed issue tracker records", async 
   assert.equal(closed?.state, "done");
 });
 
+test("Dashboard queue reconciles closed issue tracker status without resolution metadata", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-dashboard-closed-status-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  await ledger.writeIssue({
+    ref: "GH-163-CLOSED",
+    title: "Closed GitHub issue",
+    repoKeys: ["app_api"],
+    state: "awaiting_review",
+    metadata: {
+      issueStatus: "Closed",
+      issueStatusCategory: "Complete",
+    },
+  });
+
+  const queue = await workRuntime.inspectDashboardQueue(10);
+  const closed = await ledger.readIssue("GH-163-CLOSED");
+
+  assert.equal(queue.some((issue) => issue.ref === "GH-163-CLOSED"), false);
+  assert.equal(closed?.state, "done");
+});
+
+test("Dashboard queue reconciles merged pull requests into done state", async () => {
+  const ledger = new MemoryWorkflowLedger();
+  const reconciliation = new ReconciliationEngine({
+    topology: legacyHostTopology,
+    ledger,
+    sourceControl: {
+      async inspect() {
+        return {
+          branch: "main",
+          headSha: "abc123",
+          dirty: false,
+          entries: [],
+        };
+      },
+    },
+  });
+  const issue = await ledger.writeIssue({
+    ref: "GH-163-MERGED",
+    title: "Merged GitHub pull request",
+    repoKeys: ["app_api"],
+    state: "selected",
+    metadata: {
+      prUrl: "https://github.com/example/flow/pull/163",
+      prMergedAt: "2026-05-31T08:00:00Z",
+    },
+  });
+
+  await reconciliation.reconcile(issue);
+  const merged = await ledger.readIssue("GH-163-MERGED");
+
+  assert.equal(merged?.state, "done");
+});
+
 test("Dashboard queue omits source-control and provider internals", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-dashboard-public-contract-"));
   const ledger = new MemoryWorkflowLedger();
@@ -4023,12 +5702,339 @@ test("Work Runtime records current local thread against a pending handoff reques
   assert.equal(record.result.taskId, requested.handoffRequest?.id);
   assert.equal(record.result.workJobId, requested.handoffRequest?.workJobId);
   assert.equal(record.result.executor, "live_agent_thread");
+  assert.deepEqual(record.nextJsonCommands?.map((command) => command.request.mode), [
+    "recordEvidence",
+    "recordPullRequest",
+    "observe",
+    "advance",
+  ]);
+  assert.deepEqual(record.nextJsonCommands?.[0]?.request, {
+    op: "workflow",
+    mode: "recordEvidence",
+    id: "ISSUE-33",
+    summary: "<verification summary>",
+    criteria: ["<acceptance criterion>"],
+  });
   assert.equal(results[0].executor, "live_agent_thread");
   assert.equal(runs.at(-1)?.status, "succeeded");
   assert.equal(jobs[0].claimedBy, "live_agent_thread");
   assert.equal(jobs[0].status, "succeeded");
   assert.equal(jobResults[0].workerResult?.taskId, requested.handoffRequest?.id);
   assert.notEqual(advanced.session.pendingConfirmation?.action, "request_execution");
+});
+
+test("Work Runtime reports next JSON commands for active handoffs in observe", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-observe-json-commands-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  const session = await workRuntime.createSession("session-observe-json-commands");
+  await workRuntime.selectIssue(session.id, {
+    ref: "ISSUE-34",
+    title: "Observe JSON commands",
+    repoKeys: ["app_api"],
+    state: "ready_to_run",
+    metadata: {
+      "workflow.repos.app_api.worktree_path": "/repo/app-api/.worktrees/feature-issue-34",
+    },
+  });
+
+  const pending = await workRuntime.advanceIssue(session.id);
+  const confirmationId = pending.session.pendingConfirmation?.id;
+  assert.ok(confirmationId);
+  const requested = await workRuntime.advanceIssue(session.id, confirmationId);
+  const observed = await workRuntime.observeFlowSubject({ ref: "ISSUE-34" });
+
+  assert.equal(requested.status, "execution_handoff");
+  assert.deepEqual(requested.nextJsonCommands?.[0]?.request, {
+    op: "workflow",
+    mode: "recordResult",
+    id: "ISSUE-34",
+    repoKey: "app_api",
+    taskId: requested.handoffRequest?.id,
+    workJobId: requested.handoffRequest?.workJobId,
+    status: "succeeded",
+    summary: "<summary>",
+    changedFiles: [],
+    testsRun: [],
+  });
+  assert.deepEqual(observed.nextJsonCommands?.[0]?.request, requested.nextJsonCommands?.[0]?.request);
+});
+
+test("Work Runtime retries retryable executor setup failures without recreating the workspace", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  const session = await workRuntime.createSession("session-retry-executor-setup");
+  const workspacePath = "/repo/app-api/.worktrees/bug-gh-376";
+  await workRuntime.selectIssue(session.id, {
+    ref: "GH-376",
+    title: "Retry executor setup",
+    repoKeys: ["app_api"],
+    state: "ready_to_run",
+    metadata: {
+      "workflow.repos.app_api.worktree_path": workspacePath,
+    },
+  });
+
+  const firstPending = await workRuntime.advanceIssue(session.id);
+  const firstConfirmationId = firstPending.session.pendingConfirmation?.id;
+  assert.ok(firstConfirmationId);
+  const firstApproved = await workRuntime.advanceIssue(session.id, firstConfirmationId);
+  assert.equal(firstApproved.status, "execution_handoff");
+  assert.ok(firstApproved.handoffRequest?.workJobId);
+  assert.ok(firstApproved.handoffRequest?.id);
+
+  await workRuntime.recordLocalThreadResult(session.id, {
+    issueRef: "GH-376",
+    repoKey: "app_api",
+    taskId: firstApproved.handoffRequest.id,
+    workJobId: firstApproved.handoffRequest.workJobId,
+    status: "failed",
+    summary: "Executor setup failed: @earendil-works/pi-coding-agent could not be imported.",
+    blockers: ["Install @earendil-works/pi-coding-agent, then retry the handoff."],
+  });
+
+  const doctor = await workRuntime.diagnoseIssue(session.id);
+  assert.equal(doctor.nextAction.type, "retry_execution");
+  assert.match(doctor.nextAction.summary, /Retry the execution handoff/);
+
+  const retryPending = await workRuntime.advanceIssue(session.id);
+  const retryConfirmationId = retryPending.session.pendingConfirmation?.id;
+  assert.equal(retryPending.status, "needs_confirmation");
+  assert.equal(retryPending.session.pendingConfirmation?.action, "request_execution");
+  assert.ok(retryConfirmationId);
+  const retryApproved = await workRuntime.advanceIssue(session.id, retryConfirmationId);
+  assert.equal(retryApproved.status, "execution_handoff");
+  assert.ok(retryApproved.handoffRequest?.workJobId);
+
+  const jobs = await ledger.listWorkJobs("GH-376");
+  assert.equal(jobs.length, 2);
+  assert.equal(jobs[0].status, "failed");
+  assert.equal(jobs[1].status, "queued");
+  assert.equal(jobs[0].input.workspacePath, workspacePath);
+  assert.equal(jobs[1].input.workspacePath, workspacePath);
+  assert.equal((await ledger.readIssue("GH-376"))?.metadata["workflow.repos.app_api.worktree_path"], workspacePath);
+});
+
+test("Work Runtime doctor treats blocked execution jobs without Worker results as retryable handoff failures", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  const session = await workRuntime.createSession("session-retry-blocked-job");
+  const workspacePath = "/repo/app-api/.worktrees/bug-gh-378";
+  await workRuntime.selectIssue(session.id, {
+    ref: "GH-378",
+    title: "Retry raw blocked work job",
+    repoKeys: ["app_api"],
+    state: "selected",
+    metadata: {
+      "workflow.repos.app_api.worktree_path": workspacePath,
+    },
+  });
+  const job = await workRuntime.submitWorkEnvelope(session.id, {
+    issueRef: "GH-378",
+    repoKey: "app_api",
+    workType: "flow.implement",
+    executionMode: "local_thread",
+    body: "Use Flow to work this prompt.",
+    metadata: {
+      workspacePath,
+      handoffTaskId: "worker-gh-378",
+    },
+    requiredCapabilities: [],
+  });
+  const completedAt = nowIso();
+  await ledger.recordWorkJob({
+    ...job,
+    status: "blocked",
+    claimedBy: "live_agent_thread",
+    claimedAt: completedAt,
+    updatedAt: completedAt,
+    completedAt,
+  });
+  await ledger.recordWorkJobResult({
+    jobId: job.id,
+    issueRef: "GH-378",
+    repoKey: "app_api",
+    workType: "flow.implement",
+    status: "blocked",
+    summary: "Autoflow worker session stalled after reading large source files.",
+    evidence: ["Flow status reported idle while the work job remained running."],
+    completedAt,
+  });
+
+  const doctor = await workRuntime.diagnoseIssue(session.id);
+  const advanced = await workRuntime.advanceIssue(session.id);
+
+  assert.equal(doctor.nextAction.type, "retry_execution");
+  assert.equal(advanced.status, "needs_confirmation");
+  assert.equal(advanced.session.pendingConfirmation?.action, "request_execution");
+});
+
+test("Work Runtime keeps non-retryable worker failures blocked", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  const session = await workRuntime.createSession("session-nonretryable-worker-failure");
+  await workRuntime.selectIssue(session.id, {
+    ref: "GH-377",
+    title: "Non-retryable worker failure",
+    repoKeys: ["app_api"],
+    state: "ready_to_run",
+    metadata: {
+      "workflow.repos.app_api.worktree_path": "/repo/app-api/.worktrees/bug-gh-377",
+    },
+  });
+
+  const pending = await workRuntime.advanceIssue(session.id);
+  const confirmationId = pending.session.pendingConfirmation?.id;
+  assert.ok(confirmationId);
+  const approved = await workRuntime.advanceIssue(session.id, confirmationId);
+  assert.equal(approved.status, "execution_handoff");
+  assert.ok(approved.handoffRequest?.workJobId);
+  assert.ok(approved.handoffRequest?.id);
+
+  await workRuntime.recordLocalThreadResult(session.id, {
+    issueRef: "GH-377",
+    repoKey: "app_api",
+    taskId: approved.handoffRequest.id,
+    workJobId: approved.handoffRequest.workJobId,
+    status: "failed",
+    summary: "Tests failed.",
+    blockers: ["npm test failed."],
+    testsRun: ["npm test"],
+  });
+
+  const blocked = await workRuntime.advanceIssue(session.id);
+  const jobs = await ledger.listWorkJobs("GH-377");
+
+  assert.equal(blocked.status, "blocked");
+  assert.equal(blocked.session.pendingConfirmation, undefined);
+  assert.match(blocked.message, /npm test failed/);
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].status, "failed");
+});
+
+test("AutoflowService retries a targeted blocked issue when the latest failure is retryable", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    collaboration: new NoopCodeCollaborationAdapter(),
+  });
+  const session = await workRuntime.createSession("session-autoflow-targeted-retry");
+  const workspacePath = "/repo/app-api/.worktrees/bug-gh-376";
+  await workRuntime.selectIssue(session.id, {
+    ref: "GH-376",
+    title: "Targeted Autoflow retry",
+    repoKeys: ["app_api"],
+    state: "ready_to_run",
+    metadata: {
+      "workflow.repos.app_api.worktree_path": workspacePath,
+    },
+  });
+
+  const firstPending = await workRuntime.advanceIssue(session.id);
+  const firstConfirmationId = firstPending.session.pendingConfirmation?.id;
+  assert.ok(firstConfirmationId);
+  const firstApproved = await workRuntime.advanceIssue(session.id, firstConfirmationId);
+  assert.ok(firstApproved.handoffRequest?.id);
+  assert.ok(firstApproved.handoffRequest?.workJobId);
+  await workRuntime.recordLocalThreadResult(session.id, {
+    issueRef: "GH-376",
+    repoKey: "app_api",
+    taskId: firstApproved.handoffRequest.id,
+    workJobId: firstApproved.handoffRequest.workJobId,
+    status: "failed",
+    summary: "Executor setup failed: Pi SDK import failed.",
+    blockers: ["@earendil-works/pi-coding-agent is installed incorrectly."],
+  });
+
+  const service = new AutoflowService({
+    projectId: "flow",
+    runtime: workRuntime,
+    agentSessionDriver: {
+      async getSession() {
+        return {
+          id: "agent-gh-376",
+          workspacePath,
+          status: "done",
+          timeline: [],
+        };
+      },
+      async openOrCreateIssueSession() {
+        return {
+          id: "agent-gh-376",
+          workspacePath,
+          status: "active",
+          timeline: [],
+        };
+      },
+      async sendUserMessage() {
+        return {
+          id: "agent-gh-376",
+          workspacePath,
+          status: "done",
+          summary: "Implemented and committed GH-376.",
+          timeline: [],
+        };
+      },
+      async postPrompt() {
+        return {
+          id: "agent-gh-376",
+          workspacePath,
+          status: "done",
+          summary: "Implemented and committed GH-376.",
+          timeline: [
+            {
+              id: "tool-edit",
+              role: "tool",
+              toolName: "apply_patch",
+              content: "edited",
+              diff: { path: "src/work-runtime.ts" },
+              createdAt: nowIso(),
+            },
+            {
+              id: "tool-test",
+              role: "tool",
+              toolName: "npm test",
+              content: "tests passed",
+              createdAt: nowIso(),
+            },
+            {
+              id: "tool-commit",
+              role: "tool",
+              toolName: "git",
+              content: "commit abc123",
+              createdAt: nowIso(),
+            },
+            {
+              id: "assistant-done",
+              role: "assistant",
+              content: "Implemented and committed GH-376.",
+              createdAt: nowIso(),
+            },
+          ],
+        };
+      },
+    },
+    autoReconcileOnSlotAvailable: false,
+  });
+
+  const started = await service.reconcile({ issueRefs: ["GH-376"] });
+  assert.equal(started.activeCount, 1);
+  const status = await service.waitForIdle();
+  const jobs = await ledger.listWorkJobs("GH-376");
+  const results = await ledger.listWorkerResults("GH-376");
+
+  assert.equal(status.issues["GH-376"]?.phase, "idle");
+  assert.equal(jobs.length, 2);
+  assert.equal(jobs[0].status, "failed");
+  assert.equal(jobs[1].status, "succeeded");
+  assert.equal(results.at(-1)?.status, "succeeded");
+  assert.equal(results.at(-1)?.workJobId, jobs[1].id);
+  assert.equal((await ledger.readIssue("GH-376"))?.state, "awaiting_review");
 });
 
 test("Work Runtime routes and prepares main work in the project root", async () => {
@@ -4075,159 +6081,6 @@ test("Work Runtime routes and prepares main work in the project root", async () 
   );
 });
 
-test("Work Runtime autoflow stops at execution handoff confirmation", async () => {
-  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
-  const ledger = new MemoryWorkflowLedger();
-  const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
-  const session = await workRuntime.createSession("session-autoflow");
-  await workRuntime.selectIssue(session.id, {
-    ref: "ISSUE-16",
-    title: "Autoflow",
-    repoKeys: ["app_api"],
-    state: "queued",
-    metadata: {
-      work_dir: "/tmp/app-api-worktree",
-    },
-  });
-
-  const result = await workRuntime.autoFlowIssue(session.id);
-
-  assert.equal(result.status, "needs_confirmation");
-  assert.equal(result.workerResults.length, 0);
-  assert.equal(result.steps.map((step) => step.status).join(","), "needs_confirmation");
-  assert.equal(result.session.pendingConfirmation?.action, "request_execution");
-  assert.equal(result.handoffRequest, undefined);
-  const issue = await ledger.readIssue("ISSUE-16");
-  assert.equal(issue?.metadata["workflow.autoflow.attempts"], 1);
-  assert.equal(typeof issue?.metadata["workflow.autoflow.last_attempted_at"], "string");
-});
-
-test("Work Runtime resets Autoflow attempt state through Flow", async () => {
-  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
-  const ledger = new MemoryWorkflowLedger();
-  const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
-  const session = await workRuntime.createSession("session-autoflow-reset");
-  await ledger.writeIssue({
-    ref: "ISSUE-17",
-    title: "Autoflow reset",
-    repoKeys: ["main"],
-    state: "blocked",
-    metadata: {
-      "workflow.autoflow.attempts": 3,
-      "workflow.autoflow.last_attempted_at": "2026-05-15T20:00:00.000Z",
-      "workflow.autoflow.current_action": "mark_pr_ready_for_review",
-      "workflow.autoflow.current_action_started_at": "2026-05-15T20:00:00.000Z",
-    },
-  });
-
-  const [reset] = await workRuntime.resetAutoflowState(session.id, ["ISSUE-17"]);
-
-  assert.equal(reset.ref, "ISSUE-17");
-  assert.equal(reset.metadata["workflow.autoflow.attempts"], 0);
-  assert.equal(reset.metadata["workflow.autoflow.last_attempted_at"], "");
-  assert.equal(reset.metadata["workflow.autoflow.current_action"], "");
-  assert.equal(reset.metadata["workflow.autoflow.current_action_started_at"], "");
-});
-
-test("Work Runtime autoflow prepares a missing workspace before execution handoff", async () => {
-  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
-  const ledger = new MemoryWorkflowLedger();
-  const workRuntime = testWorkRuntime({
-    store: new FlowStore({ root }),
-    ledger,
-    projectRoot: "/repo",
-    sourceControl: {
-      async inspect() {
-        throw new Error("unused");
-      },
-      async prepareWorktree(plan: any) {
-        assert.equal(plan.repoPath, "/repo/app-api");
-        assert.equal(plan.baseRef, "develop");
-        return {
-          branch: plan.branch,
-          headSha: "abc123",
-          dirty: false,
-          entries: [],
-        };
-      },
-    },
-  });
-  const session = await workRuntime.createSession("session-autoflow-prepare");
-  await workRuntime.selectIssue(session.id, {
-    ref: "ISSUE-17",
-    title: "Autoflow prepare",
-    repoKeys: ["app_api"],
-    state: "queued",
-    metadata: { branchKind: "feature" },
-  });
-
-  const result = await workRuntime.autoFlowIssue(session.id);
-
-  assert.equal(result.status, "needs_confirmation");
-  assert.equal(result.workerResults.length, 0);
-  assert.equal(result.steps.map((step) => step.session.pendingConfirmation?.action).join(","), "prepare_workspace,request_execution");
-  assert.equal(result.issue?.metadata["workflow.repos.app_api.worktree_path"], "/repo/app-api/.worktrees/feature-issue-17-autoflow-prepare");
-});
-
-test("Work Runtime autoflow marks draft pull requests ready before reassessing blockers", async () => {
-  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
-  const ledger = new MemoryWorkflowLedger();
-  let markedReady: { repo: string; number: number } | undefined;
-  const workRuntime = testWorkRuntime({
-    store: new FlowStore({ root }),
-    ledger,
-    collaboration: {
-      async findPullRequests() {
-        return [];
-      },
-      async getPullRequest(repo, number) {
-        return {
-          repo,
-          number,
-          title: "Draft PR",
-          url: `https://github.com/ExampleOrg/${repo}/pull/${number}`,
-          headRefName: "feature/ISSUE-20-draft",
-          state: "OPEN",
-          isDraft: markedReady ? false : true,
-          checksPassing: true,
-          autoReviewStatus: "passed",
-        };
-      },
-      async markPullRequestReadyForReview(repo, number) {
-        markedReady = { repo, number };
-        return (this as any).getPullRequest?.(repo, number);
-      },
-    },
-  });
-  const session = await workRuntime.createSession("session-autoflow-pr-ready");
-  await workRuntime.selectIssue(session.id, {
-    ref: "ISSUE-20",
-    title: "Draft PR",
-    repoKeys: ["app_api"],
-    state: "blocked",
-    metadata: {
-      prRepo: "app-api",
-      prNumber: 20,
-      prUrl: "https://github.com/ExampleOrg/app-api/pull/20",
-      prIsDraft: true,
-      prChecksPassing: true,
-      prAutoReviewStatus: "passed",
-      "workflow.repos.app_api.pr_repo": "app-api",
-      "workflow.repos.app_api.pr_number": 20,
-      "workflow.repos.app_api.pr_url": "https://github.com/ExampleOrg/app-api/pull/20",
-      "workflow.repos.app_api.pr_is_draft": true,
-      "workflow.repos.app_api.worktree_path": "/repo/app-api/.worktrees/feature-issue-20-draft",
-    },
-  });
-
-  const result = await workRuntime.autoFlowIssue(session.id);
-
-  assert.deepEqual(markedReady, { repo: "app-api", number: 20 });
-  assert.equal(result.steps.map((step) => step.status).join(","), "blocked,needs_confirmation");
-  const issue = await ledger.readIssue("ISSUE-20");
-  assert.equal(issue?.metadata["workflow.autoflow.current_action"], "mark_pr_ready_for_review");
-  assert.equal(issue?.metadata["workflow.autoflow.attempts"], 1);
-});
 
 test("Work Runtime records evidence and documentation handoff metadata", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
@@ -4435,11 +6288,22 @@ test("Work Runtime closeout records evidence, merges approved PR, and verifies J
   const ledger = new MemoryWorkflowLedger();
   const comments: Array<{ key: string; body: string }> = [];
   let merged: { repo: string; number: number; method?: string } | undefined;
+  let pruned: { repoPath: string; worktreePath: string; branch?: string; requireClean?: boolean } | undefined;
   let prMerged = false;
   let jiraReads = 0;
   const workRuntime = testWorkRuntime({
     store: new FlowStore({ root }),
     ledger,
+    projectRoot: root,
+    sourceControl: {
+      async inspect(repoPath) {
+        return { branch: "feature/ISSUE-19-closeout", headSha: "abc123", dirty: false, entries: [], worktreePath: repoPath };
+      },
+      async pruneWorktree(input) {
+        pruned = input;
+        return { removed: true, worktreePath: input.worktreePath, branch: input.branch };
+      },
+    },
     collaboration: {
       async findPullRequests() {
         return [];
@@ -4503,6 +6367,8 @@ test("Work Runtime closeout records evidence, merges approved PR, and verifies J
       prRepo: "app-api",
       prNumber: 19,
       prUrl: "https://github.com/ExampleOrg/app-api/pull/19",
+      "workflow.repos.app_api.branch": "feature/ISSUE-19-closeout",
+      "workflow.repos.app_api.worktree_path": "/repo/app-api/.worktrees/feature-ISSUE-19-closeout",
       evidenceRecorded: true,
       evidenceSummary: "Acceptance criteria passed.",
       evidenceSource: "pixi run pytest tests/test_closeout.py",
@@ -4519,6 +6385,19 @@ test("Work Runtime closeout records evidence, merges approved PR, and verifies J
 
   assert.equal(result.status, "merged_jira_verified");
   assert.deepEqual(merged, { repo: "app-api", number: 19, method: "squash" });
+  assert.deepEqual(pruned, {
+    repoPath: join(root, "app-api").replaceAll("\\", "/"),
+    worktreePath: "/repo/app-api/.worktrees/feature-ISSUE-19-closeout",
+    branch: "feature/ISSUE-19-closeout",
+    requireClean: true,
+  });
+  assert.deepEqual(result.prunedWorktrees, [{
+    repoKey: "app_api",
+    removed: true,
+    reason: undefined,
+    worktreePath: "/repo/app-api/.worktrees/feature-ISSUE-19-closeout",
+    branch: "feature/ISSUE-19-closeout",
+  }]);
   assert.equal(comments.length, 1);
   assert.match(comments[0]?.body ?? "", /Acceptance evidence recorded for PR closeout/);
   assert.equal(result.acceptanceCommentUrl, "https://example.atlassian.net/browse/ISSUE-19?focusedCommentId=20002");
@@ -4529,6 +6408,342 @@ test("Work Runtime closeout records evidence, merges approved PR, and verifies J
   assert.equal(issue?.metadata["workflow.closeout.status"], "merged_jira_verified");
   assert.equal(issue?.metadata["workflow.closeout.jira_verified"], true);
   assert.equal(issue?.metadata["workflow.closeout.merge_commit_sha"], "abc123");
+});
+
+test("Work Runtime advance closes out review-ready PRs without requesting execution", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const ledger = new MemoryWorkflowLedger();
+  let prMerged = false;
+  let pruned = false;
+  const workRuntime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    projectRoot: root,
+    sourceControl: {
+      async inspect(repoPath) {
+        return { branch: "feature/ISSUE-20-closeout", headSha: "def456", dirty: false, entries: [], worktreePath: repoPath };
+      },
+      async pruneWorktree() {
+        pruned = true;
+        return { removed: true, worktreePath: "/repo/app-api/.worktrees/feature-ISSUE-20-closeout", branch: "feature/ISSUE-20-closeout" };
+      },
+    },
+    collaboration: {
+      async findPullRequests() {
+        return [];
+      },
+      async getPullRequest(repo, number) {
+        return {
+          repo,
+          number,
+          title: "Closeout PR",
+          url: `https://github.com/ExampleOrg/${repo}/pull/${number}`,
+          headRefName: "feature/ISSUE-20-closeout",
+          state: prMerged ? "MERGED" : "OPEN",
+          mergedAt: prMerged ? "2026-05-15T15:00:00Z" : undefined,
+          mergeCommitSha: prMerged ? "def456" : undefined,
+          isDraft: false,
+          mergeable: "MERGEABLE",
+          mergeStateStatus: "CLEAN",
+          checksPassing: true,
+          autoReviewStatus: "passed",
+          autoReviewMustFix: false,
+        };
+      },
+      async mergePullRequest(repo, number) {
+        assert.equal(repo, "app-api");
+        assert.equal(number, 20);
+        prMerged = true;
+        return {
+          url: "https://github.com/ExampleOrg/app-api/pull/20",
+          mergedAt: "2026-05-15T15:00:00Z",
+          mergeCommitSha: "def456",
+        };
+      },
+    },
+    issueTracker: {
+      async viewIssue(key) {
+        return {
+          key,
+          summary: "Closeout issue",
+          status: prMerged ? "Closed" : "In Review",
+          statusCategory: prMerged ? "Done" : "In Progress",
+          labels: [],
+        };
+      },
+      async postIssueComment(_key, body) {
+        return { body };
+      },
+    },
+  });
+  const session = await workRuntime.createSession("session-advance-closeout");
+  await workRuntime.selectIssue(session.id, {
+    ref: "ISSUE-20",
+    title: "Advance closeout",
+    repoKeys: ["app_api"],
+    state: "awaiting_review",
+    metadata: {
+      prRepo: "app-api",
+      prNumber: 20,
+      prUrl: "https://github.com/ExampleOrg/app-api/pull/20",
+      prIsDraft: false,
+      prChecksPassing: true,
+      prAutoReviewStatus: "passed",
+      "workflow.repos.app_api.branch": "feature/ISSUE-20-closeout",
+      "workflow.repos.app_api.worktree_path": "/repo/app-api/.worktrees/feature-ISSUE-20-closeout",
+      evidenceRecorded: true,
+      evidenceSummary: "Acceptance criteria passed.",
+      evidenceSource: "npm test",
+      documentationRecorded: true,
+      documentationDisposition: "not_needed",
+      documentationSummary: "No docs needed.",
+    },
+  });
+  await workRuntime.recordLocalThreadResult(session.id, {
+    issueRef: "ISSUE-20",
+    repoKey: "app_api",
+    status: "succeeded",
+    summary: "Implemented closeout work.",
+    changedFiles: ["src/work-runtime.ts"],
+    testsRun: ["npm test"],
+  });
+
+  const advanced = await workRuntime.advanceIssue(session.id);
+
+  assert.equal(advanced.session.pendingConfirmation, undefined);
+  assert.equal(advanced.issue?.state, "done");
+  assert.match(advanced.message, /closeout completed/);
+  assert.equal(pruned, true);
+});
+
+test("Work Runtime records preserved worktrees when closeout prune refuses dirty work", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    sourceControl: {
+      async inspect(repoPath) {
+        return { branch: "feature/ISSUE-21-closeout", headSha: "abc123", dirty: true, entries: [" M src/app.ts"], worktreePath: repoPath };
+      },
+      async pruneWorktree(input) {
+        return { removed: false, reason: "worktree is dirty", worktreePath: input.worktreePath, branch: input.branch };
+      },
+    },
+    collaboration: {
+      async findPullRequests() {
+        return [];
+      },
+      async getPullRequest(repo, number) {
+        return {
+          repo,
+          number,
+          title: "Already merged",
+          url: `https://github.com/ExampleOrg/${repo}/pull/${number}`,
+          headRefName: "feature/ISSUE-21-closeout",
+          state: "MERGED",
+          mergedAt: "2026-05-15T15:00:00Z",
+          mergeCommitSha: "abc123",
+          isDraft: false,
+          checksPassing: true,
+          autoReviewStatus: "passed",
+          autoReviewMustFix: false,
+        };
+      },
+      async mergePullRequest() {
+        throw new Error("already merged PR should not be merged again");
+      },
+    },
+    issueTracker: {
+      async viewIssue(key) {
+        return {
+          key,
+          summary: "Closeout issue",
+          status: "Closed",
+          statusCategory: "Done",
+          labels: [],
+        };
+      },
+      async postIssueComment(_key, body) {
+        return { body };
+      },
+    },
+  });
+  const session = await workRuntime.createSession("session-closeout-dirty-worktree");
+  await workRuntime.selectIssue(session.id, {
+    ref: "ISSUE-21",
+    title: "Dirty closeout",
+    repoKeys: ["app_api"],
+    state: "awaiting_review",
+    metadata: {
+      prRepo: "app-api",
+      prNumber: 21,
+      prUrl: "https://github.com/ExampleOrg/app-api/pull/21",
+      "workflow.repos.app_api.branch": "feature/ISSUE-21-closeout",
+      "workflow.repos.app_api.worktree_path": "/repo/app-api/.worktrees/feature-ISSUE-21-closeout",
+      evidenceRecorded: true,
+      evidenceSummary: "Acceptance criteria passed.",
+      evidenceSource: "npm test",
+      documentationRecorded: true,
+      documentationDisposition: "not_needed",
+      documentationSummary: "No docs needed.",
+    },
+  });
+
+  const result = await workRuntime.closeoutAfterApproval(session.id, {
+    jiraPollAttempts: 1,
+    jiraPollIntervalMs: 0,
+  });
+
+  assert.equal(result.status, "already_merged_cleanup_needed");
+  assert.deepEqual(result.blockers, ["Worktree cleanup needed for app_api at /repo/app-api/.worktrees/feature-ISSUE-21-closeout: worktree is dirty"]);
+  assert.equal(result.prunedWorktrees?.[0]?.removed, false);
+  assert.equal(result.prunedWorktrees?.[0]?.reason, "worktree is dirty");
+  const issue = await ledger.readIssue("ISSUE-21");
+  assert.equal(issue?.metadata["workflow.closeout.cleanup_needed"], true);
+  assert.match(String(issue?.metadata["workflow.closeout.pruned_worktrees"]), /worktree is dirty/);
+});
+
+test("Work Runtime returns partial success when cleanup fails after merge and retries cleanup without remerging", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const ledger = new MemoryWorkflowLedger();
+  let prMerged = false;
+  let mergeCalls = 0;
+  let pruneCalls = 0;
+  const workRuntime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    sourceControl: {
+      async inspect(repoPath) {
+        return { branch: "feature/ISSUE-22-closeout", headSha: "abc123", dirty: false, entries: [], worktreePath: repoPath };
+      },
+      async pruneWorktree(input) {
+        pruneCalls += 1;
+        if (pruneCalls === 1) {
+          throw new Error(`failed to delete '${input.worktreePath}': Filename too long`);
+        }
+        return { removed: true, worktreePath: input.worktreePath, branch: input.branch };
+      },
+    },
+    collaboration: {
+      async findPullRequests() {
+        return [];
+      },
+      async getPullRequest(repo, number) {
+        return {
+          repo,
+          number,
+          title: "Cleanup retry",
+          url: `https://github.com/ExampleOrg/${repo}/pull/${number}`,
+          headRefName: "feature/ISSUE-22-closeout",
+          state: prMerged ? "MERGED" : "OPEN",
+          mergedAt: prMerged ? "2026-05-15T15:00:00Z" : undefined,
+          mergeCommitSha: prMerged ? "abc123" : undefined,
+          isDraft: false,
+          checksPassing: true,
+          autoReviewStatus: "passed",
+          autoReviewMustFix: false,
+        };
+      },
+      async mergePullRequest(repo, number) {
+        mergeCalls += 1;
+        prMerged = true;
+        return {
+          url: `https://github.com/ExampleOrg/${repo}/pull/${number}`,
+          mergedAt: "2026-05-15T15:00:00Z",
+          mergeCommitSha: "abc123",
+        };
+      },
+    },
+    issueTracker: {
+      async viewIssue(key) {
+        return {
+          key,
+          summary: "Closeout issue",
+          status: "Closed",
+          statusCategory: "Done",
+          labels: [],
+        };
+      },
+      async postIssueComment(_key, body) {
+        return { body };
+      },
+    },
+  });
+  const session = await workRuntime.createSession("session-closeout-cleanup-retry");
+  await workRuntime.selectIssue(session.id, {
+    ref: "ISSUE-22",
+    title: "Cleanup retry",
+    repoKeys: ["app_api"],
+    state: "awaiting_review",
+    metadata: {
+      prRepo: "app-api",
+      prNumber: 22,
+      prUrl: "https://github.com/ExampleOrg/app-api/pull/22",
+      "workflow.repos.app_api.branch": "feature/ISSUE-22-closeout",
+      "workflow.repos.app_api.worktree_path": "/repo/app-api/.worktrees/feature-ISSUE-22-closeout",
+      evidenceRecorded: true,
+      evidenceSummary: "Acceptance criteria passed.",
+      evidenceSource: "npm test",
+      documentationRecorded: true,
+      documentationDisposition: "not_needed",
+      documentationSummary: "No docs needed.",
+    },
+  });
+
+  const first = await workRuntime.closeoutAfterApproval(session.id, {
+    jiraPollAttempts: 1,
+    jiraPollIntervalMs: 0,
+  });
+  const doctor = await workRuntime.diagnoseIssue(session.id);
+  const second = await workRuntime.closeoutAfterApproval(session.id, {
+    jiraPollAttempts: 1,
+    jiraPollIntervalMs: 0,
+  });
+
+  assert.equal(first.status, "merged_cleanup_needed");
+  assert.equal(first.issue.state, "done");
+  assert.equal(first.blockers.length, 1);
+  assert.match(first.blockers[0], /Filename too long/);
+  assert.equal(doctor.nextAction.type, "cleanup_worktrees");
+  assert.equal(second.status, "already_merged_jira_verified");
+  assert.deepEqual(second.blockers, []);
+  assert.equal(mergeCalls, 1);
+  assert.equal(pruneCalls, 2);
+  assert.equal(second.issue.metadata["workflow.closeout.cleanup_needed"], false);
+});
+
+test("GitAdapter pruneWorktree removes only the intended worktree and does not follow dependency junctions", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "flow-git-prune-"));
+  const repoPath = join(root, "repo");
+  const worktreePath = join(repoPath, ".worktrees", "feature-long-cleanup-path");
+  const sharedTarget = join(root, "shared-node-modules");
+  await mkdir(repoPath, { recursive: true });
+  await mkdir(sharedTarget, { recursive: true });
+  await writeFile(join(repoPath, "README.md"), "root\n");
+  await writeFile(join(sharedTarget, "keep.txt"), "shared\n");
+  await execFileAsync("git", ["-C", repoPath, "init"]);
+  await execFileAsync("git", ["-C", repoPath, "add", "README.md"]);
+  await execFileAsync("git", ["-C", repoPath, "-c", "user.email=flow@example.test", "-c", "user.name=Flow Test", "commit", "-m", "init"]);
+  await execFileAsync("git", ["-C", repoPath, "worktree", "add", "-b", "feature/long-cleanup-path", worktreePath]);
+  await mkdir(join(worktreePath, "node_modules"), { recursive: true });
+  try {
+    await symlink(sharedTarget, join(worktreePath, "node_modules", "shared"), process.platform === "win32" ? "junction" : "dir");
+  } catch {
+    t.skip("symlink creation is unavailable on this filesystem");
+    return;
+  }
+
+  const result = await new GitAdapter().pruneWorktree({
+    repoPath,
+    worktreePath,
+    branch: "feature/long-cleanup-path",
+    requireClean: false,
+  });
+
+  assert.equal(result.removed, true);
+  assert.equal(existsSync(worktreePath), false);
+  await access(join(sharedTarget, "keep.txt"));
 });
 
 test("Work Runtime records provider escalation as blocked workflow metadata", async () => {
@@ -4644,6 +6859,62 @@ test("Work Runtime records pull request metadata", async () => {
   assert.equal(issue?.metadata.prIsDraft, true);
   assert.equal(issue?.metadata["workflow.repos.app_api.head_sha"], "abc123");
   assert.equal(issue?.metadata["workflow.repos.app_api.dirty"], false);
+});
+
+test("pullRequestMetadata writes global and repo-scoped fields from one snapshot", () => {
+  const metadata = pullRequestMetadata("app-api", {
+    repo: "app-api",
+    number: 1401,
+    title: "ISSUE-14: PR metadata",
+    url: "https://github.com/ExampleOrg/app-api/pull/1401",
+    headRefName: "feature/issue-14-test",
+    state: "OPEN",
+    mergeCommitSha: "abc123",
+    isDraft: true,
+    mergeable: "MERGEABLE",
+    mergeStateStatus: "CLEAN",
+    reviewDecision: "REVIEW_REQUIRED",
+    checksPassing: false,
+    checksPending: true,
+    templateMissingHeadings: ["Summary"],
+    autoReviewStatus: "pending",
+    autoReviewMustFix: true,
+    autoReviewMustFixDetail: "Fix a blocker.",
+    autoReviewNeedsConfirmation: true,
+    autoReviewNeedsConfirmationDetail: "Confirm behavior.",
+    reviewCommentCount: 2,
+    reviewCommentAuthors: ["reviewer"],
+  });
+
+  assert.equal(metadata.prUrl, "https://github.com/ExampleOrg/app-api/pull/1401");
+  assert.equal(metadata["workflow.repos.app_api.pr_url"], metadata.prUrl);
+  assert.equal(metadata.prRecordedAt, metadata["workflow.repos.app_api.pr_recorded_at"]);
+  assert.deepEqual(metadata.prTemplateMissingHeadings, ["Summary"]);
+  assert.deepEqual(metadata["workflow.repos.app_api.pr_template_missing_headings"], ["Summary"]);
+  assert.equal(metadata.prAutoReviewMustFixDetail, "Fix a blocker.");
+  assert.equal(metadata["workflow.repos.app_api.pr_auto_review_must_fix_detail"], "Fix a blocker.");
+  assert.equal(metadata.prAutoReviewNeedsConfirmationDetail, "Confirm behavior.");
+  assert.equal(metadata["workflow.repos.app_api.pr_auto_review_needs_confirmation_detail"], "Confirm behavior.");
+});
+
+test("repoScopedPullRequestMetadata preserves review confirmation snapshot fields", () => {
+  const metadata = repoScopedPullRequestMetadata("app_api", {
+    source: "repo",
+    repoKey: "app_api",
+    repo: "app-api",
+    number: 1401,
+    url: "https://github.com/ExampleOrg/app-api/pull/1401",
+    autoReviewNeedsConfirmationDisposition: "posted",
+    autoReviewNeedsConfirmationPostedUrl: "https://github.com/ExampleOrg/app-api/pull/1401#issuecomment-1",
+    recordedAt: "2026-06-02T00:00:00.000Z",
+  });
+
+  assert.equal(metadata["workflow.repos.app_api.pr_auto_review_needs_confirmation_disposition"], "posted");
+  assert.equal(
+    metadata["workflow.repos.app_api.pr_auto_review_needs_confirmation_posted_url"],
+    "https://github.com/ExampleOrg/app-api/pull/1401#issuecomment-1",
+  );
+  assert.equal(metadata["workflow.repos.app_api.pr_recorded_at"], "2026-06-02T00:00:00.000Z");
 });
 
 test("Work Runtime records pull request metadata for repos outside configured topology", async () => {
@@ -4906,6 +7177,52 @@ test("Work Runtime doctor prioritizes present review comments before approval wa
   assert.equal(
     result.findings.some((finding) => finding.summary === "Approval review is required."),
     true,
+  );
+});
+
+test("Work Runtime doctor waits for pending pull request checks", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  const session = await workRuntime.createSession("session-doctor-pending-checks");
+  await workRuntime.selectIssue(session.id, {
+    ref: "GH-239",
+    title: "Expand CONTRIBUTING.md with development setup guide",
+    repoKeys: ["flow"],
+    state: "awaiting_review",
+    metadata: {
+      "workflow.repos.flow.worktree_path": "/repo/flow/.worktrees/feature-gh-239",
+      prUrl: "https://github.com/camden-lowrance/flow/pull/393",
+      prIsDraft: false,
+      prChecksPending: true,
+      prAutoReviewStatus: "missing",
+      evidenceRecorded: true,
+      documentationRecorded: true,
+    },
+  });
+  await ledger.recordWorkerResult({
+    taskId: "worker-gh-239",
+    issueRef: "GH-239",
+    repoKey: "flow",
+    status: "succeeded",
+    summary: "Updated CONTRIBUTING.md.",
+    changedFiles: ["CONTRIBUTING.md"],
+    testsRun: ["npm test"],
+    blockers: [],
+    completedAt: nowIso(),
+  });
+
+  const result = await workRuntime.diagnoseIssue(session.id);
+
+  assert.equal(result.status, "blocked");
+  assert.equal(result.nextAction.type, "wait_for_checks");
+  assert.equal(
+    result.findings.some((finding) => finding.summary === "Pull request checks are still running."),
+    true,
+  );
+  assert.equal(
+    result.findings.some((finding) => finding.summary === "Pull request checks are not passing."),
+    false,
   );
 });
 
@@ -5372,6 +7689,43 @@ test("Work Runtime reconciliation refreshes existing PR metadata when draft stat
   assert.equal(issue.metadata.prNumber, 18);
 });
 
+test("Work Runtime advance sends merge-conflict resolution handoff with a specific prompt", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-merge-conflict-prompt-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  const session = await workRuntime.createSession("session-merge-conflict-prompt");
+  await workRuntime.selectIssue(session.id, {
+    ref: "ISSUE-19",
+    title: "Resolve merge conflicts",
+    repoKeys: ["app_api"],
+    state: "ready_to_run",
+    metadata: {
+      prUrl: "https://github.com/ExampleOrg/app-api/pull/19",
+      prIsDraft: false,
+      prMergeable: "CONFLICTING",
+      prMergeStateStatus: "DIRTY",
+      prChecksPassing: true,
+      "workflow.repos.app_api.worktree_path": "/tmp/app-api-worktree",
+    },
+  });
+
+  const pending = await workRuntime.advanceIssue(session.id);
+
+  assert.equal(pending.status, "needs_confirmation");
+  assert.equal(pending.session.pendingConfirmation?.action, "request_execution");
+  assert.equal(pending.session.pendingConfirmation?.summary, "Hand off PR merge-conflict resolution for ISSUE-19 in app_api.");
+  const confirmationId = pending.session.pendingConfirmation?.id;
+  assert.ok(confirmationId);
+  const approved = await workRuntime.advanceIssue(session.id, confirmationId);
+
+  assert.equal(approved.status, "execution_handoff");
+  assert.match(approved.handoffRequest?.prompt ?? "", /Prompt: resolve the merge conflicts on this pull request/);
+  assert.match(approved.handoffRequest?.prompt ?? "", /Pull request has merge conflicts/);
+  const jobs = await ledger.listWorkJobs("ISSUE-19");
+  assert.equal(jobs.length, 1);
+  assert.equal(approved.handoffRequest?.workJobId, jobs[0].id);
+});
+
 test("Work Runtime reconciliation completes active undraft worker when GitHub shows PR ready", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
   const ledger = new MemoryWorkflowLedger();
@@ -5660,371 +8014,193 @@ test("Beads metadata preserves branch kind and Jira issue type for workspace pre
   assert.equal(metadata.jiraIssueType, "Story");
 });
 
-test("Jira adapter parses issue JSON", () => {
-  const issue = parseJiraIssue({
-    key: "ISSUE-6",
-    fields: {
-      summary: "Adapter test",
-      issuetype: { name: "Bug" },
-      status: { name: "In Progress", statusCategory: { key: "indeterminate" } },
-      resolution: { name: "Unresolved" },
-      assignee: { displayName: "Camden Lowrance" },
-      labels: ["app_api"],
-      updated: "2026-05-11T12:00:00.000-0400",
-    },
-  });
-
-  assert.equal(issue.key, "ISSUE-6");
-  assert.equal(issue.summary, "Adapter test");
-  assert.equal(issue.issueType, "Bug");
-  assert.equal(issue.status, "In Progress");
-  assert.equal(issue.statusCategory, "indeterminate");
-  assert.equal(issue.resolution, "Unresolved");
+test("requireWorkItem returns valid WorkItem for correct input", () => {
+  const valid = { ref: "FLOW-1", title: "Test issue", repoKeys: ["main"], state: "queued" as const, metadata: {} };
+  const result = requireWorkItem(valid, "selectIssue");
+  assert.equal(result.ref, "FLOW-1");
+  assert.equal(result.title, "Test issue");
+  assert.deepEqual(result.repoKeys, ["main"]);
 });
 
-test("Jira adapter parses comment URL JSON", () => {
-  assert.equal(
-    parseJiraCommentUrl({ comment: { self: "https://example.atlassian.net/rest/api/3/comment/10001" } }),
-    "https://example.atlassian.net/rest/api/3/comment/10001",
+test("requireWorkItem throws BAD_FIELD for missing ref", () => {
+  assert.throws(
+    () => requireWorkItem({ title: "No ref" }, "selectIssue"),
+    (error: unknown) => {
+      assert.ok(error instanceof JsonCliError);
+      assert.equal(error.code, "BAD_FIELD");
+      assert.match(error.message, /selectIssue/);
+      assert.equal(error.manifestTarget, "runtime");
+      const details = error.details as { method: string; field: string; issues: unknown[] };
+      assert.equal(details.method, "selectIssue");
+      assert.equal(details.field, "params.issue");
+      assert.ok(details.issues.length > 0);
+      return true;
+    },
   );
 });
 
-test("Jira adapter parses workitem search JSON", () => {
-  const issues = parseJiraSearch({
-    values: [
-      {
-        key: "ISSUE-7",
-        fields: {
-          summary: "Search result",
-          status: { name: "Ready for Dev" },
-          labels: ["public_api"],
-        },
-      },
-    ],
-  });
-
-  assert.equal(issues.length, 1);
-  assert.equal(issues[0].key, "ISSUE-7");
-  assert.equal(issues[0].summary, "Search result");
-});
-
-test("Jira adapter queue query includes active dev and review work only", () => {
-  assert.equal(
-    currentUserOpenSprintJql(configString(legacyHostConfig.issueTracker, "projectKey")),
-    "project = ISSUE AND assignee = currentUser() AND sprint in openSprints() AND status in ('Ready for Dev', 'In Progress', 'In Review')",
+test("requireWorkItem throws BAD_FIELD for non-object input", () => {
+  assert.throws(
+    () => requireWorkItem("not-an-object", "selectIssue"),
+    (error: unknown) => {
+      assert.ok(error instanceof JsonCliError);
+      assert.equal(error.code, "BAD_FIELD");
+      assert.equal((error.details as { method: string }).method, "selectIssue");
+      return true;
+    },
   );
 });
 
-test("Jira adapter backlog query includes default planning statuses", () => {
-  assert.equal(
-    currentUserBacklogJql(configString(legacyHostConfig.issueTracker, "projectKey")),
-    "project = ISSUE AND assignee = currentUser() AND sprint is EMPTY AND status in ('Ready for Dev', 'To Do', 'Selected for Development') ORDER BY updated DESC",
+test("requireWorkItem throws BAD_FIELD for empty ref", () => {
+  assert.throws(
+    () => requireWorkItem({ ref: "", title: "Test" }, "selectIssue"),
+    (error: unknown) => {
+      assert.ok(error instanceof JsonCliError);
+      assert.equal(error.code, "BAD_FIELD");
+      return true;
+    },
   );
 });
 
-test("Beads ledger issue update includes title and description", () => {
-  assert.deepEqual(
-    beadUpdateArgsForIssue("issue-1", {
-      title: "Current Jira title",
-      summary: "Current Jira summary",
-    }),
-    ["update", "issue-1", "--title", "Current Jira title", "--description", "Current Jira summary", "--allow-empty-description"],
+test("requireCreateIssueOptions returns valid options for correct input", () => {
+  const valid = { summary: "Add feature", issueType: "Task" as const };
+  const result = requireCreateIssueOptions(valid, "createIssue");
+  assert.equal(result.summary, "Add feature");
+  assert.equal(result.issueType, "Task");
+});
+
+test("requireCreateIssueOptions throws BAD_FIELD for missing summary", () => {
+  assert.throws(
+    () => requireCreateIssueOptions({ issueType: "Task" }, "createIssue"),
+    (error: unknown) => {
+      assert.ok(error instanceof JsonCliError);
+      assert.equal(error.code, "BAD_FIELD");
+      assert.match(error.message, /createIssue/);
+      const details = error.details as { method: string; field: string };
+      assert.equal(details.method, "createIssue");
+      assert.equal(details.field, "params.options");
+      return true;
+    },
   );
 });
 
-test("GitHub adapter parses pull request check status", () => {
-  const prs = parsePullRequests(
-    [
-      {
-        number: 1,
-        title: "PR",
-        url: "https://github.com/example/repo/pull/1",
-        headRefName: "feature/test",
-        baseRefName: "main",
-        isDraft: false,
-        mergeable: "MERGEABLE",
-        mergeStateStatus: "CLEAN",
-        reviewDecision: "REVIEW_REQUIRED",
-        body: `### Issue or Reason for Change
-
-ISSUE-1
-
-### Description
-- [x] Bug Fix
-
-### Summary of Changes
-Changed code.
-
-### Related PRs or Issues
-None.`,
-        statusCheckRollup: [
-          { status: "COMPLETED", conclusion: "SUCCESS" },
-          { status: "COMPLETED", conclusion: "NEUTRAL" },
-        ],
-        reviews: [
-          { state: "COMMENTED", author: { login: "khwiri" } },
-          { state: "COMMENTED", author: { login: "developer-hla" } },
-          { state: "APPROVED", author: { login: "approver" } },
-        ],
-      },
-    ],
-    "app-api",
-    ["Issue or Reason for Change", "Description", "Summary of Changes", "Related PRs or Issues"],
+test("requireCreateIssueOptions throws BAD_FIELD for invalid issueType", () => {
+  assert.throws(
+    () => requireCreateIssueOptions({ summary: "test", issueType: "Epic" }, "intakeIssue"),
+    (error: unknown) => {
+      assert.ok(error instanceof JsonCliError);
+      assert.equal(error.code, "BAD_FIELD");
+      const details = error.details as { method: string; field: string };
+      assert.equal(details.method, "intakeIssue");
+      assert.equal(details.field, "params.options");
+      return true;
+    },
   );
-
-  assert.equal(prs[0].checksPassing, true);
-  assert.equal(prs[0].headRefName, "feature/test");
-  assert.equal(prs[0].baseRefName, "main");
-  assert.equal(normalizePullRequest(prs[0]).targetBranch, "main");
-  assert.equal(prs[0].state, undefined);
-  assert.equal(prs[0].mergedAt, undefined);
-  assert.equal(prs[0].mergeable, "MERGEABLE");
-  assert.equal(prs[0].mergeStateStatus, "CLEAN");
-  assert.equal(prs[0].reviewDecision, "REVIEW_REQUIRED");
-  assert.equal(prs[0].templateMissingHeadings, undefined);
-  assert.equal(prs[0].reviewCommentCount, 2);
-  assert.deepEqual(prs[0].reviewCommentAuthors, ["khwiri", "developer-hla"]);
 });
 
-test("GitHub issue tracker parses issue list JSON", () => {
-  const issues = parseGitHubIssues([
-    {
-      number: 12,
-      title: "Dogfood dashboard with GitHub issues",
-      url: "https://github.com/example/flow/issues/12",
-      state: "OPEN",
-      body: "Use Flow to drive Flow.",
-      updatedAt: "2026-05-20T12:00:00Z",
-      labels: [{ name: "enhancement" }, { name: "main" }],
-      assignees: [{ login: "agent" }],
+test("requireCreateIssueOptions accepts optional fields", () => {
+  const result = requireCreateIssueOptions({
+    summary: "Full options",
+    projectKey: "PROJ",
+    issueType: "Story",
+    branchKind: "feature",
+    title: "Custom title",
+    description: "Detailed description",
+    repoKeys: ["main", "api"],
+    select: true,
+  }, "createIssue");
+  assert.equal(result.summary, "Full options");
+  assert.equal(result.projectKey, "PROJ");
+  assert.equal(result.issueType, "Story");
+  assert.equal(result.branchKind, "feature");
+  assert.equal(result.title, "Custom title");
+  assert.equal(result.description, "Detailed description");
+  assert.deepEqual(result.repoKeys, ["main", "api"]);
+  assert.equal(result.select, true);
+});
+
+test("requireCreateIssueOptions preserves intake control fields", () => {
+  const result = requireCreateIssueOptions({
+    summary: "Review intake",
+    dryRun: true,
+    apply: false,
+    review: true,
+  }, "intakeIssue") as { dryRun?: boolean; apply?: boolean; review?: boolean };
+  assert.equal(result.dryRun, true);
+  assert.equal(result.apply, false);
+  assert.equal(result.review, true);
+});
+
+test("requireWorkJobExecutor returns valid executor for correct input", () => {
+  const result = requireWorkJobExecutor("live_agent_thread", "claimWorkJob");
+  assert.equal(result, "live_agent_thread");
+});
+
+test("requireWorkJobExecutor throws BAD_FIELD for invalid executor", () => {
+  assert.throws(
+    () => requireWorkJobExecutor("invalid_executor", "claimWorkJob"),
+    (error: unknown) => {
+      assert.ok(error instanceof JsonCliError);
+      assert.equal(error.code, "BAD_FIELD");
+      const details = error.details as { method: string; field: string };
+      assert.equal(details.method, "claimWorkJob");
+      assert.equal(details.field, "params.executor");
+      return true;
     },
-  ]);
-
-  assert.equal(issues.length, 1);
-  assert.equal(issues[0].number, 12);
-  assert.equal(issues[0].labels.join(","), "enhancement,main");
-  assert.equal(issues[0].assignees.join(","), "agent");
-});
-
-test("Provider CLI errors are classified for actionable Flow blockers", () => {
-  const missingCli = classifyProviderCliError("github", "gh issue list", {
-    message: "spawn gh ENOENT",
-    code: "ENOENT",
-  });
-  const auth = classifyProviderCliError("jira", "acli jira workitem search", {
-    stderr: "Unauthorized: token expired",
-  });
-  const rateLimit = classifyProviderCliError("github", "gh pr view", {
-    stderr: "API rate limit exceeded",
-  });
-
-  assert.ok(missingCli instanceof ProviderAdapterError);
-  assert.equal(missingCli.code, "cli_missing");
-  assert.equal(auth.code, "auth_missing");
-  assert.equal(rateLimit.code, "rate_limited");
-});
-
-test("GitHub adapter parses merged pull request lifecycle fields", () => {
-  const prs = parsePullRequests(
-    [
-      {
-        number: 1393,
-        title: "ISSUE-15594",
-        url: "https://github.com/ExampleOrg/app-api/pull/1393",
-        headRefName: "feature/issue-15594",
-        state: "MERGED",
-        mergedAt: "2026-05-11T19:11:01Z",
-        isDraft: false,
-        body: `### Issue or Reason for Change
-
-ISSUE-15594
-
-### Description
-- [x] Bug Fix
-
-### Summary of Changes
-Changed code.
-
-### Related PRs or Issues
-None.`,
-        statusCheckRollup: [{ status: "COMPLETED", conclusion: "FAILURE" }],
-      },
-    ],
-    "app-api",
-    ["Issue or Reason for Change", "Description", "Summary of Changes", "Related PRs or Issues"],
   );
-
-  assert.equal(prs[0].state, "MERGED");
-  assert.equal(prs[0].mergedAt, "2026-05-11T19:11:01Z");
 });
 
-test("GitHub adapter flags pull requests missing template headings", () => {
-  const prs = parsePullRequests(
-    [
-      {
-        number: 1402,
-        title: "ISSUE-15676",
-        url: "https://github.com/ExampleOrg/app-api/pull/1402",
-        headRefName: "feature/issue-15676",
-        isDraft: false,
-        body: `## Summary
-- Harden Provider batch handling.
-
-## Validation
-- pytest`,
-        statusCheckRollup: [{ status: "COMPLETED", conclusion: "SUCCESS" }],
-      },
-    ],
-    "app-api",
-    ["Issue or Reason for Change", "Description", "Summary of Changes", "Related PRs or Issues"],
-  );
-
-  assert.deepEqual(prs[0].templateMissingHeadings, [
-    "Issue or Reason for Change",
-    "Description",
-    "Summary of Changes",
-    "Related PRs or Issues",
-  ]);
-});
-
-test("GitHub adapter does not enforce a PR template when none is provided", () => {
-  const prs = parsePullRequests(
-    [
-      {
-        number: 1403,
-        title: "ISSUE-15677",
-        url: "https://github.com/ExampleOrg/app-api/pull/1403",
-        headRefName: "feature/issue-15677",
-        isDraft: false,
-        body: "No repository template is configured.",
-        statusCheckRollup: [{ status: "COMPLETED", conclusion: "SUCCESS" }],
-      },
-    ],
-    "app-api",
-  );
-
-  assert.equal(prs[0].templateMissingHeadings, undefined);
-});
-
-test("GitHub adapter parses auto review must-fix sections", () => {
-  const feedback = extractAutoReviewFeedback(`<!-- flow-pr-review -->
-## Summary
-- Tests were added.
-
-## Must-fix
-- New test files use \`// @ts-nocheck\`, which hides type errors.
-
-## Needs Confirmation
-None.
-
-## Suggestions
-- Prefer typed mocks.`);
-
-  assert.equal(feedback.mustFix, true);
-  assert.match(feedback.mustFixDetail ?? "", /ts-nocheck/);
-  assert.equal(feedback.needsConfirmation, false);
-});
-
-test("GitHub adapter treats empty auto review sections as no feedback", () => {
-  const feedback = extractAutoReviewFeedback(`<!-- flow-pr-review -->
-## Summary
-No issues found.
-
-## Must-fix
-None found.
-
-## Needs Confirmation
-None identified.`);
-
-  assert.equal(feedback.mustFix, false);
-  assert.equal(feedback.mustFixDetail, undefined);
-  assert.equal(feedback.needsConfirmation, false);
-  assert.equal(feedback.needsConfirmationDetail, undefined);
-});
-
-test("Custom topology overrides repo names, paths, branch names, and PR URLs", async () => {
-  const root = await mkdtemp(join(tmpdir(), "flow-topo-"));
-  await mkdir(join(root, "my-service"), { recursive: true });
-  const ledger = new MemoryWorkflowLedger();
-
-  const customTopology: ProjectTopology = {
-    validRepoKeys: new Set(["my_service", "my_ui"]),
-    isValidRepoKey(repoKey) {
-      return this.validRepoKeys.has(repoKey.replace(/-/g, "_"));
-    },
-    inferRepoKeysFromIssue(issue) {
-      const text = `${issue.title} ${issue.labels.join(" ")}`.toLowerCase();
-      if (text.includes("frontend")) return ["my_ui"];
-      if (text.includes("backend")) return ["my_service"];
-      return [];
-    },
-    branchName(issue) {
-      return `work/${issue.ref}`;
-    },
-    defaultBaseBranch() {
-      return "main";
-    },
-    repoName(repoKey) {
-      return repoKey.replace(/_/g, "-");
-    },
-    repoPath(projectRoot, repoKey) {
-      return join(projectRoot, repoKey.replace(/_/g, "-"));
-    },
-    pullRequestUrl(repo, number) {
-      return `https://gitlab.example.com/${repo}/-/merge_requests/${number}`;
-    },
+test("requireWorkJobResult returns valid result for correct input", () => {
+  const valid = {
+    jobId: "job-1",
+    issueRef: "FLOW-1",
+    repoKey: "main",
+    workType: "implement",
+    status: "succeeded" as const,
+    summary: "Done",
+    completedAt: "2026-01-01T00:00:00.000Z",
   };
+  const result = requireWorkJobResult(valid, "recordWorkJobResult");
+  assert.equal(result.jobId, "job-1");
+  assert.equal(result.status, "succeeded");
+});
 
-  const workRuntime = testWorkRuntime({
-    store: new FlowStore({ root }),
-    ledger,
-    topology: customTopology,
-    projectRoot: root,
-    issueTracker: {
-      capabilities: {
-        canCreateIssues: false,
-        canTransitionIssues: false,
-        canPostComments: false,
-        canManageActivePlanningLane: false,
-      },
-      async getIssue(ref) {
-        return {
-          ref,
-          title: "Fix backend crash",
-          status: "Open",
-          type: "bug",
-          url: `https://tracker.example/${ref}`,
-          labels: ["backend"],
-        };
-      },
-      async fetchActiveQueue() {
-        return [
-          {
-            ref: "PROJ-42",
-            title: "Fix backend crash",
-            status: "Open",
-            type: "bug",
-            url: "https://tracker.example/PROJ-42",
-            labels: ["backend"],
-          },
-        ];
-      },
+test("requireWorkJobResult throws BAD_FIELD for missing jobId", () => {
+  assert.throws(
+    () => requireWorkJobResult({
+      issueRef: "FLOW-1",
+      repoKey: "main",
+      workType: "implement",
+      status: "succeeded",
+      summary: "Done",
+      completedAt: "2026-01-01T00:00:00.000Z",
+    }, "recordWorkJobResult"),
+    (error: unknown) => {
+      assert.ok(error instanceof JsonCliError);
+      assert.equal(error.code, "BAD_FIELD");
+      const details = error.details as { method: string; field: string };
+      assert.equal(details.method, "recordWorkJobResult");
+      assert.equal(details.field, "params.result");
+      return true;
     },
-  });
+  );
+});
 
-  assert.equal(workRuntime.topology, customTopology);
-
-  const queue = await workRuntime.inspectQueue(10);
-  assert.equal(queue.length, 1);
-  assert.equal(queue[0].ref, "PROJ-42");
-  assert.deepEqual(queue[0].repoKeys, ["my_service"]);
-
-  assert.equal(customTopology.repoName("my_service"), "my-service");
-  assert.equal(customTopology.repoPath(root, "my_service"), join(root, "my-service"));
-  assert.equal(customTopology.branchName(queue[0]), "work/PROJ-42");
-  assert.equal(customTopology.defaultBaseBranch("my_service"), "main");
-  assert.equal(customTopology.pullRequestUrl("my-service", 7), "https://gitlab.example.com/my-service/-/merge_requests/7");
-
-  assert.equal(customTopology.isValidRepoKey("my_service"), true);
-  assert.equal(customTopology.isValidRepoKey("unknown_repo"), false);
+test("requireWorkJobResult throws BAD_FIELD for invalid status", () => {
+  assert.throws(
+    () => requireWorkJobResult({
+      jobId: "job-1",
+      issueRef: "FLOW-1",
+      repoKey: "main",
+      workType: "implement",
+      status: "invalid_status",
+      summary: "Done",
+      completedAt: "2026-01-01T00:00:00.000Z",
+    }, "recordWorkJobResult"),
+    (error: unknown) => {
+      assert.ok(error instanceof JsonCliError);
+      assert.equal(error.code, "BAD_FIELD");
+      return true;
+    },
+  );
 });

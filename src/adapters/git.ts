@@ -1,10 +1,12 @@
 import { execFile } from "node:child_process";
-import { access, mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
+import { access, lstat, mkdir, readdir, rm, rmdir } from "node:fs/promises";
+import { dirname, join, relative, resolve, toNamespacedPath } from "node:path";
 import { promisify } from "node:util";
 
 import type {
   SourceControlProvider,
+  UnifiedDiff,
+  UnifiedWorktreePruneResult,
   UnifiedWorkspaceStatus,
 } from "./provider-contracts.js";
 
@@ -84,6 +86,156 @@ export class GitAdapter implements SourceControlProvider {
     const status = await this.inspectWorkspace(inspectPath);
     return { ...status, worktreePath: inspectPath };
   }
+
+  async diffWorkspace(options: { repoPath: string; baseRef?: string; headRef?: string }): Promise<UnifiedDiff> {
+    const baseRef = options.baseRef ?? "origin/main";
+    const headRef = options.headRef ?? "HEAD";
+    const committedRange = `${baseRef}...${headRef}`;
+    const [committedFiles, committedPatch, committedStat] = await Promise.all([
+      gitOutput(options.repoPath, ["diff", "--name-only", committedRange]),
+      gitOutput(options.repoPath, ["diff", "--no-ext-diff", committedRange]),
+      gitOutput(options.repoPath, ["diff", "--stat", committedRange]),
+    ]);
+    const [workingFiles, workingPatch, workingStat] = await Promise.all([
+      gitOutput(options.repoPath, ["diff", "--name-only"]),
+      gitOutput(options.repoPath, ["diff", "--no-ext-diff"]),
+      gitOutput(options.repoPath, ["diff", "--stat"]),
+    ]);
+    const files = uniqueNonEmptyLines(`${committedFiles}\n${workingFiles}`);
+    return {
+      baseRef,
+      headRef,
+      files,
+      patch: joinNonEmpty([committedPatch, workingPatch]),
+      stat: joinNonEmpty([committedStat, workingStat]),
+    };
+  }
+
+  async pruneWorktree(options: { repoPath: string; worktreePath: string; branch?: string; requireClean?: boolean }): Promise<UnifiedWorktreePruneResult> {
+    if (pathContains(options.worktreePath, process.cwd())) {
+      return {
+        removed: false,
+        reason: "worktree is current process directory",
+        worktreePath: options.worktreePath,
+        branch: options.branch,
+      };
+    }
+    const status = await this.inspect(options.worktreePath);
+    if (options.branch && status.branch !== options.branch) {
+      return {
+        removed: false,
+        reason: `branch mismatch: expected ${options.branch}, got ${status.branch || "detached"}`,
+        worktreePath: options.worktreePath,
+        branch: status.branch,
+      };
+    }
+    if (options.requireClean !== false && status.dirty) {
+      return {
+        removed: false,
+        reason: "worktree is dirty",
+        worktreePath: options.worktreePath,
+        branch: status.branch,
+      };
+    }
+    try {
+      await execFileAsync("git", ["-C", options.repoPath, "worktree", "remove", options.worktreePath], {
+        maxBuffer: 10 * 1024 * 1024,
+      });
+    } catch (error) {
+      const reason = errorMessage(error);
+      if (!isSafeFlowWorktreePath(options.repoPath, options.worktreePath)) {
+        return {
+          removed: false,
+          reason,
+          worktreePath: options.worktreePath,
+          branch: status.branch,
+        };
+      }
+      try {
+        if (await pathExists(options.worktreePath)) {
+          await removePathWithoutFollowingLinks(options.worktreePath);
+        }
+        await execFileAsync("git", ["-C", options.repoPath, "worktree", "prune"], {
+          maxBuffer: 10 * 1024 * 1024,
+        }).catch(() => undefined);
+        return {
+          removed: true,
+          reason: `git worktree remove failed; removed worktree directory safely: ${reason}`,
+          worktreePath: options.worktreePath,
+          branch: status.branch,
+        };
+      } catch (cleanupError) {
+        return {
+          removed: false,
+          reason: `${reason}; safe cleanup failed: ${errorMessage(cleanupError)}`,
+          worktreePath: options.worktreePath,
+          branch: status.branch,
+        };
+      }
+    }
+    return {
+      removed: true,
+      worktreePath: options.worktreePath,
+      branch: status.branch,
+    };
+  }
+}
+
+function pathContains(parent: string, child: string): boolean {
+  const relativePath = relative(resolve(parent), resolve(child));
+  return relativePath === "" || (!relativePath.startsWith("..") && !relativePath.startsWith("/") && !relativePath.startsWith("\\"));
+}
+
+function isSafeFlowWorktreePath(repoPath: string, worktreePath: string): boolean {
+  const worktreesRoot = resolve(repoPath, ".worktrees");
+  const resolvedWorktree = resolve(worktreePath);
+  return resolvedWorktree !== worktreesRoot &&
+    pathContains(worktreesRoot, resolvedWorktree) &&
+    !pathContains(resolvedWorktree, process.cwd());
+}
+
+async function removePathWithoutFollowingLinks(path: string): Promise<void> {
+  const stat = await lstat(fsPath(path));
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    await rm(fsPath(path), { force: true });
+    return;
+  }
+  for (const entry of await readdir(fsPath(path))) {
+    await removePathWithoutFollowingLinks(join(path, entry));
+  }
+  await rmdir(fsPath(path));
+}
+
+function fsPath(path: string): string {
+  return process.platform === "win32" ? toNamespacedPath(path) : path;
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
+async function gitOutput(repoPath: string, args: string[]): Promise<string> {
+  const { stdout } = await execFileAsync("git", ["-C", repoPath, ...args], { maxBuffer: 20 * 1024 * 1024 })
+    .catch(() => ({ stdout: "" }));
+  return stdout.trim();
+}
+
+function uniqueNonEmptyLines(value: string): string[] {
+  const seen = new Set<string>();
+  const lines: string[] = [];
+  for (const line of value.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    lines.push(trimmed);
+  }
+  return lines;
+}
+
+function joinNonEmpty(values: string[]): string | undefined {
+  const joined = values.map((value) => value.trim()).filter(Boolean).join("\n\n");
+  return joined || undefined;
 }
 
 function worktreeAlreadyExists(error: unknown): boolean {
@@ -132,7 +284,7 @@ async function findWorktreePathForBranch(repoPath: string, branch: string): Prom
 
 async function pathExists(path: string): Promise<boolean> {
   try {
-    await access(path);
+    await access(fsPath(path));
     return true;
   } catch {
     return false;

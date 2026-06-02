@@ -1,6 +1,7 @@
 node_modules/
 .tmp/
 dist/
+coverage/
 .claude/
 .context/
 .playwright-mcp/
@@ -10,4 +11,4 @@ dist/
 .env.local
 *.log
 .flow/runtime/
-.flow/ledger/**/*.tmp
+.flow/ledger/

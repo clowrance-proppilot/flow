@@ -5,6 +5,13 @@ import {
   createId,
   nowIso,
 } from "./contracts.js";
+import {
+  type PullRequestGateInput,
+  evaluatePullRequestGates,
+  defaultPullRequestGateMessage,
+  isPullRequestMerged,
+  isEmptyAutoReviewDetail,
+} from "./pr-gate.js";
 
 export interface ReadinessAssessmentInput {
   issue: WorkItem;
@@ -17,6 +24,7 @@ export interface ReadinessAssessmentInput {
     mergeable?: string;
     mergeStateStatus?: string;
     checksPassing?: boolean;
+    checksPending?: boolean;
     templateMissingHeadings?: string[];
     autoReviewStatus?: string;
     autoReviewMustFix?: boolean;
@@ -56,9 +64,10 @@ export function assessIssue(input: ReadinessAssessmentInput): ReadinessAssessmen
     : latestWorker && shouldAutoRetryWorker(latestWorker) && latestSuccessfulWorker
     ? latestSuccessfulWorker
     : latestWorker;
-  const hasSuccessfulWorker = workerForReadiness?.status === "succeeded";
+  const hasSuccessfulWorker = workerForReadiness?.status === "succeeded" &&
+    (workerHasCompletionOutput(workerForReadiness) || Boolean(input.review?.prUrl));
   const externalProviderEscalation = input.issue.metadata.externalProviderEscalation;
-  const codeReviewRequired = input.codeReviewRequired ?? true;
+  const codeReviewRequired = (input.codeReviewRequired ?? true) && !isRecordedOnBaseBranch(input.issue);
 
   if (input.issue.repoKeys.length === 0) {
     findings.push(finding(input.issue.ref, "blocker", "Repo routing is missing."));
@@ -101,6 +110,15 @@ export function assessIssue(input: ReadinessAssessmentInput): ReadinessAssessmen
     findings.push(finding(input.issue.ref, "warning", "Issue is marked running but has no execution result."));
   }
 
+  if (latestWorker?.status === "succeeded" && !workerHasCompletionOutput(latestWorker) && !input.review?.prUrl) {
+    findings.push(finding(
+      input.issue.ref,
+      "warning",
+      "Successful worker result has no changed files or tests.",
+      "Retry execution before applying closeout gates.",
+    ));
+  }
+
   const pullRequestMerged = isPullRequestMerged(input.review);
 
   if (input.review?.prUrl && !pullRequestMerged && hasDirtyPreparedWorktree(input.issue) && latestSuccessfulWorker) {
@@ -112,39 +130,27 @@ export function assessIssue(input: ReadinessAssessmentInput): ReadinessAssessmen
     ));
   }
 
-  if (input.review?.prUrl && !pullRequestMerged && input.review.isDraft) {
-    findings.push(finding(input.issue.ref, "blocker", "Pull request is still draft."));
-  }
+  const prGateInput: PullRequestGateInput | undefined = input.review?.prUrl && !pullRequestMerged
+    ? input.review
+    : undefined;
+  const prGateResults = prGateInput ? evaluatePullRequestGates(prGateInput) : [];
 
-  if (input.review?.prUrl && !pullRequestMerged && isPullRequestConflicted(input.review)) {
-    findings.push(finding(input.issue.ref, "blocker", "Pull request has merge conflicts."));
-  }
-
-  if (input.review?.prUrl && !pullRequestMerged && input.review.checksPassing === false) {
-    findings.push(finding(input.issue.ref, "blocker", "Pull request checks are not passing."));
-  }
-
-  if (input.review?.prUrl && !pullRequestMerged && hasMissingPullRequestTemplateHeadings(input.review)) {
-    findings.push(finding(
-      input.issue.ref,
-      "blocker",
-      "Pull request does not follow the repo template.",
-      `Missing template headings: ${input.review.templateMissingHeadings.join(", ")}.`,
-    ));
-  }
-
-  if (input.review?.prUrl && !pullRequestMerged && input.review.autoReviewStatus === "failed") {
-    findings.push(finding(input.issue.ref, "blocker", "Auto review checks failed."));
-  }
-
-  if (input.review?.prUrl && !pullRequestMerged && input.review.autoReviewStatus === "pending") {
-    findings.push(finding(input.issue.ref, "blocker", "Auto review is still running."));
-  }
-
-  if (input.review?.prUrl && !pullRequestMerged && input.review.autoReviewMustFix && !isEmptyAutoReviewDetail(input.review.autoReviewMustFixDetail)) {
-    const detail = input.review.autoReviewMustFixDetail ??
-      "Resolve the auto-review must-fix feedback before advancing.";
-    findings.push(finding(input.issue.ref, "blocker", "Auto review has must-fix feedback.", detail));
+  for (const gate of prGateResults) {
+    if (gate.rule === "approval_required") continue; // handled as info findings below
+    if (gate.rule === "auto_review_must_fix" && isEmptyAutoReviewDetail(gate.detail)) continue;
+    const msg = defaultPullRequestGateMessage(gate.rule, gate.detail);
+    if (gate.rule === "auto_review_needs_confirmation") {
+      const disposition = input.review?.autoReviewNeedsConfirmationDisposition;
+      const detail = input.review?.autoReviewNeedsConfirmationDetail ??
+        "Review the auto-review needs-confirmation item and record accept/reject/defer before advancing.";
+      if (disposition) {
+        findings.push(finding(input.issue.ref, "blocker", "Auto review confirmation has not been posted to the code review.", detail));
+      } else {
+        findings.push(finding(input.issue.ref, "blocker", msg.summary, detail));
+      }
+    } else {
+      findings.push(finding(input.issue.ref, "blocker", msg.summary, msg.detail));
+    }
   }
 
   if (input.review?.prUrl && !pullRequestMerged && input.review.autoReviewNeedsConfirmation) {
@@ -154,10 +160,6 @@ export function assessIssue(input: ReadinessAssessmentInput): ReadinessAssessmen
       "Review the auto-review needs-confirmation item and record accept/reject/defer before advancing.";
     if (disposition && postedUrl) {
       findings.push(finding(input.issue.ref, "info", `Auto review needs-confirmation resolved as ${disposition}.`, detail));
-    } else if (disposition) {
-      findings.push(finding(input.issue.ref, "blocker", "Auto review confirmation has not been posted to the code review.", detail));
-    } else {
-      findings.push(finding(input.issue.ref, "blocker", "Auto review requires confirmation.", detail));
     }
   }
 
@@ -211,16 +213,11 @@ export function assessIssue(input: ReadinessAssessmentInput): ReadinessAssessmen
 
   const hasBlocker = findings.some((item) => item.severity === "blocker");
   const pullRequestGateSatisfied = codeReviewRequired ? Boolean(input.review?.prUrl) : true;
-  const pullRequestStateReady = !input.review?.prUrl ||
-    (pullRequestMerged || input.review?.isDraft === false) &&
-      (pullRequestMerged || !isPullRequestConflicted(input.review)) &&
-      (pullRequestMerged || input.review?.checksPassing !== false) &&
-      (pullRequestMerged || !hasMissingPullRequestTemplateHeadings(input.review)) &&
-      (pullRequestMerged || input.review?.autoReviewStatus !== "failed") &&
-      (pullRequestMerged || input.review?.autoReviewStatus !== "pending") &&
-      (pullRequestMerged || input.review?.autoReviewMustFix !== true || isEmptyAutoReviewDetail(input.review?.autoReviewMustFixDetail)) &&
-      (pullRequestMerged || input.review?.autoReviewNeedsConfirmation !== true ||
-        Boolean(input.review?.autoReviewNeedsConfirmationDisposition && input.review?.autoReviewNeedsConfirmationPostedUrl));
+  const pullRequestStateReady = !prGateInput ||
+    prGateResults.filter((g) =>
+      g.rule !== "approval_required" &&
+      !(g.rule === "auto_review_must_fix" && isEmptyAutoReviewDetail(g.detail))
+    ).length === 0;
   const reviewReady =
     !hasBlocker &&
     hasSuccessfulWorker &&
@@ -245,6 +242,28 @@ function latestSuccessfulWorkerResult(workerResults: WorkerTaskResult[]): Worker
   return undefined;
 }
 
+function isRecordedOnBaseBranch(issue: WorkItem): boolean {
+  const repoKeys = issue.repoKeys.length ? issue.repoKeys : [""];
+  for (const repoKey of repoKeys) {
+    const branch = metadataString(
+      repoKey ? issue.metadata[`workflow.repos.${repoKey}.branch`] : issue.metadata.branch,
+    ) ?? metadataString(issue.metadata.branch);
+    const baseBranch = metadataString(
+      repoKey ? issue.metadata[`workflow.repos.${repoKey}.base_branch`] : issue.metadata.baseBranch,
+    ) ?? metadataString(issue.metadata.baseBranch) ?? "main";
+    if (branch && branch === baseBranch) return true;
+  }
+  return false;
+}
+
+function metadataString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function workerHasCompletionOutput(result: WorkerTaskResult): boolean {
+  return result.changedFiles.length > 0 || result.testsRun.length > 0;
+}
+
 function blockedAssessment(issueRef: string, findings: ReadinessFinding[]): ReadinessAssessment {
   return {
     issueRef,
@@ -262,31 +281,6 @@ function isExternalProviderEscalation(value: unknown): value is { provider: stri
     Boolean((value as { provider?: string }).provider) &&
     typeof (value as { blocker?: unknown }).blocker === "string" &&
     Boolean((value as { blocker?: string }).blocker);
-}
-
-function isPullRequestConflicted(review: { mergeable?: string; mergeStateStatus?: string } | undefined): boolean {
-  const mergeable = review?.mergeable?.toUpperCase();
-  const mergeStateStatus = review?.mergeStateStatus?.toUpperCase();
-  return mergeable === "CONFLICTING" || mergeStateStatus === "DIRTY";
-}
-
-function isPullRequestMerged(review: { state?: string; mergedAt?: string } | undefined): boolean {
-  return review?.state?.toUpperCase() === "MERGED" || Boolean(review?.mergedAt);
-}
-
-function isEmptyAutoReviewDetail(value: unknown): boolean {
-  if (typeof value !== "string") return false;
-  const normalized = value
-    .replace(/^[-*]\s*/, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  return /^none(?:\s+(?:identified|found))?\.?$/i.test(normalized);
-}
-
-function hasMissingPullRequestTemplateHeadings(review: { templateMissingHeadings?: string[] } | undefined): review is {
-  templateMissingHeadings: string[];
-} {
-  return Array.isArray(review?.templateMissingHeadings) && review.templateMissingHeadings.length > 0;
 }
 
 function isStaleReviewSnapshot(checkedAt: string | undefined): boolean {
@@ -341,13 +335,33 @@ function readableText(value: unknown): string | undefined {
   return compact;
 }
 
-function shouldAutoRetryWorker(result: WorkerTaskResult): boolean {
-  const summary = readableText(result.summary)?.toLowerCase() ?? "";
-  if (summary.includes("without a readable error message")) return true;
-  if (summary.includes("timed out")) return true;
-  if (summary.includes("interrupted before returning a structured result")) return true;
-  if (summary.includes("provider credentials")) return true;
+export function isRetryableWorkerFailure(result: WorkerTaskResult | undefined): boolean {
+  if (!result || (result.status !== "blocked" && result.status !== "failed")) return false;
+  const text = readableText([
+    result.summary,
+    result.nextPickup,
+    ...result.blockers,
+  ].filter((item): item is string => typeof item === "string").join(" "))?.toLowerCase() ?? "";
+  if (text.includes("without a readable error message")) return true;
+  if (text.includes("timed out")) return true;
+  if (text.includes("interrupted before returning a structured result")) return true;
+  if (text.includes("provider credentials")) return true;
+  if (text.includes("executor setup")) return true;
+  if (text.includes("environment setup")) return true;
+  if (text.includes("agent sdk")) return true;
+  if (text.includes("sdk is not installed")) return true;
+  if (text.includes("sdk import")) return true;
+  if (text.includes("pi sdk")) return true;
+  if (text.includes("claude agent sdk")) return true;
+  if (text.includes("@anthropic-ai/claude-agent-sdk")) return true;
+  if (text.includes("@earendil-works/pi-coding-agent")) return true;
+  if (text.includes("worker session stalled")) return true;
+  if (text.includes("autoflow") && text.includes("stuck")) return true;
   return false;
+}
+
+function shouldAutoRetryWorker(result: WorkerTaskResult): boolean {
+  return isRetryableWorkerFailure(result);
 }
 
 function shouldTreatBlockerAsRetryable(blocker: string, result: WorkerTaskResult): boolean {
@@ -356,7 +370,18 @@ function shouldTreatBlockerAsRetryable(blocker: string, result: WorkerTaskResult
   return normalized.includes("without a readable error message") ||
     normalized.includes("timed out") ||
     normalized.includes("interrupted before returning a structured result") ||
-    normalized.includes("provider credentials");
+    normalized.includes("provider credentials") ||
+    normalized.includes("executor setup") ||
+    normalized.includes("environment setup") ||
+    normalized.includes("agent sdk") ||
+    normalized.includes("sdk is not installed") ||
+    normalized.includes("sdk import") ||
+    normalized.includes("pi sdk") ||
+    normalized.includes("claude agent sdk") ||
+    normalized.includes("@anthropic-ai/claude-agent-sdk") ||
+    normalized.includes("@earendil-works/pi-coding-agent") ||
+    normalized.includes("worker session stalled") ||
+    (normalized.includes("autoflow") && normalized.includes("stuck"));
 }
 
 function isProviderCredentialWorkerFailure(result: WorkerTaskResult | undefined): boolean {

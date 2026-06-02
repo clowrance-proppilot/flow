@@ -27,5 +27,10 @@ collaboration:
 sourceControl:
   type: "git"
 
+runtime:
+  agentSession:
+    provider: "claude"
+
 ledger:
-  type: "flow"
+  type: "sql"
+  dialect: "sqlite"

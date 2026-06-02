@@ -28,19 +28,4 @@ await build({
   loader: { ".ts": "ts" },
 });
 
-// Bundle preload — CJS (required by Electron preload)
-await build({
-  entryPoints: [resolve(root, "desktop/preload.ts")],
-  bundle: true,
-  format: "cjs",
-  platform: "node",
-  target: "node22",
-  outfile: resolve(root, "dist/desktop/preload.js"),
-  external: allDeps,
-  sourcemap: true,
-  resolveExtensions: [".ts", ".js"],
-  loader: { ".ts": "ts" },
-});
-
 console.log("[build-desktop] dist/desktop/main.js");
-console.log("[build-desktop] dist/desktop/preload.js");

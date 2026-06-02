@@ -16,4 +16,4 @@ function resolveFlowRoot(): string {
 }
 
 export const flowRoot = resolveFlowRoot();
-export const repoRoot = resolve(process.cwd());
+export const repoRoot = resolve(process.env.FLOW_ROOT || process.cwd());

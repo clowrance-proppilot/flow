@@ -25,9 +25,8 @@ let electronChild = null;
 let electronRestartInFlight = false;
 let restartTimer = null;
 let mainReady = false;
-let preloadReady = false;
 
-// Build main and preload with watch
+// Build main with watch
 const mainCtx = await context({
   entryPoints: [resolve(root, "desktop/main.ts")],
   bundle: true,
@@ -40,20 +39,6 @@ const mainCtx = await context({
   resolveExtensions: [".ts", ".js"],
   loader: { ".ts": "ts" },
   plugins: [restartOnSuccessfulBuild("main")],
-});
-
-const preloadCtx = await context({
-  entryPoints: [resolve(root, "desktop/preload.ts")],
-  bundle: true,
-  format: "cjs",
-  platform: "node",
-  target: "node22",
-  outfile: resolve(root, "dist/desktop/preload.js"),
-  external: externals,
-  sourcemap: true,
-  resolveExtensions: [".ts", ".js"],
-  loader: { ".ts": "ts" },
-  plugins: [restartOnSuccessfulBuild("preload")],
 });
 
 const rendererWatch = spawn(process.execPath, [
@@ -75,7 +60,7 @@ rendererWatch.on("exit", (code, signal) => {
   process.exit(code ?? 1);
 });
 
-await Promise.all([mainCtx.watch(), preloadCtx.watch()]);
+await mainCtx.watch();
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.once(signal, () => shutdown(signal));
@@ -92,7 +77,6 @@ function restartOnSuccessfulBuild(target) {
       build.onEnd((result) => {
         if (result.errors.length > 0) return;
         if (target === "main") mainReady = true;
-        if (target === "preload") preloadReady = true;
         scheduleElectronRestart();
       });
     },
@@ -100,7 +84,7 @@ function restartOnSuccessfulBuild(target) {
 }
 
 function scheduleElectronRestart() {
-  if (!mainReady || !preloadReady || shuttingDown) return;
+  if (!mainReady || shuttingDown) return;
   if (restartTimer) clearTimeout(restartTimer);
   restartTimer = setTimeout(() => {
     if (shuttingDown) return;
@@ -109,7 +93,7 @@ function scheduleElectronRestart() {
 }
 
 async function restartElectron() {
-  if (!mainReady || !preloadReady || shuttingDown) return;
+  if (!mainReady || shuttingDown) return;
   if (!electronChild || electronChild.exitCode !== null || electronChild.signalCode !== null) {
     await startElectron();
     return;
