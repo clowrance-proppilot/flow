@@ -99,3 +99,28 @@ export function issueAttentionRank(issue: DashboardIssue): number {
     + (missingEvidence ? 0 : 2)
     + (missingDocs ? 0 : 1);
 }
+
+export function autoflowPhaseLabel(phase?: string): string {
+  switch (phase) {
+    case "running": return "Autoflow working";
+    case "recovering": return "Autoflow recovering";
+    case "starting": return "Autoflow starting";
+    case "needs_input": return "Intervention needed";
+    case "failed": return "Autoflow failed";
+    case "paused": return "Autoflow paused";
+    case "idle": return "Autoflow idle";
+    default: return "";
+  }
+}
+
+export function autoflowPhaseThemeClass(phase?: string): string {
+  switch (phase) {
+    case "running":
+    case "recovering":
+    case "starting": return "autoflow-phase-active";
+    case "needs_input": return "autoflow-phase-intervention";
+    case "failed": return "autoflow-phase-failed";
+    case "idle": return "autoflow-phase-idle";
+    default: return "";
+  }
+}

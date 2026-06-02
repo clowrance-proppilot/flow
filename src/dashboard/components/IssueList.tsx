@@ -144,7 +144,12 @@ function IssueDetails({
       {handoffPrompt ? (
         <DetailSection title="Handoff Prompt">
           <div className="grid gap-3">
-            <pre className="m-0 max-h-48 overflow-auto whitespace-pre-wrap rounded-md border border-[var(--th-border)] bg-[var(--th-input)] p-3 text-[0.74rem] leading-relaxed text-[var(--th-fg-soft)] [overflow-wrap:anywhere] sm:p-3.5">{handoffPrompt}</pre>
+            <details className="group">
+              <summary className="cursor-pointer text-[0.76rem] font-semibold text-[var(--th-fg-muted)] hover:text-[var(--th-fg)]">
+                Show prompt ({handoffPrompt.length} chars)
+              </summary>
+              <pre className="m-0 mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-md border border-[var(--th-border)] bg-[var(--th-input)] p-3 text-[0.74rem] leading-relaxed text-[var(--th-fg-soft)] [overflow-wrap:anywhere] sm:p-3.5">{handoffPrompt}</pre>
+            </details>
             <button
               type="button"
               data-mirror-control="copy-handoff-prompt"
