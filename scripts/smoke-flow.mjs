@@ -41,7 +41,7 @@ try {
 }
 
 function createReviewedIssue(request) {
-  const intake = callFlow({ ...request, mode: "intake", dryRun: true });
+  const intake = callFlow({ ...request, mode: "intake", dryRun: true, review: true });
   const reviewJob = intake.result?.reviewJob;
   if (!reviewJob?.id || !reviewJob?.issueRef || !reviewJob?.repoKey || !reviewJob?.workType) {
     throw new Error(`issue intake did not return review job: ${JSON.stringify(intake.result)}`);

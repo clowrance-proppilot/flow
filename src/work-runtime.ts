@@ -735,10 +735,37 @@ export class FlowWorkRuntime {
     sessionId: string,
     options: CreateIssueOptions,
   ): Promise<WorkItem> {
-    const intake = await this.intakeIssue(sessionId, { ...options, apply: true });
-    if (intake.issue) return intake.issue;
-    if (intake.duplicateIssue) return intake.duplicateIssue;
-    throw new Error(intake.reasons[0] ?? "Issue intake did not produce an issue.");
+    await this.requireSession(sessionId);
+    if (!options.summary?.trim()) throw new Error("Issue summary is required.");
+    const issueType = options.issueType ?? "Bug";
+    const createInput = this.issueCreateInput(options, issueType);
+    const reasons = issueIntakeProblems(createInput.summary, options.description);
+    if (reasons.length > 0) {
+      throw new Error(`Issue creation needs more detail: ${reasons.join("; ")}`);
+    }
+    const proposal = this.issueIntakeProposal(options, createInput);
+    const duplicateIssue = await this.findDuplicateIssue(
+      createInput,
+      await this.issueIntakeCandidates(createInput),
+    );
+    if (duplicateIssue) {
+      await this.store.appendEvent({
+        sessionId,
+        type: "issue.deduped",
+        issueRef: duplicateIssue.ref,
+        message: `Issue already exists: ${duplicateIssue.ref} - ${duplicateIssue.title}`,
+        payload: { existing: duplicateIssue, requested: createInput },
+      });
+      if (options.select ?? true) {
+        await this.selectIssue(sessionId, duplicateIssue);
+      }
+      return duplicateIssue;
+    }
+    return this.createIssueAfterIntake(sessionId, options, {
+      ...createInput,
+      title: proposal.title,
+      description: proposal.body,
+    });
   }
 
   async intakeIssue(
@@ -753,7 +780,7 @@ export class FlowWorkRuntime {
     const proposal = this.issueIntakeProposal(options, createInput);
     const reasons = issueIntakeProblems(createInput.summary, options.description);
     const duplicateIssue = await this.findDuplicateIssue(createInput, candidates);
-    const reviewJob = !duplicateIssue && reasons.length === 0
+    const reviewJob = options.review === true && !duplicateIssue && reasons.length === 0
       ? await this.submitIssueIntakeReviewJob(sessionId, createInput, proposal, candidates)
       : undefined;
     const apply = options.apply === true;
@@ -790,7 +817,7 @@ export class FlowWorkRuntime {
       return { dryRun, apply, status: "ready", proposal, reviewJob, reasons: [] };
     }
 
-    if (!await this.issueIntakeReviewSucceeded(reviewJob)) {
+    if (options.review === true && !await this.issueIntakeReviewSucceeded(reviewJob)) {
       const reviewRef = reviewJob ? ` job ${reviewJob.id}` : "";
       throw new Error(`Issue intake requires a completed executor review before creation${reviewRef}.`);
     }
