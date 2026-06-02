@@ -10,15 +10,20 @@ project under work, dogfood Flow rather than treating it as a passive codebase.
 - Use registered `flow_*` tools when the host provides them.
 - If registered tools are unavailable, use the `flow` JSON CLI. Its stdout is
   always JSON; do not request or add human-output modes.
-- Before issue work, inspect or create the issue in Flow, then select it.
+- Core Flow commands are deterministic bookkeeping: issue create/select, workspace
+  prepare/adopt, result/evidence/documentation/PR recording, and bounded state
+  transitions. Use these directly.
+- For simple issue capture, use `flow createIssue` directly. Do not run intake
+  review or semantic dedupe unless specifically needed.
 - Prepare a Flow workspace or adopt the current workspace through Flow before
   editing code.
-- Claim work jobs or record local-thread adoption/results through Flow so the
-  ledger reflects who did what, where, and why.
-- Record implementation results, evidence, tests, documentation decisions, pull
-  request state, and handoff notes through Flow.
+- Record results, evidence, tests, documentation decisions, pull request state,
+  and handoff notes through Flow.
 - If Flow cannot mutate workflow state, report the exact error and stop unless
   the requester explicitly approves direct recovery.
+- Do not use Autoflow as the default executor. Autoflow, Desktop, and live-agent
+  orchestration are experimental app-layer behavior—use only when explicitly
+  requested.
 
 ## Repository Rules
 
