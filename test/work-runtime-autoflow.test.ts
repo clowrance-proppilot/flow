@@ -33,6 +33,28 @@ test("Work Runtime autoflow stops at execution handoff confirmation", async () =
   assert.equal(typeof issue?.metadata["workflow.autoflow.last_attempted_at"], "string");
 });
 
+test("Work Runtime autoflow auto-approves execution handoff when requested", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-autoflow-execution-approve-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  const session = await workRuntime.createSession("session-autoflow-execution-approve");
+  await workRuntime.selectIssue(session.id, {
+    ref: "ISSUE-APPROVE",
+    title: "Autoflow approve execution",
+    repoKeys: ["app_api"],
+    state: "queued",
+    metadata: {
+      work_dir: "/tmp/app-api-worktree",
+    },
+  });
+
+  const result = await workRuntime.autoFlowIssue(session.id, { autoApproveExecution: true });
+
+  assert.equal(result.status, "execution_handoff");
+  assert.ok(result.handoffRequest);
+  assert.equal(result.handoffRequest?.issueRef, "ISSUE-APPROVE");
+});
+
 test("Work Runtime autoflow retries after empty successful Worker output", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-empty-success-"));
   const ledger = new MemoryWorkflowLedger();

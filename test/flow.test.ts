@@ -2654,7 +2654,7 @@ test("Pi session driver queues follow-up prompts while a run is active", async (
   assert.equal(second.timeline.filter((item) => item.role === "user").length, 2);
   assert.equal(prompts.length, 1);
   releaseFirst?.();
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  await waitForCondition(() => prompts.length === 2);
 
   assert.equal(prompts.length, 2);
   assert.match(prompts[0], /First prompt/);
