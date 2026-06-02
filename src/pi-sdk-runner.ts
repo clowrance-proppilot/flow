@@ -125,9 +125,18 @@ async function loadPiSdkModule(): Promise<PiSdkModule> {
   }
 }
 
+function resolveNodeBinary(): string {
+  if (process.env.FLOW_NODE_BIN) return process.env.FLOW_NODE_BIN;
+  // In packaged Electron builds, process.execPath points to the Electron binary
+  // which includes Node.js. In dev, use the system node.
+  if (typeof process.versions.electron === "string") return process.execPath;
+  return "node";
+}
+
 async function promptWithNodeChild(input: PiAgentPromptInput, tools: readonly string[]): Promise<PiAgentPromptResult> {
   const cwd = input.workspacePath || input.repoRoot;
-  const child = spawn(process.env.FLOW_NODE_BIN || "node", ["--input-type=module", "--eval", childRunnerSource()], {
+  const nodeBin = resolveNodeBinary();
+  const child = spawn(nodeBin, ["--input-type=module", "--eval", childRunnerSource()], {
     cwd,
     env: { ...process.env },
     stdio: ["pipe", "pipe", "pipe"],

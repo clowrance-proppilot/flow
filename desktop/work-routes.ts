@@ -5,6 +5,24 @@ import type { DesktopPromptRouter } from "./prompt-router.js";
 import { isPromptTarget, message, requireActiveProject } from "./route-helpers.js";
 import type { RouteContext } from "./route-types.js";
 
+const ISSUE_REF_RE = /^[A-Z][A-Z0-9_.-]+-\d+$/i;
+const SESSION_ID_RE = /^[a-zA-Z0-9_-]+$/;
+const MAX_PROMPT_LENGTH = 32_768;
+const MAX_TITLE_LENGTH = 1024;
+const MAX_DESCRIPTION_LENGTH = 16_384;
+
+function validateIssueRef(value: string): boolean {
+  return ISSUE_REF_RE.test(value.trim());
+}
+
+function validateSessionId(value: string): boolean {
+  return SESSION_ID_RE.test(value.trim()) && value.trim().length <= 256;
+}
+
+function validatePromptLength(value: string): boolean {
+  return value.length <= MAX_PROMPT_LENGTH;
+}
+
 export function registerWorkRoutes(
   server: Express,
   context: RouteContext,
@@ -25,13 +43,33 @@ export function registerWorkRoutes(
       } catch {
         await runtime.createSession(sessionId);
       }
+      const issueType = typeof req.body?.issueType === "string" ? req.body.issueType : "Bug";
+      if (!["Bug", "Task", "Story"].includes(issueType)) {
+        res.status(400).json({ ok: false, error: "Invalid issueType. Must be Bug, Task, or Story." });
+        return;
+      }
+      const branchKind = typeof req.body?.branchKind === "string" ? req.body.branchKind : undefined;
+      if (branchKind !== undefined && branchKind !== "bug" && branchKind !== "feature") {
+        res.status(400).json({ ok: false, error: "Invalid branchKind. Must be bug or feature." });
+        return;
+      }
+      const title = typeof req.body?.title === "string" ? req.body.title : undefined;
+      if (title && title.length > MAX_TITLE_LENGTH) {
+        res.status(400).json({ ok: false, error: `Title exceeds maximum length of ${MAX_TITLE_LENGTH} characters.` });
+        return;
+      }
+      const description = typeof req.body?.description === "string" ? req.body.description : undefined;
+      if (description && description.length > MAX_DESCRIPTION_LENGTH) {
+        res.status(400).json({ ok: false, error: `Description exceeds maximum length of ${MAX_DESCRIPTION_LENGTH} characters.` });
+        return;
+      }
       const issueInput = {
-        issueType: typeof req.body?.issueType === "string" ? req.body.issueType : "Bug",
-        title: typeof req.body?.title === "string" ? req.body.title : undefined,
+        issueType,
+        title,
         summary: typeof req.body?.summary === "string" ? req.body.summary : "",
-        description: typeof req.body?.description === "string" ? req.body.description : undefined,
+        description,
         repoKeys: Array.isArray(req.body?.repoKeys) ? req.body.repoKeys.map(String).filter(Boolean) : undefined,
-        branchKind: typeof req.body?.branchKind === "string" ? req.body.branchKind : undefined,
+        branchKind,
         select: req.body?.select !== false,
       };
       if (req.body?.dryRun === true) {
@@ -50,6 +88,10 @@ export function registerWorkRoutes(
   server.post("/api/prompt", jsonBody, async (req, res) => {
     try {
       const prompt = typeof req.body?.prompt === "string" ? req.body.prompt : "";
+      if (!validatePromptLength(prompt)) {
+        res.status(400).json({ ok: false, error: `Prompt exceeds maximum length of ${MAX_PROMPT_LENGTH} characters.` });
+        return;
+      }
       const result = await promptRouter.submit({
         prompt,
         projectId: typeof req.body?.projectId === "string" ? req.body.projectId : undefined,
@@ -68,9 +110,14 @@ export function registerWorkRoutes(
 
   server.post("/api/issues/:issueRef/session", async (req, res) => {
     try {
+      const issueRef = String(req.params.issueRef ?? "").trim();
+      if (!issueRef || !validateIssueRef(issueRef)) {
+        res.status(400).json({ ok: false, error: "Invalid issueRef format." });
+        return;
+      }
       const project = await requireActiveProject(projectRegistry);
       const surface = await projectSurface(project);
-      const session = await surface.piSessionDriver.openOrCreateIssueSession(String(req.params.issueRef ?? ""));
+      const session = await surface.piSessionDriver.openOrCreateIssueSession(issueRef);
       res.json({ ok: true, session });
     } catch (error) {
       console.error("[flow-desktop] issue session creation failed:", error);
@@ -80,9 +127,13 @@ export function registerWorkRoutes(
 
   server.get("/api/sessions/:sessionId/events", async (req, res) => {
     try {
+      const sessionId = String(req.params.sessionId ?? "").trim();
+      if (!sessionId || !validateSessionId(sessionId)) {
+        res.status(400).json({ ok: false, error: "Invalid sessionId format." });
+        return;
+      }
       const project = await requireActiveProject(projectRegistry);
       const surface = await projectSurface(project);
-      const sessionId = String(req.params.sessionId ?? "");
       await surface.piSessionDriver.getSession(sessionId);
       res.writeHead(200, {
         "Content-Type": "text/event-stream",
@@ -102,8 +153,8 @@ export function registerWorkRoutes(
 
   server.post("/api/actions/:action", jsonBody, async (req, res) => {
     try {
-      const action = String(req.params.action ?? "");
-      if (!isDesktopAction(action)) {
+      const action = String(req.params.action ?? "").trim();
+      if (!action || !isDesktopAction(action)) {
         res.status(404).json({ ok: false, error: "Unknown desktop action." });
         return;
       }
@@ -161,13 +212,13 @@ export function registerWorkRoutes(
 
   server.post("/api/pi/issues/:issueRef/session", async (req, res) => {
     try {
-      const project = await requireActiveProject(projectRegistry);
-      const surface = await projectSurface(project);
       const issueRef = String(req.params.issueRef ?? "").trim();
-      if (!issueRef) {
-        res.status(400).json({ ok: false, error: "Missing issueRef." });
+      if (!issueRef || !validateIssueRef(issueRef)) {
+        res.status(400).json({ ok: false, error: "Invalid issueRef format." });
         return;
       }
+      const project = await requireActiveProject(projectRegistry);
+      const surface = await projectSurface(project);
       const session = await surface.piSessionDriver.startSession(issueRef);
       res.json({ ok: true, session });
     } catch (error) {
@@ -178,13 +229,13 @@ export function registerWorkRoutes(
 
   server.get("/api/pi/sessions/:sessionId", async (req, res) => {
     try {
-      const project = await requireActiveProject(projectRegistry);
-      const surface = await projectSurface(project);
       const sessionId = String(req.params.sessionId ?? "").trim();
-      if (!sessionId) {
-        res.status(400).json({ ok: false, error: "Missing sessionId." });
+      if (!sessionId || !validateSessionId(sessionId)) {
+        res.status(400).json({ ok: false, error: "Invalid sessionId format." });
         return;
       }
+      const project = await requireActiveProject(projectRegistry);
+      const surface = await projectSurface(project);
       const session = await surface.piSessionDriver.getSession(sessionId);
       res.json({ ok: true, session });
     } catch (error) {
@@ -195,14 +246,18 @@ export function registerWorkRoutes(
 
   server.post("/api/pi/sessions/:sessionId/prompts", jsonBody, async (req, res) => {
     try {
-      const project = await requireActiveProject(projectRegistry);
-      const surface = await projectSurface(project);
       const sessionId = String(req.params.sessionId ?? "").trim();
-      if (!sessionId) {
-        res.status(400).json({ ok: false, error: "Missing sessionId." });
+      if (!sessionId || !validateSessionId(sessionId)) {
+        res.status(400).json({ ok: false, error: "Invalid sessionId format." });
         return;
       }
       const prompt = typeof req.body?.prompt === "string" ? req.body.prompt : "";
+      if (!validatePromptLength(prompt)) {
+        res.status(400).json({ ok: false, error: `Prompt exceeds maximum length of ${MAX_PROMPT_LENGTH} characters.` });
+        return;
+      }
+      const project = await requireActiveProject(projectRegistry);
+      const surface = await projectSurface(project);
       const current = await surface.piSessionDriver.getSession(sessionId);
       const session = await surface.autoflowRunner.sendUserMessage({
         issueRef: current.issueRef,
