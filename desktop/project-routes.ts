@@ -97,6 +97,20 @@ export function registerProjectRoutes(server: Express, context: RouteContext, js
     }
   });
 
+  server.delete("/api/projects/:projectId", async (req, res) => {
+    try {
+      const projectId = String(req.params.projectId ?? "");
+      await projectRegistry.removeProject(projectId);
+      invalidateProjectSurface?.(projectId);
+      const projects = await projectRegistry.listProjects();
+      const active = await projectRegistry.activeProject();
+      res.json({ ok: true, activeProjectId: active?.id, projects });
+    } catch (error) {
+      console.error("[flow-desktop] remove project failed:", error);
+      res.status(404).json({ ok: false, error: message(error) });
+    }
+  });
+
   server.post("/api/projects/:projectId/active", async (req, res) => {
     try {
       const project = await projectRegistry.setActiveProject(String(req.params.projectId ?? ""));

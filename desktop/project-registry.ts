@@ -78,6 +78,20 @@ export class DesktopProjectRegistry {
     return validated;
   }
 
+  async removeProject(projectId: string): Promise<void> {
+    const state = await this.readState();
+    const project = state.projects.find((candidate) => candidate.id === projectId);
+    if (!project) throw new Error(`Unknown Flow project ${projectId}.`);
+    const remaining = state.projects.filter((candidate) => candidate.id !== projectId);
+    const nextActiveId = state.activeProjectId === projectId
+      ? remaining[0]?.id
+      : state.activeProjectId;
+    await this.writeState({
+      activeProjectId: remaining.some((p) => p.id === nextActiveId) ? nextActiveId : remaining[0]?.id,
+      projects: remaining,
+    });
+  }
+
   async setActiveProject(projectId: string): Promise<DesktopProjectRecord> {
     const state = await this.readState();
     const project = state.projects.find((candidate) => candidate.id === projectId);
