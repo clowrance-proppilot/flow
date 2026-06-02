@@ -84,6 +84,7 @@ export const runtimeConfigSchema = z.object({
   workflowLedgerPath: z.string().min(1).optional(),
   defaultSessionId: z.string().min(1).optional(),
   autoflowBlockedThreshold: z.number().int().positive().optional(),
+  staleWorkerRunTimeoutMs: z.number().int().positive().optional(),
   debug: z.boolean().optional(),
   dashboard: dashboardRuntimeConfigSchema.optional(),
 }).catchall(z.unknown());
