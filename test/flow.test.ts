@@ -2842,7 +2842,7 @@ test("Standalone Autoflow runner records timed-out worker jobs as terminal", asy
   assert.equal(status.issues["GH-379"]?.phase, "failed");
   assert.equal(jobs.at(-1)?.status, "failed");
   assert.equal(results.at(-1)?.status, "failed");
-  assert.match(results.at(-1)?.summary ?? "", /timed out/);
+  assert.match(results.at(-1)?.summary ?? "", /timeout/);
 });
 
 test("Autoflow service can be instantiated without Desktop modules", async () => {
