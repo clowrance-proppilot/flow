@@ -140,6 +140,72 @@ test("Work Runtime autoflow prepares a missing workspace before execution handof
   assert.equal(result.issue?.metadata["workflow.repos.app_api.worktree_path"], "/repo/app-api/.worktrees/feature-issue-17-autoflow-prepare");
 });
 
+test("Work Runtime live adoption prepares existing PR branch when workspace is missing", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const ledger = new MemoryWorkflowLedger();
+  const preparedPlans: any[] = [];
+  const workRuntime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    projectRoot: "/repo",
+    sourceControl: {
+      async inspect() {
+        throw new Error("unused");
+      },
+      async prepareWorktree(plan: any) {
+        preparedPlans.push(plan);
+        assert.equal(plan.repoPath, "/repo/app-api");
+        assert.equal(plan.branch, "feature/gh-245-existing-pr");
+        assert.equal(plan.baseRef, "develop");
+        return {
+          branch: plan.branch,
+          headSha: "abc123",
+          dirty: false,
+          entries: [],
+          worktreePath: plan.worktreePath,
+        };
+      },
+    },
+  });
+  const session = await workRuntime.createSession("session-autoflow-existing-pr-workspace");
+  await workRuntime.selectIssue(session.id, {
+    ref: "GH-245",
+    title: "Existing PR conflict",
+    repoKeys: ["app_api"],
+    state: "awaiting_review",
+    metadata: {
+      prRepo: "app-api",
+      prNumber: 380,
+      prUrl: "https://github.com/camden-lowrance/app-api/pull/380",
+      prHeadRefName: "feature/gh-245-existing-pr",
+      prState: "OPEN",
+      prMergeable: "CONFLICTING",
+      prMergeStateStatus: "DIRTY",
+      "workflow.repos.app_api.pr_repo": "app-api",
+      "workflow.repos.app_api.pr_number": 380,
+      "workflow.repos.app_api.pr_url": "https://github.com/camden-lowrance/app-api/pull/380",
+      "workflow.repos.app_api.pr_head_ref_name": "feature/gh-245-existing-pr",
+      "workflow.repos.app_api.pr_state": "OPEN",
+      "workflow.repos.app_api.pr_mergeable": "CONFLICTING",
+      "workflow.repos.app_api.pr_merge_state_status": "DIRTY",
+    },
+  });
+
+  const autoflow = await workRuntime.autoFlowIssue(session.id);
+  assert.equal(autoflow.status, "needs_confirmation");
+  assert.equal(autoflow.session.pendingConfirmation?.action, "request_execution");
+
+  const handoff = await workRuntime.adoptPendingLiveWorker(session.id, {
+    adopter: "Flow Autoflow",
+  });
+
+  assert.equal(preparedPlans.length, 1);
+  assert.equal(handoff.workspacePath, "/repo/app-api/.worktrees/feature-gh-245-existing-pr");
+  const issue = await ledger.readIssue("GH-245");
+  assert.equal(issue?.metadata["workflow.repos.app_api.branch"], "feature/gh-245-existing-pr");
+  assert.equal(issue?.metadata["workflow.repos.app_api.worktree_path"], "/repo/app-api/.worktrees/feature-gh-245-existing-pr");
+});
+
 test("Work Runtime autoflow marks draft pull requests ready before reassessing blockers", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
   const ledger = new MemoryWorkflowLedger();

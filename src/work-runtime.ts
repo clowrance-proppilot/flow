@@ -1327,6 +1327,8 @@ export class FlowWorkRuntime {
     const repoPath = this.topology.repoPath(this.projectRoot, repoKey);
     const branch = existingString(issue.metadata[`workflow.repos.${repoKey}.branch`]) ??
       existingString(issue.metadata.branch) ??
+      existingString(issue.metadata[`workflow.repos.${repoKey}.pr_head_ref_name`]) ??
+      existingString(issue.metadata.prHeadRefName) ??
       this.topology.branchName(issue);
     const worktreePath = existingString(issue.metadata[`workflow.repos.${repoKey}.worktree_path`]) ??
       existingString(issue.metadata.work_dir) ??
@@ -2337,7 +2339,8 @@ export class FlowWorkRuntime {
 
     const pending = session.pendingConfirmation;
     if (pending && isExecutionHandoffAction(pending.action)) {
-      advanced = await this.advanceIssue(sessionId, pending.id);
+      const preparedWorkspace = await this.ensurePendingExecutionWorkspace(sessionId, pending);
+      advanced = await this.advanceIssue(sessionId, preparedWorkspace ? undefined : pending.id);
     } else {
       advanced = await this.advanceIssue(sessionId);
     }
@@ -2345,7 +2348,8 @@ export class FlowWorkRuntime {
     session = advanced.session;
     const nextPending = session.pendingConfirmation;
     if (advanced.status === "needs_confirmation" && nextPending && isExecutionHandoffAction(nextPending.action)) {
-      advanced = await this.advanceIssue(sessionId, nextPending.id);
+      const preparedWorkspace = await this.ensurePendingExecutionWorkspace(sessionId, nextPending);
+      advanced = await this.advanceIssue(sessionId, preparedWorkspace ? undefined : nextPending.id);
     }
 
     if (advanced.status !== "execution_handoff" || !advanced.handoffRequest) {
@@ -2388,6 +2392,20 @@ export class FlowWorkRuntime {
       request.workspacePath ? `\nPrepared workspace: ${request.workspacePath}` : "",
     ].join("\n"));
     return { ...request, workJobId: job.id };
+  }
+
+  private async ensurePendingExecutionWorkspace(
+    sessionId: string,
+    pending: PendingConfirmation,
+  ): Promise<boolean> {
+    if (!this.sourceControl.prepareWorktree) return false;
+    const repoKey = normalizeRepoKey(stringFromRecord(pending.payload, "repoKey") ?? "");
+    if (!repoKey) return false;
+    const issue = await this.ledger.readIssue(pending.issueRef);
+    if (!issue) return false;
+    if (worktreePathForRepo(issue, repoKey)) return false;
+    await this.prepareWorkspace(sessionId, pending.issueRef, { repoKey });
+    return true;
   }
 
   private async inferWorkJobIdForWorkerResult(
