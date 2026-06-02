@@ -22,6 +22,12 @@ import {
 import { repoRoot } from "./flow-runtime.js";
 import { JsonCliError, runJsonCli } from "./json-cli.js";
 import { createConfiguredWorkRuntime } from "./runtime-factory.js";
+import {
+  requireWorkItem,
+  requireCreateIssueOptions,
+  requireWorkJobExecutor,
+  requireWorkJobResult,
+} from "./dispatch-validators.js";
 import { PiSessionDriver } from "./pi-session-driver.js";
 import { resolveCliIssue } from "./cli-issue.js";
 
@@ -677,11 +683,11 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     case "createSession":
       return runtime.createSession(typeof params.id === "string" ? params.id : undefined);
     case "selectIssue":
-      return runtime.selectIssue(String(params.sessionId ?? defaultSessionId), params.issue as WorkItem);
+      return runtime.selectIssue(String(params.sessionId ?? defaultSessionId), requireWorkItem(params.issue, method));
     case "intakeIssue":
       return runtime.intakeIssue(
         String(params.sessionId ?? defaultSessionId),
-        params.options as CreateIssueOptions,
+        requireCreateIssueOptions(params.options, method),
       );
     case "bootstrapJiraIssue":
     case "bootstrapIssue":
@@ -693,7 +699,7 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     case "createIssue":
       return runtime.createIssue(
         String(params.sessionId ?? defaultSessionId),
-        params.options as CreateIssueOptions,
+        requireCreateIssueOptions(params.options, method),
       );
     case "listWorkJobs":
       return runtime.listWorkJobs(
@@ -704,12 +710,12 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
       return runtime.claimWorkJob(
         String(params.sessionId ?? defaultSessionId),
         String(params.jobId),
-        params.executor as WorkJobExecutor,
+        requireWorkJobExecutor(params.executor, method),
       );
     case "recordWorkJobResult":
       return runtime.recordWorkJobResult(
         String(params.sessionId ?? defaultSessionId),
-        params.result as WorkJobResult,
+        requireWorkJobResult(params.result, method),
       );
     case "adoptBranch":
       return runtime.adoptBranch(String(params.sessionId ?? defaultSessionId), {
@@ -725,7 +731,7 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     case "createJiraIssue":
       return runtime.createJiraIssue(
         String(params.sessionId ?? defaultSessionId),
-        params.options as CreateIssueOptions,
+        requireCreateIssueOptions(params.options, method),
       );
     case "routeIssue":
       return runtime.routeIssue(

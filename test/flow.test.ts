@@ -75,6 +75,12 @@ import {
   type WorkItem,
 } from "../src/index.js";
 import { JsonCliError, runJsonCli, type JsonCliOptions } from "../src/json-cli.js";
+import {
+  requireWorkItem,
+  requireCreateIssueOptions,
+  requireWorkJobExecutor,
+  requireWorkJobResult,
+} from "../src/dispatch-validators.js";
 import type { ProjectTopology } from "../src/project-topology.js";
 import { githubIssueCreateBody, normalizePullRequest, parseGitHubIssues, parsePullRequests } from "../src/adapters/github.js";
 import { currentUserBacklogJql, currentUserOpenSprintJql, parseJiraCommentUrl, parseJiraIssue, parseJiraSearch } from "../src/adapters/jira.js";
@@ -7738,4 +7744,195 @@ test("Beads metadata preserves branch kind and Jira issue type for workspace pre
 
   assert.equal(metadata.branchKind, "feature");
   assert.equal(metadata.jiraIssueType, "Story");
+});
+
+test("requireWorkItem returns valid WorkItem for correct input", () => {
+  const valid = { ref: "FLOW-1", title: "Test issue", repoKeys: ["main"], state: "queued" as const, metadata: {} };
+  const result = requireWorkItem(valid, "selectIssue");
+  assert.equal(result.ref, "FLOW-1");
+  assert.equal(result.title, "Test issue");
+  assert.deepEqual(result.repoKeys, ["main"]);
+});
+
+test("requireWorkItem throws BAD_FIELD for missing ref", () => {
+  assert.throws(
+    () => requireWorkItem({ title: "No ref" }, "selectIssue"),
+    (error: unknown) => {
+      assert.ok(error instanceof JsonCliError);
+      assert.equal(error.code, "BAD_FIELD");
+      assert.match(error.message, /selectIssue/);
+      assert.equal(error.manifestTarget, "runtime");
+      const details = error.details as { method: string; field: string; issues: unknown[] };
+      assert.equal(details.method, "selectIssue");
+      assert.equal(details.field, "params.issue");
+      assert.ok(details.issues.length > 0);
+      return true;
+    },
+  );
+});
+
+test("requireWorkItem throws BAD_FIELD for non-object input", () => {
+  assert.throws(
+    () => requireWorkItem("not-an-object", "selectIssue"),
+    (error: unknown) => {
+      assert.ok(error instanceof JsonCliError);
+      assert.equal(error.code, "BAD_FIELD");
+      assert.equal((error.details as { method: string }).method, "selectIssue");
+      return true;
+    },
+  );
+});
+
+test("requireWorkItem throws BAD_FIELD for empty ref", () => {
+  assert.throws(
+    () => requireWorkItem({ ref: "", title: "Test" }, "selectIssue"),
+    (error: unknown) => {
+      assert.ok(error instanceof JsonCliError);
+      assert.equal(error.code, "BAD_FIELD");
+      return true;
+    },
+  );
+});
+
+test("requireCreateIssueOptions returns valid options for correct input", () => {
+  const valid = { summary: "Add feature", issueType: "Task" as const };
+  const result = requireCreateIssueOptions(valid, "createIssue");
+  assert.equal(result.summary, "Add feature");
+  assert.equal(result.issueType, "Task");
+});
+
+test("requireCreateIssueOptions throws BAD_FIELD for missing summary", () => {
+  assert.throws(
+    () => requireCreateIssueOptions({ issueType: "Task" }, "createIssue"),
+    (error: unknown) => {
+      assert.ok(error instanceof JsonCliError);
+      assert.equal(error.code, "BAD_FIELD");
+      assert.match(error.message, /createIssue/);
+      const details = error.details as { method: string; field: string };
+      assert.equal(details.method, "createIssue");
+      assert.equal(details.field, "params.options");
+      return true;
+    },
+  );
+});
+
+test("requireCreateIssueOptions throws BAD_FIELD for invalid issueType", () => {
+  assert.throws(
+    () => requireCreateIssueOptions({ summary: "test", issueType: "Epic" }, "intakeIssue"),
+    (error: unknown) => {
+      assert.ok(error instanceof JsonCliError);
+      assert.equal(error.code, "BAD_FIELD");
+      const details = error.details as { method: string; field: string };
+      assert.equal(details.method, "intakeIssue");
+      assert.equal(details.field, "params.options");
+      return true;
+    },
+  );
+});
+
+test("requireCreateIssueOptions accepts optional fields", () => {
+  const result = requireCreateIssueOptions({
+    summary: "Full options",
+    projectKey: "PROJ",
+    issueType: "Story",
+    branchKind: "feature",
+    title: "Custom title",
+    description: "Detailed description",
+    repoKeys: ["main", "api"],
+    select: true,
+  }, "createIssue");
+  assert.equal(result.summary, "Full options");
+  assert.equal(result.projectKey, "PROJ");
+  assert.equal(result.issueType, "Story");
+  assert.equal(result.branchKind, "feature");
+  assert.equal(result.title, "Custom title");
+  assert.equal(result.description, "Detailed description");
+  assert.deepEqual(result.repoKeys, ["main", "api"]);
+  assert.equal(result.select, true);
+});
+
+test("requireCreateIssueOptions preserves intake control fields", () => {
+  const result = requireCreateIssueOptions({
+    summary: "Review intake",
+    dryRun: true,
+    apply: false,
+    review: true,
+  }, "intakeIssue") as { dryRun?: boolean; apply?: boolean; review?: boolean };
+  assert.equal(result.dryRun, true);
+  assert.equal(result.apply, false);
+  assert.equal(result.review, true);
+});
+
+test("requireWorkJobExecutor returns valid executor for correct input", () => {
+  const result = requireWorkJobExecutor("live_agent_thread", "claimWorkJob");
+  assert.equal(result, "live_agent_thread");
+});
+
+test("requireWorkJobExecutor throws BAD_FIELD for invalid executor", () => {
+  assert.throws(
+    () => requireWorkJobExecutor("invalid_executor", "claimWorkJob"),
+    (error: unknown) => {
+      assert.ok(error instanceof JsonCliError);
+      assert.equal(error.code, "BAD_FIELD");
+      const details = error.details as { method: string; field: string };
+      assert.equal(details.method, "claimWorkJob");
+      assert.equal(details.field, "params.executor");
+      return true;
+    },
+  );
+});
+
+test("requireWorkJobResult returns valid result for correct input", () => {
+  const valid = {
+    jobId: "job-1",
+    issueRef: "FLOW-1",
+    repoKey: "main",
+    workType: "implement",
+    status: "succeeded" as const,
+    summary: "Done",
+    completedAt: "2026-01-01T00:00:00.000Z",
+  };
+  const result = requireWorkJobResult(valid, "recordWorkJobResult");
+  assert.equal(result.jobId, "job-1");
+  assert.equal(result.status, "succeeded");
+});
+
+test("requireWorkJobResult throws BAD_FIELD for missing jobId", () => {
+  assert.throws(
+    () => requireWorkJobResult({
+      issueRef: "FLOW-1",
+      repoKey: "main",
+      workType: "implement",
+      status: "succeeded",
+      summary: "Done",
+      completedAt: "2026-01-01T00:00:00.000Z",
+    }, "recordWorkJobResult"),
+    (error: unknown) => {
+      assert.ok(error instanceof JsonCliError);
+      assert.equal(error.code, "BAD_FIELD");
+      const details = error.details as { method: string; field: string };
+      assert.equal(details.method, "recordWorkJobResult");
+      assert.equal(details.field, "params.result");
+      return true;
+    },
+  );
+});
+
+test("requireWorkJobResult throws BAD_FIELD for invalid status", () => {
+  assert.throws(
+    () => requireWorkJobResult({
+      jobId: "job-1",
+      issueRef: "FLOW-1",
+      repoKey: "main",
+      workType: "implement",
+      status: "invalid_status",
+      summary: "Done",
+      completedAt: "2026-01-01T00:00:00.000Z",
+    }, "recordWorkJobResult"),
+    (error: unknown) => {
+      assert.ok(error instanceof JsonCliError);
+      assert.equal(error.code, "BAD_FIELD");
+      return true;
+    },
+  );
 });
