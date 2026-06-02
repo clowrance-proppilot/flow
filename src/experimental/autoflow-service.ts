@@ -1,6 +1,6 @@
-import { createId, nowIso, WorkerStatusValue, type WorkerTaskRequest } from "./contracts.js";
-import type { DurableAgentSessionHandle, HatchetAutoflowPayload, HatchetAutoflowRunResult } from "./execution-plane.js";
-import type { AdvanceIssueResult, AutoFlowIssueResult, FlowDoctorResult, FlowWorkRuntime, LocalThreadResultInput } from "./work-runtime.js";
+import { createId, nowIso, WorkerStatusValue, type WorkerTaskRequest } from "../contracts.js";
+import type { DurableAgentSessionHandle, HatchetAutoflowPayload, HatchetAutoflowRunResult } from "../execution-plane.js";
+import type { AdvanceIssueResult, AutoFlowIssueResult, FlowDoctorResult, FlowWorkRuntime, LocalThreadResultInput } from "../work-runtime.js";
 
 export type AutoflowServiceRuntime = Pick<
   FlowWorkRuntime,

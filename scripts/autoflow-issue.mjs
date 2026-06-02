@@ -15,7 +15,7 @@ export async function main(args) {
   const { repoRoot } = await import("../src/flow-runtime.js");
   const { validateFlowConfig } = await import("../src/config/config-loader.js");
   const { createConfiguredWorkRuntime } = await import("../src/runtime-factory.js");
-  const { StandaloneAutoflowRunner, createDefaultAutoflowRunnerState } = await import("../src/autoflow-runner.js");
+  const { StandaloneAutoflowRunner, createDefaultAutoflowRunnerState } = await import("../src/experimental/autoflow-runner.js");
   const { PiSessionDriver } = await import("../src/pi-session-driver.js");
   const { ClaudeSessionDriver } = await import("../src/claude-session-driver.js");
 

@@ -36,9 +36,9 @@ prompt text for agent hosts lives in `prompts/`.
 - Prefer `rg -n "search term" path/to/file` to find relevant locations, then
   read only those ranges.
 - Flow test files are split by domain. When working on readiness, check
-  `test/readiness.test.ts`. For autoflow, check
-  `test/work-runtime-autoflow.test.ts`. For adapter/triage, check
-  `test/adapter-triage.test.ts`.
+  `test/readiness.test.ts`. For autoflow orchestration (experimental app layer),
+  check `test/experimental/work-runtime-autoflow.test.ts`. For adapter/triage,
+  check `test/adapter-triage.test.ts`.
 - Work as the executor. Do not delegate implementation or review work to another
   agent or advisor process.
 

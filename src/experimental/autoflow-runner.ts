@@ -1,10 +1,10 @@
 import { join } from "node:path";
-import { GitAdapter } from "./adapters/git.js";
+import { GitAdapter } from "../adapters/git.js";
 import { AutoflowService, type AutoflowAgentSessionDriver, type AutoflowCodeReviewCreator, type AutoflowServiceStatus } from "./autoflow-service.js";
-import type { WorkItem } from "./contracts.js";
-import { flowUserStateRoot } from "./flow-layout.js";
-import { createKyselyFlowState, createSqliteSqlStateConfig } from "./sql-state.js";
-import type { FlowWorkRuntime } from "./work-runtime.js";
+import type { WorkItem } from "../contracts.js";
+import { flowUserStateRoot } from "../flow-layout.js";
+import { createKyselyFlowState, createSqliteSqlStateConfig } from "../sql-state.js";
+import type { FlowWorkRuntime } from "../work-runtime.js";
 
 export const AUTOFLOW_ENABLED_STATE_KEY = "autoflow.enabled";
 export const AUTOFLOW_STATUS_STATE_KEY = "autoflow.status";

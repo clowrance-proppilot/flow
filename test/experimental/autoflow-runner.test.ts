@@ -9,7 +9,7 @@ import {
   nowIso,
   type AutoflowAgentSessionDriver,
   type AutoflowAgentSessionSnapshot,
-} from "../src/index.js";
+} from "../../src/index.js";
 
 class MemoryRunnerState {
   private readonly values = new Map<string, unknown>();
