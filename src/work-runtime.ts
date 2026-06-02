@@ -1190,8 +1190,9 @@ export class FlowWorkRuntime {
   }
 
   private async reconcileDashboardTerminalState(issue: WorkItem): Promise<WorkItem> {
-    if (issue.state === "done" || !isIssueTrackerDone(issue)) return issue;
-    return this.ledger.writeIssue({ ...issue, state: "done" });
+    if (issue.state === "done") return issue;
+    if (isDashboardTerminalDone(issue)) return this.ledger.writeIssue({ ...issue, state: "done" });
+    return issue;
   }
 
   async inspectBacklog(limit = 10): Promise<WorkItem[]> {
@@ -4075,6 +4076,19 @@ function isIssueTrackerDone(issue: WorkItem): boolean {
     resolution: issueTrackerResolution(issue),
     labels: [],
   });
+}
+
+/**
+ * Checks whether a dashboard queue issue should be reconciled to "done" state.
+ * This is consistent with `externallyDrivenState` in reconciliation.ts for
+ * terminal/done conditions: issue tracker done, PR merged, or "ready for qa" status.
+ */
+function isDashboardTerminalDone(issue: WorkItem): boolean {
+  if (isIssueTrackerDone(issue)) return true;
+  if (existingString(issue.metadata.prMergedAt)) return true;
+  const jiraStatus = existingString(issue.metadata.jiraStatus)?.toLowerCase() ?? "";
+  if (jiraStatus === "ready for qa") return true;
+  return false;
 }
 
 function issueTrackerStatus(issue: WorkItem): string | undefined {
