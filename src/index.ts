@@ -25,6 +25,7 @@ export * from "./readiness.js";
 export * from "./ledger.js";
 export * from "./engine/ledger-contracts.js";
 export * from "./store.js";
+export * from "./store-codecs.js";
 export * from "./sql-store.js";
 export * from "./sql-state.js";
 export * from "./work-envelope.js";

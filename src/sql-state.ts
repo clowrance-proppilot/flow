@@ -16,20 +16,19 @@ import {
   type WorkRuntimeSession,
   type WorkerRunRecord,
   type WorkerTaskResult,
-  createId,
   flowContextProjectionSchema,
   flowContextRecordSchema,
   nowIso,
   workItemSchema,
   workJobResultSchema,
   workJobSchema,
-  workRuntimeEventSchema,
   workRuntimeSessionSchema,
   workerRunRecordSchema,
   workerTaskResultSchema,
 } from "./contracts.js";
 import type { WorkflowLedger } from "./engine/ledger-contracts.js";
 import type { FlowStoreInterface } from "./store.js";
+import { buildRuntimeEvent, buildRuntimeSession } from "./store-codecs.js";
 
 interface JsonTable {
   id: string;
@@ -184,15 +183,8 @@ export class KyselyFlowState implements FlowStoreInterface, WorkflowLedger {
     this.ensured = true;
   }
 
-  async createSession(id = createId("session")): Promise<WorkRuntimeSession> {
-    const now = nowIso();
-    const session = workRuntimeSessionSchema.parse({
-      id,
-      findings: [],
-      workerResults: [],
-      createdAt: now,
-      updatedAt: now,
-    });
+  async createSession(id?: string): Promise<WorkRuntimeSession> {
+    const session = buildRuntimeSession(id);
     await this.writeSession(session);
     return session;
   }
@@ -212,11 +204,7 @@ export class KyselyFlowState implements FlowStoreInterface, WorkflowLedger {
 
   async appendEvent(event: Omit<WorkRuntimeEvent, "id" | "createdAt">): Promise<WorkRuntimeEvent> {
     await this.ensure();
-    const parsed = workRuntimeEventSchema.parse({
-      ...event,
-      id: createId("event"),
-      createdAt: nowIso(),
-    });
+    const parsed = buildRuntimeEvent(event);
     await this.db
       .insertInto("flow_events")
       .values({
