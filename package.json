@@ -48,8 +48,13 @@
   ],
   "scripts": {
     "check": "npm run check:cli-contract && npm run check:dashboard-readonly && tsc -p tsconfig.json --noEmit",
+    "check:style": "npm run lint && npm run format:check",
     "check:dashboard-readonly": "node scripts/check-dashboard-readonly.mjs",
     "check:cli-contract": "node scripts/check-flow-cli-contract.mjs",
+    "lint": "eslint eslint.config.js",
+    "lint:fix": "eslint --fix eslint.config.js",
+    "format": "prettier --write \"package.json\" \"package-lock.json\" \".prettierrc\" \"eslint.config.js\"",
+    "format:check": "prettier --check \"package.json\" \"package-lock.json\" \".prettierrc\" \"eslint.config.js\"",
     "test": "npm run check:cli-contract && npm run check:dashboard-readonly && npm run test:fast --",
     "test:fast": "node --import tsx scripts/test-flow.mjs",
     "test:core": "npm run test:fast -- test/flow.test.ts",
@@ -119,6 +124,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/express": "^5.0.6",
     "@types/node": "^25.9.1",
     "@types/react": "^19.2.15",
@@ -126,7 +132,10 @@
     "electron": "^42.3.0",
     "electron-builder": "^26.0.12",
     "esbuild": "^0.28.0",
+    "eslint": "^10.4.1",
+    "eslint-config-prettier": "^10.1.8",
     "husky": "^9.1.7",
+    "prettier": "^3.8.3",
     "tsx": "^4.22.3",
     "typescript": "^6.0.3"
   }
