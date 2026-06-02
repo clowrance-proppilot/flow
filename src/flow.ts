@@ -28,6 +28,7 @@ import {
   requireWorkJobExecutor,
   requireWorkJobResult,
 } from "./dispatch-validators.js";
+import { ClaudeSessionDriver } from "./claude-session-driver.js";
 import { PiSessionDriver } from "./pi-session-driver.js";
 import { resolveCliIssue } from "./cli-issue.js";
 
@@ -153,6 +154,7 @@ async function handleConfigRequest(request: Record<string, unknown>): Promise<un
     runtime: config?.runtime
       ? {
         store: config.runtime.store,
+        agentSession: config.runtime.agentSession,
         executionPlane: config.runtime.executionPlane
           ? {
             type: config.runtime.executionPlane.type,
@@ -398,16 +400,12 @@ function autoflowIssueRefs(request: Record<string, unknown>): string[] | undefin
 function standaloneAutoflowRunner(): StandaloneAutoflowRunner {
   if (cachedAutoflowRunner) return cachedAutoflowRunner;
   const projectId = configString(flowConfig?.project, "name") ?? "default";
-  const piSessionDriver = new PiSessionDriver({
-    runtime,
-    repoRoot,
-    flowSessionId: `autoflow-${projectId.toLowerCase()}`,
-  });
+  const agentSessionDriver = createCliAgentSessionDriver(projectId);
   cachedAutoflowRunner = new StandaloneAutoflowRunner({
     projectId,
     runtime,
     state: createDefaultAutoflowRunnerState(repoRoot),
-    agentSessionDriver: piSessionDriver,
+    agentSessionDriver,
     codeReviewCreator: configuredRuntime.collaboration?.createCodeReview
       ? {
         async createPullRequest(input) {
@@ -433,6 +431,18 @@ function standaloneAutoflowRunner(): StandaloneAutoflowRunner {
       : undefined,
   });
   return cachedAutoflowRunner;
+}
+
+function createCliAgentSessionDriver(projectId: string) {
+  const provider = configString(configRecord(flowConfig?.runtime, "agentSession"), "provider") ?? "pi";
+  const options = {
+    runtime,
+    repoRoot,
+    flowSessionId: `autoflow-${projectId.toLowerCase()}`,
+  };
+  if (provider === "pi") return new PiSessionDriver(options);
+  if (provider === "claude") return new ClaudeSessionDriver(options);
+  throw new Error(`Unsupported runtime.agentSession.provider: ${provider}.`);
 }
 
 function flowManifest(target?: string) {
@@ -997,4 +1007,9 @@ function errorMessage(error: unknown): string {
 function configString(config: Record<string, unknown> | undefined, key: string): string | undefined {
   const value = config?.[key];
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function configRecord(config: Record<string, unknown> | undefined, key: string): Record<string, unknown> | undefined {
+  const value = config?.[key];
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }

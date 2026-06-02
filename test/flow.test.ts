@@ -95,6 +95,8 @@ import {
 } from "../desktop/autoflow-reconcile.js";
 import { PiSessionDriver } from "../src/pi-session-driver.js";
 import { FLOW_PI_AGENT_TOOLS, PiSdkSessionRunner, childRunnerSource } from "../src/pi-sdk-runner.js";
+import { ClaudeAgentRunner } from "../src/claude-agent-runner.js";
+import { ClaudeSessionDriver } from "../src/claude-session-driver.js";
 import { DesktopProjectRegistry } from "../desktop/project-registry.js";
 import type { DesktopProjectRecord } from "../desktop/project-registry.js";
 import type { DesktopProjectSurface } from "../desktop/route-types.js";
@@ -2401,6 +2403,138 @@ test("Pi session driver appends user prompt and assistant response", async () =>
   assert.equal(userMessage?.content, "Please draft implementation steps.");
   assert.match(assistantMessage?.content ?? "", /Queued prompt for GH-35/);
   assert.equal(updated.timeline.length >= 3, true);
+});
+
+test("Claude session driver starts issue-linked sessions and records provider-neutral session link", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-claude-session-start-"));
+  const ledger = new MemoryWorkflowLedger();
+  const runtime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  await ledger.writeIssue({
+    ref: "GH-425",
+    title: "Add Claude agent session runner",
+    repoKeys: ["flow"],
+    state: "queued",
+    metadata: {
+      "workflow.repos.flow.worktree_path": "/repo/flow/.worktrees/feature-gh-425",
+    },
+  });
+
+  const driver = new ClaudeSessionDriver({
+    runtime,
+    repoRoot: root,
+    flowSessionId: "desktop",
+    agent: false,
+  });
+
+  const session = await driver.startSession("gh-425");
+  assert.equal(session.issueRef, "GH-425");
+  assert.equal(session.provider, "claude");
+  assert.equal(session.workspacePath, "/repo/flow/.worktrees/feature-gh-425");
+
+  const linksRaw = await readFile(join(root, ".flow", "runtime", "claude-session-links.json"), "utf8");
+  const linksPayload = JSON.parse(linksRaw) as { links: Array<{ issueRef: string; flowSessionId: string; provider: string; sessionId: string }> };
+  assert.equal(linksPayload.links[0].issueRef, "GH-425");
+  assert.equal(linksPayload.links[0].flowSessionId, "desktop");
+  assert.equal(linksPayload.links[0].provider, "claude");
+  assert.equal(linksPayload.links[0].sessionId, session.id);
+});
+
+test("Claude agent runner maps SDK messages into AgentRunner result", async () => {
+  const calls: Array<{ prompt: string; options?: Record<string, unknown> }> = [];
+  const runner = new ClaudeAgentRunner({
+    allowedTools: ["Read", "Edit"],
+    loadModule: async () => ({
+      query({ prompt, options }) {
+        calls.push({ prompt, options: options as Record<string, unknown> });
+        return (async function* () {
+          yield {
+            type: "system",
+            subtype: "init",
+            session_id: "123e4567-e89b-12d3-a456-426614174000",
+            uuid: "init-1",
+            cwd: "/repo/flow",
+          };
+          yield {
+            type: "assistant",
+            session_id: "123e4567-e89b-12d3-a456-426614174000",
+            uuid: "assistant-1",
+            message: { content: [{ type: "text", text: "Implemented Claude runner." }] },
+          };
+          yield {
+            type: "tool_progress",
+            session_id: "123e4567-e89b-12d3-a456-426614174000",
+            uuid: "tool-1",
+            tool_use_id: "tool-call-1",
+            tool_name: "Edit",
+            elapsed_time_seconds: 1.25,
+          };
+          yield {
+            type: "result",
+            subtype: "success",
+            session_id: "123e4567-e89b-12d3-a456-426614174000",
+            uuid: "result-1",
+            is_error: false,
+            result: "Claude prompt completed with edits.",
+          };
+        })();
+      },
+    }),
+  });
+  const events: string[] = [];
+
+  const result = await runner.prompt({
+    sessionId: "123e4567-e89b-12d3-a456-426614174000",
+    issueRef: "GH-425",
+    prompt: "Implement the runner.",
+    repoRoot: "/repo/flow",
+    workspacePath: "/repo/flow/.worktrees/gh-425",
+    onEvent: (event) => { events.push(event.type); },
+  });
+
+  assert.equal(calls[0]?.prompt, "Implement the runner.");
+  assert.equal(calls[0]?.options?.cwd, "/repo/flow/.worktrees/gh-425");
+  assert.deepEqual(calls[0]?.options?.allowedTools, ["Read", "Edit"]);
+  assert.equal((calls[0]?.options?.systemPrompt as { preset?: string })?.preset, "claude_code");
+  assert.equal(calls[0]?.options?.sessionId, "123e4567-e89b-12d3-a456-426614174000");
+  assert.equal(result.sessionId, "123e4567-e89b-12d3-a456-426614174000");
+  assert.equal(result.status, "active");
+  assert.equal(result.summary, "Claude prompt completed with edits.");
+  assert.ok(result.timeline?.some((item) => item.content.includes("Implemented Claude runner.")));
+  assert.ok(result.timeline?.some((item) => item.role === "tool" && item.toolName === "Edit"));
+  assert.ok(events.includes("assistantDelta"));
+  assert.ok(events.includes("toolUpdated"));
+});
+
+test("Claude agent runner resumes follow-up sessions", async () => {
+  const calls: Array<{ options?: Record<string, unknown> }> = [];
+  const runner = new ClaudeAgentRunner({
+    loadModule: async () => ({
+      query({ options }) {
+        calls.push({ options: options as Record<string, unknown> });
+        return (async function* () {
+          yield {
+            type: "result",
+            subtype: "success",
+            session_id: "123e4567-e89b-12d3-a456-426614174111",
+            uuid: "result-1",
+            is_error: false,
+            result: "Follow-up done.",
+          };
+        })();
+      },
+    }),
+  });
+
+  await runner.prompt({
+    sessionId: "123e4567-e89b-12d3-a456-426614174111",
+    issueRef: "GH-425",
+    mode: "followUp",
+    prompt: "Continue.",
+    repoRoot: "/repo/flow",
+  });
+
+  assert.equal(calls[0]?.options?.resume, "123e4567-e89b-12d3-a456-426614174111");
+  assert.equal(calls[0]?.options?.sessionId, undefined);
 });
 
 test("Pi session driver queues follow-up prompts while a run is active", async () => {
