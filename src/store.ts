@@ -4,11 +4,10 @@ import { dirname, join } from "node:path";
 import {
   type WorkRuntimeEvent,
   type WorkRuntimeSession,
-  workRuntimeEventSchema,
   workRuntimeSessionSchema,
-  createId,
   nowIso,
 } from "./contracts.js";
+import { buildRuntimeEvent, buildRuntimeSession } from "./store-codecs.js";
 import { SqlFlowStore } from "./sql-store.js";
 
 export interface StorePaths {
@@ -48,15 +47,8 @@ export class FlowStore implements FlowStoreInterface {
     await mkdir(join(this.root, "events"), { recursive: true });
   }
 
-  async createSession(id = createId("session")): Promise<WorkRuntimeSession> {
-    const now = nowIso();
-    const session = workRuntimeSessionSchema.parse({
-      id,
-      findings: [],
-      workerResults: [],
-      createdAt: now,
-      updatedAt: now,
-    });
+  async createSession(id?: string): Promise<WorkRuntimeSession> {
+    const session = buildRuntimeSession(id);
     await this.writeSession(session);
     return session;
   }
@@ -72,11 +64,7 @@ export class FlowStore implements FlowStoreInterface {
   }
 
   async appendEvent(event: Omit<WorkRuntimeEvent, "id" | "createdAt">): Promise<WorkRuntimeEvent> {
-    const parsed = workRuntimeEventSchema.parse({
-      ...event,
-      id: createId("event"),
-      createdAt: nowIso(),
-    });
+    const parsed = buildRuntimeEvent(event);
     await this.appendJsonLine(join(this.root, "events", `${safeName(parsed.sessionId)}.jsonl`), parsed);
     return parsed;
   }
