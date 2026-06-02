@@ -70,6 +70,12 @@ Releases are published to npm from GitHub Releases. See
 
 More:
 
+- [Getting started](docs/getting-started.md)
+- [Configuration reference](docs/config-reference.md)
+- [CLI reference](docs/cli-reference.md)
+- [Adapter authoring](docs/adapter-authoring.md)
+- [Desktop notes](docs/desktop.md)
+- [Troubleshooting](docs/troubleshooting.md)
 - [Runtime and dashboard](docs/runtime-and-dashboard.md)
 - [Host integration](docs/host-integration.md)
 - [Why Flow](docs/why-flow.md)

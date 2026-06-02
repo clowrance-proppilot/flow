@@ -1,0 +1,99 @@
+# Adapter Authoring
+
+Flow keeps provider details behind adapter boundaries. Issue trackers, code
+review tools, source control, agent SDKs, and execution planes should not leak
+provider-specific state into durable workflow topology.
+
+## Adapter Types
+
+- Issue tracker: issue view, queue, backlog, create, transition, comments,
+  search, tagging, and planning lane operations.
+- Code collaboration: pull request discovery, creation, review comments,
+  ready-for-review, and merge operations.
+- Source control: inspect repository state and prepare worktrees.
+- Agent session: open issue sessions, post prompts, persist timelines, and
+  summarize results.
+- Execution plane: background worker orchestration.
+
+## Durable Config
+
+Select adapters in `.flow/config.yaml`:
+
+```yaml
+issueTracker:
+  type: "github"
+  owner: "camden-lowrance"
+  repo: "flow"
+
+collaboration:
+  type: "github"
+  owner: "camden-lowrance"
+  repo: "flow"
+
+runtime:
+  agentSession:
+    provider: "claude"
+```
+
+Do not make environment variables the primary selector for topology or provider
+choice. Use them for secrets only.
+
+## Custom Adapter Pattern
+
+A custom issue tracker should implement the provider interface used by
+`FlowWorkRuntime` and return provider-neutral work items.
+
+```ts
+import type { IssueTrackerProvider } from "../src/providers.js";
+
+export function createExampleIssueTracker(): IssueTrackerProvider {
+  return {
+    capabilities: {
+      canCreateIssues: true,
+      canTransitionIssues: true,
+      canPostComments: true,
+      canSearchIssues: true,
+      canTagIssues: true,
+      canManageActivePlanningLane: false,
+    },
+    async getIssue(ref) {
+      return {
+        ref,
+        title: "Example issue",
+        repoKeys: ["flow"],
+        state: "queued",
+        metadata: {
+          issueStatus: "Open",
+          issueStatusCategory: "To Do",
+          "workflow.external.issue.status": "published",
+        },
+      };
+    },
+    async fetchActiveQueue() {
+      return [];
+    },
+    async fetchBacklogQueue() {
+      return [];
+    },
+  };
+}
+```
+
+Keep raw provider IDs, URLs, and statuses in metadata fields. Keep Flow routing
+and workflow decisions in Flow's neutral fields.
+
+## Plugin Boundary
+
+When packaging provider support, keep SDK imports, CLIs, auth, and provider
+request/response parsing inside the adapter or plugin. The rest of Flow should
+depend on provider-neutral capabilities, not on a concrete SDK.
+
+## Verification
+
+Use the manifests and focused tests for the adapter surface you touch:
+
+```bash
+flow '{"op":"manifest","target":"issue"}'
+flow '{"op":"manifest","target":"workflow"}'
+npm run check
+```
