@@ -141,7 +141,12 @@ export class ReconciliationEngine {
   ): Promise<WorkItem> {
     try {
       return await this.reconcile(issue, pullRequestsByRepo, options);
-    } catch {
+    } catch (error) {
+      this.debug("reconcile.safely.error", {
+        issueRef: issue.ref,
+        repoKeys: issue.repoKeys,
+        error: errorMessage(error),
+      });
       return issue;
     }
   }
@@ -188,7 +193,11 @@ export class ReconciliationEngine {
     const entries = await mapWithConcurrency([...repoNames], workRuntimeQueueConcurrency(), async (repoName) => {
       try {
         return [repoName, await this.collaboration?.findPullRequests(repoName) ?? []] as const;
-      } catch {
+      } catch (error) {
+        this.debug("reconcile.preload_pr.error", {
+          repoName,
+          error: errorMessage(error),
+        });
         return [repoName, [] as PullRequestStatus[]] as const;
       }
     });
@@ -220,8 +229,13 @@ export class ReconciliationEngine {
         maybeSet(updates, metadata, `workflow.repos.${normalizedRepoKey}.branch`, status.branch);
         maybeSet(updates, metadata, `workflow.repos.${normalizedRepoKey}.head_sha`, status.headSha);
         maybeSet(updates, metadata, `workflow.repos.${normalizedRepoKey}.dirty`, status.dirty);
-      } catch {
-        // Reconciliation is best-effort. Readiness reports persisted state only.
+      } catch (error) {
+        this.debug("reconcile.inspect_repo.error", {
+          issueRef: issue.ref,
+          repoKey: normalizedRepoKey,
+          operation: "sourceControl.inspect",
+          error: errorMessage(error),
+        });
       }
     }
 
@@ -239,8 +253,14 @@ export class ReconciliationEngine {
             maybeSet(updates, metadata, key, value);
           }
         }
-      } catch {
-        // Missing gh auth or network should not erase existing Beads state.
+      } catch (error) {
+        this.debug("reconcile.find_pr.error", {
+          issueRef: issue.ref,
+          repoKey: normalizedRepoKey,
+          repoName,
+          operation: "findOpenPullRequestForRepo",
+          error: errorMessage(error),
+        });
       }
     }
 
@@ -269,8 +289,14 @@ export class ReconciliationEngine {
         for (const [key, value] of Object.entries(nextMetadata)) {
           maybeSet(updates, metadata, key, value);
         }
-      } catch {
-        // Missing gh auth or network should not erase existing Beads state.
+      } catch (error) {
+        this.debug("reconcile.recorded_pr.error", {
+          repo,
+          prNumber: number,
+          prUrl: snapshot.url,
+          operation: "getPullRequest",
+          error: errorMessage(error),
+        });
       }
     }
     return updates;
@@ -329,7 +355,13 @@ export class ReconciliationEngine {
     if (!this.collaboration?.getPullRequest) return pr;
     try {
       return await this.collaboration.getPullRequest(repoName, pr.number) ?? pr;
-    } catch {
+    } catch (error) {
+      this.debug("reconcile.hydrate_pr.error", {
+        repoName,
+        prNumber: pr.number,
+        operation: "getPullRequest",
+        error: errorMessage(error),
+      });
       return pr;
     }
   }
@@ -347,8 +379,14 @@ export class ReconciliationEngine {
       try {
         const pullRequests = pullRequestsByRepo?.get(repoName) ?? await this.collaboration?.findPullRequests(repoName) ?? [];
         if (findPullRequestForIssue(pullRequests, issueRef, "")) discovered.add(repoKey);
-      } catch {
-        // GitHub discovery is best-effort; missing auth/network should leave routing for humans.
+      } catch (error) {
+        this.debug("reconcile.discover_repos.error", {
+          issueRef,
+          repoKey,
+          repoName,
+          operation: "findPullRequests",
+          error: errorMessage(error),
+        });
       }
     });
 
@@ -771,4 +809,8 @@ function autoReviewNeedsConfirmationDefaultDisposition(): "accept" | "reject" | 
 
 function defaultStaleWorkerRunMs(): number {
   return 20 * 60 * 1000;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
