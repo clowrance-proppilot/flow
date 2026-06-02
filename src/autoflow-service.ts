@@ -589,6 +589,7 @@ export class AutoflowService {
     const branch = metadataString(issue.metadata[`workflow.repos.${repoKey}.branch`]) ?? metadataString(issue.metadata.branch);
     if (!branch) return;
     const baseRefName = metadataString(issue.metadata[`workflow.repos.${repoKey}.base_branch`]) ?? "main";
+    if (branch === baseRefName) return;
     const pr = await this.codeReviewCreator.createPullRequest({
       issueRef: issue.ref,
       title: `${issue.ref}: ${issue.title}`,

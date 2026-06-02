@@ -951,6 +951,94 @@ test("AutoflowService polls pending pull request checks through closeout", async
   assert.equal(status.issues["GH-396"]?.summary, "GH-396 closeout completed with status merged_jira_verified.");
 });
 
+test("AutoflowService skips pull request creation when head already equals base", async () => {
+  let evidenceRecorded = 0;
+  let documentationRecorded = 0;
+  let pullRequestsCreated = 0;
+  const runtime = {
+    inspectQueue: async () => [{
+      ref: "GH-428",
+      title: "Skip main-to-main pull requests",
+      repoKeys: ["flow"],
+      state: "queued",
+      metadata: {},
+    }],
+    summarizeHandoff: async () => "handoff",
+    createSession: async (id: string) => ({ id, findings: [], workerResults: [], createdAt: nowIso(), updatedAt: nowIso() }),
+    selectIssue: async () => undefined,
+    diagnoseIssue: async () => ({
+      issueRef: "GH-428",
+      status: "ok",
+      issue: { ref: "GH-428", title: "Skip main-to-main pull requests", state: "selected", repoKeys: ["flow"] },
+      visibility: {
+        ledger: true,
+        issueTracker: true,
+        repoRouting: true,
+        preparedWorktree: true,
+        codeReview: false,
+        codeReviewRequired: true,
+      },
+      findings: [],
+      nextAction: { type: "advance", summary: "Run Autoflow." },
+    }),
+    autoFlowIssue: async () => ({
+      status: "execution_handoff",
+      message: "Ready for executor.",
+      steps: [],
+      workerResults: [],
+      session: { id: "session", findings: [], workerResults: [], createdAt: nowIso(), updatedAt: nowIso() },
+    }),
+    adoptPendingLiveWorker: async () => ({
+      id: "task-428",
+      issueRef: "GH-428",
+      repoKey: "flow",
+      workJobId: "job-428",
+      prompt: "Implement GH-428.",
+      workspacePath: "/tmp/flow-gh-428",
+    }),
+    recordLocalThreadResult: async (_sessionId: string, result: { issueRef: string; status: string }) => result,
+    recordEvidence: async () => { evidenceRecorded += 1; },
+    recordDocumentation: async () => { documentationRecorded += 1; },
+    recordPullRequest: async () => {
+      throw new Error("recordPullRequest should not be called when branch equals base.");
+    },
+    inspectIssue: async () => ({
+      ref: "GH-428",
+      title: "Skip main-to-main pull requests",
+      repoKeys: ["flow"],
+      state: "running",
+      metadata: {
+        "workflow.repos.flow.branch": "main",
+        "workflow.repos.flow.base_branch": "main",
+      },
+    }),
+    advanceIssue: async () => ({
+      status: "awaiting_review",
+      message: "Ready for review.",
+    }),
+  };
+  const service = new AutoflowService({
+    projectId: "flow",
+    runtime: runtime as never,
+    agentSessionDriver: fakeAgentDriver(),
+    codeReviewCreator: {
+      async createPullRequest() {
+        pullRequestsCreated += 1;
+        throw new Error("createPullRequest should not be called when branch equals base.");
+      },
+    },
+    autoReconcileOnSlotAvailable: false,
+  });
+
+  assert.equal((await service.reconcile()).activeCount, 1);
+  const status = await service.waitForIdle();
+
+  assert.equal(status.issues["GH-428"]?.phase, "idle");
+  assert.equal(evidenceRecorded, 1);
+  assert.equal(documentationRecorded, 1);
+  assert.equal(pullRequestsCreated, 0);
+});
+
 test("AutoflowService uses provider-neutral fallback summary when agent has no assistant text", async () => {
   let capturedSummary: string | undefined;
   const runtime = {
