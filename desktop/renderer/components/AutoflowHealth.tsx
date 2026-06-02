@@ -8,16 +8,18 @@ export function activityFromAutoflowStatus(status: AutoflowRunnerStatus): Autofl
   const issues = status.issues ?? {};
   const entries = Object.entries(issues);
   const running = entries.filter(([, s]) => s.phase === "running");
+  const recovering = entries.filter(([, s]) => s.phase === "recovering");
   const starting = entries.filter(([, s]) => s.phase === "starting");
   const needsInput = entries.filter(([, s]) => s.phase === "needs_input");
   const failed = entries.filter(([, s]) => s.phase === "failed");
 
-  if (running.length > 0) {
-    const refs = running.map(([ref]) => ref).slice(0, 3).join(", ");
+  if (running.length > 0 || recovering.length > 0) {
+    const active = [...running, ...recovering];
+    const refs = active.map(([ref]) => ref).slice(0, 3).join(", ");
     return {
       phase: "thinking",
-      label: `Working ${running.length} issue${running.length === 1 ? "" : "s"}`,
-      detail: running.length <= 3 ? refs : `${refs} +${running.length - 3} more`,
+      label: `Working ${active.length} issue${active.length === 1 ? "" : "s"}`,
+      detail: active.length <= 3 ? refs : `${refs} +${active.length - 3} more`,
       updatedAt: status.updatedAt,
     };
   }
