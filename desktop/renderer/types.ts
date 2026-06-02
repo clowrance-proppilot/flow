@@ -89,6 +89,10 @@ export type ContextProjection = {
   };
 };
 
+export type IssueType = "Bug" | "Task" | "Story";
+
+export const ISSUE_TYPES: IssueType[] = ["Bug", "Task", "Story"];
+
 export type ConversationItem = {
   id: string;
   role: "user" | "assistant" | "system";
