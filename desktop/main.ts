@@ -1,36 +1,29 @@
 import { app, BrowserWindow, session } from "electron";
 import { join, resolve, dirname } from "node:path";
 import { existsSync, watch, type FSWatcher } from "node:fs";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
 import express from "express";
 import type { Server } from "node:http";
-import { DashboardState } from "../src/dashboard-state.js";
-import { validateFlowConfig } from "../src/config/config-loader.js";
-import { createConfiguredWorkRuntime } from "../src/runtime-factory.js";
-import { GitAdapter } from "../src/adapters/git.js";
 import { DesktopActionRouter } from "./action-router.js";
-import { createDefaultAutoflowRunnerState, StandaloneAutoflowRunner } from "../src/autoflow-runner.js";
-import { PiSessionDriver } from "../src/pi-session-driver.js";
 import { DesktopProjectRegistry, type DesktopProjectRecord } from "./project-registry.js";
-import { DesktopPromptRouter, type DesktopAgentSessionAdapter } from "./prompt-router.js";
+import { DesktopPromptRouter } from "./prompt-router.js";
 import { registerProjectRoutes } from "./project-routes.js";
 import { message } from "./route-helpers.js";
 import type { DesktopProjectSurface, RouteContext } from "./route-types.js";
 import { registerStaticRoutes } from "./static-routes.js";
 import { registerWorkRoutes } from "./work-routes.js";
 import { nextAutoflowReconcileDelay, runEnabledProjectAutoflowReconcile } from "./autoflow-reconcile.js";
-import { LruMap } from "./lru-map.js";
+import { DesktopSurfaceFactory } from "./surface-factory.js";
+import { DesktopAgentSessionAdapterImpl } from "./agent-session-adapter.js";
 
 const isDev = !app.isPackaged;
-export const desktopProjectSurfaceCacheSize = 5;
 
 let mainWindow: BrowserWindow | null = null;
 let dashboardServer: Server | undefined;
 let rendererAutoReloadWatcher: FSWatcher | undefined;
 let rendererAutoReloadTimer: ReturnType<typeof setTimeout> | undefined;
 const localApiToken = randomBytes(32).toString("hex");
-const activeProjectSurfaces = new Map<string, DesktopProjectSurface>();
 
 // Resolve the flow repo root. In dev this is the repo itself;
 // in a packaged build we use cwd or an env override.
@@ -76,74 +69,29 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
     dbPath: join(resolveDesktopUserDataPath(), "flow-desktop-state.db"),
   });
   await projectRegistry.addProject(flowRoot);
-  const projectSurfaces = new LruMap<string, DesktopProjectSurface>(desktopProjectSurfaceCacheSize);
+
+  const surfaceFactory = new DesktopSurfaceFactory({
+    desktopAgentDisabled: process.env.FLOW_DESKTOP_AGENT === "disabled",
+  });
+
   const projectSurface = async (project: DesktopProjectRecord): Promise<DesktopProjectSurface> => {
-    const cached = projectSurfaces.get(project.id);
-    if (cached && cached.project.root === project.root) return cached;
-    const configValidation = await validateFlowConfig({ projectRoot: project.root });
-    const configured = createConfiguredWorkRuntime({
-      projectRoot: project.root,
-      flowConfig: configValidation.config,
-    });
-    const dashboardState = new DashboardState({ runtime: configured.runtime });
-    const piSessionDriver = new PiSessionDriver({
-      runtime: configured.runtime,
-      repoRoot: project.root,
-      flowSessionId: `desktop-${project.id}`,
-      agent: process.env.FLOW_DESKTOP_AGENT === "disabled" ? false : undefined,
-    });
-    const git = new GitAdapter();
-    const surface: DesktopProjectSurface = {
-      project,
-      configured,
-      dashboardState,
-      piSessionDriver,
-      autoflowRunner: new StandaloneAutoflowRunner({
-        projectId: project.id,
-        runtime: configured.runtime,
-        state: createDefaultAutoflowRunnerState(project.root),
-        agentSessionDriver: piSessionDriver,
-        gitInspect: async (path: string) => {
-          const status = await git.inspect(path);
-          return { dirty: status.dirty, entries: status.entries };
-        },
-      }),
-    };
-    projectSurfaces.set(project.id, surface);
-    activeProjectSurfaces.set(project.id, surface);
-    return surface;
+    return surfaceFactory.getSurface(project);
   };
 
-  const agent: DesktopAgentSessionAdapter = {
-    async sendPrompt(input) {
-      if (!input.issueRef) {
-        return { summary: "Prompt recorded for project context." };
-      }
-      const surface = await projectSurface(input.project);
-      const session = input.sessionId
-        ? await surface.piSessionDriver.getSession(input.sessionId).catch(() => undefined)
-        : undefined;
-      void surface.autoflowRunner.sendUserMessage({
-        issueRef: input.issueRef,
-        sessionId: session?.id,
-        text: input.prompt,
-      }).catch((error) => {
-        console.error("[flow-desktop] pi prompt failed:", error);
-      });
-      const target = session ?? await surface.piSessionDriver.openOrCreateIssueSession(input.issueRef);
-      const summary = `Prompt sent to ${target.issueRef}.`;
-      return {
-        session: {
-          id: target.id,
-          provider: "pi",
-          workspacePath: target.workspacePath,
-          status: "active",
-          summary,
-        },
-        summary,
-      };
+  const agent = new DesktopAgentSessionAdapterImpl({
+    getPiSessionDriver: async () => {
+      const project = await projectRegistry.activeProject();
+      if (!project) throw new Error("No active Flow project.");
+      const surface = await projectSurface(project);
+      return surface.piSessionDriver;
     },
-  };
+    getAutoflowRunner: async () => {
+      const project = await projectRegistry.activeProject();
+      if (!project) throw new Error("No active Flow project.");
+      const surface = await projectSurface(project);
+      return surface.autoflowRunner;
+    },
+  });
 
   const promptRouter = new DesktopPromptRouter({
     projects: projectRegistry,
@@ -189,7 +137,7 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
   const routeContext: RouteContext = {
     projectRegistry,
     projectSurface,
-    invalidateProjectSurface: (projectId) => projectSurfaces.delete(projectId),
+    invalidateProjectSurface: (projectId) => surfaceFactory.invalidate(projectId),
   };
   registerProjectRoutes(server, routeContext, jsonBody);
   registerWorkRoutes(server, routeContext, { promptRouter, actionRouter }, jsonBody);
@@ -303,12 +251,6 @@ app.on("before-quit", () => {
   rendererAutoReloadWatcher = undefined;
   if (rendererAutoReloadTimer) clearTimeout(rendererAutoReloadTimer);
   rendererAutoReloadTimer = undefined;
-  // Persist active session state before shutting down
-  for (const surface of activeProjectSurfaces.values()) {
-    void surface.piSessionDriver.persistState?.().catch((error: unknown) => {
-      console.error("[flow-desktop] session state persist failed:", error);
-    });
-  }
   dashboardServer?.close();
 });
 
