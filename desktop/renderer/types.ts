@@ -117,7 +117,7 @@ export type PiActivityState = {
 };
 
 export type AutoflowRunnerIssueStatus = {
-  phase: "paused" | "idle" | "starting" | "running" | "needs_input" | "failed";
+  phase: "paused" | "idle" | "starting" | "running" | "recovering" | "needs_input" | "failed";
   sessionId?: string;
   workspacePath?: string;
   summary?: string;
