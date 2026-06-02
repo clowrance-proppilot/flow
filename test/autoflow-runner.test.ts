@@ -313,19 +313,209 @@ test("StandaloneAutoflowRunner times out stuck agent prompts and frees the slot"
       async postPrompt() {
         return new Promise(() => undefined);
       },
+      async getSession() {
+        return {
+          id: "agent-gh-278",
+          workspacePath: "/tmp/flow-gh-278",
+          status: "running",
+          timeline: [],
+        };
+      },
     },
     postPromptTimeoutMs: 20,
+    recoveryPollAttempts: 1,
+    recoveryPollIntervalMs: 10,
   });
 
   const status = await runner.tick({ wait: true });
 
   assert.equal(status.activeCount, 0);
   assert.equal(status.issues["GH-278"]?.phase, "failed");
-  assert.match(status.issues["GH-278"]?.summary ?? "", /timed out/);
+  assert.match(status.issues["GH-278"]?.summary ?? "", /did not complete work within recovery window/);
   assert.equal(recordedResult?.issueRef, "GH-278");
   assert.equal(recordedResult?.workJobId, "job-278");
   assert.equal(recordedResult?.status, "failed");
-  assert.match(recordedResult?.blockers?.join("\n") ?? "", /timed out/);
+  assert.match(recordedResult?.blockers?.join("\n") ?? "", /did not complete work within recovery window/);
+});
+
+test("StandaloneAutoflowRunner recovers from postPrompt timeout when workspace becomes clean", async () => {
+  let recordedResult: { issueRef: string; status: string; workJobId?: string; blockers?: string[] } | undefined;
+  let gitInspections = 0;
+  const runner = new StandaloneAutoflowRunner({
+    projectId: "flow",
+    state: new MemoryRunnerState(),
+    runtime: {
+      inspectQueue: async () => [{
+        ref: "GH-190",
+        title: "Recover from postPrompt timeout",
+        repoKeys: ["flow"],
+        state: "queued",
+        metadata: {},
+      }],
+      summarizeHandoff: async () => "handoff",
+      createSession: async (id: string) => ({ id, findings: [], workerResults: [], createdAt: nowIso(), updatedAt: nowIso() }),
+      selectIssue: async () => undefined,
+      diagnoseIssue: async () => ({
+        issueRef: "GH-190",
+        status: "ok",
+        issue: { ref: "GH-190", title: "Recover from postPrompt timeout", state: "selected", repoKeys: ["flow"] },
+        visibility: {
+          ledger: true,
+          issueTracker: true,
+          repoRouting: true,
+          preparedWorktree: true,
+          codeReview: false,
+          codeReviewRequired: false,
+        },
+        findings: [],
+        nextAction: { type: "advance", summary: "Run Autoflow." },
+      }),
+      autoFlowIssue: async () => ({
+        status: "execution_handoff",
+        message: "Ready for executor.",
+        steps: [],
+        workerResults: [],
+        session: { id: "session", findings: [], workerResults: [], createdAt: nowIso(), updatedAt: nowIso() },
+      }),
+      adoptPendingLiveWorker: async () => ({
+        id: "task-190",
+        issueRef: "GH-190",
+        repoKey: "flow",
+        workJobId: "job-190",
+        prompt: "Implement GH-190.",
+        workspacePath: "/tmp/flow-gh-190",
+      }),
+      recordLocalThreadResult: async (_sessionId: string, result: { issueRef: string; status: string; workJobId?: string; blockers?: string[] }) => {
+        recordedResult = result;
+        return result;
+      },
+      recordEvidence: async () => undefined,
+      recordDocumentation: async () => undefined,
+      recordPullRequest: async () => undefined,
+      advanceIssue: async () => ({
+        status: "awaiting_review",
+        message: "Ready for review.",
+      }),
+    } as never,
+    agentSessionDriver: {
+      ...fakeAgentDriver(),
+      async postPrompt() {
+        return new Promise(() => undefined);
+      },
+      async getSession() {
+        return {
+          id: "agent-gh-190",
+          workspacePath: "/tmp/flow-gh-190",
+          status: "done",
+          summary: "Implemented GH-190.",
+          timeline: [{
+            id: "assistant-1",
+            role: "assistant",
+            content: "Implemented GH-190 and committed changes.",
+            createdAt: nowIso(),
+          }],
+        };
+      },
+    },
+    postPromptTimeoutMs: 20,
+    recoveryPollAttempts: 2,
+    recoveryPollIntervalMs: 10,
+  });
+
+  const status = await runner.tick({ wait: true });
+
+  assert.equal(status.activeCount, 0);
+  assert.equal(status.issues["GH-190"]?.phase, "idle");
+  assert.match(status.issues["GH-190"]?.summary ?? "", /Ready for review/);
+  assert.equal(recordedResult?.issueRef, "GH-190");
+  assert.equal(recordedResult?.status, "succeeded");
+});
+
+test("StandaloneAutoflowRunner fails after recovery timeout when agent never completes", async () => {
+  let recordedResult: { issueRef: string; status: string; workJobId?: string; blockers?: string[] } | undefined;
+  const runner = new StandaloneAutoflowRunner({
+    projectId: "flow",
+    state: new MemoryRunnerState(),
+    runtime: {
+      inspectQueue: async () => [{
+        ref: "GH-188",
+        title: "Fail after recovery timeout",
+        repoKeys: ["flow"],
+        state: "queued",
+        metadata: {},
+      }],
+      summarizeHandoff: async () => "handoff",
+      createSession: async (id: string) => ({ id, findings: [], workerResults: [], createdAt: nowIso(), updatedAt: nowIso() }),
+      selectIssue: async () => undefined,
+      diagnoseIssue: async () => ({
+        issueRef: "GH-188",
+        status: "ok",
+        issue: { ref: "GH-188", title: "Fail after recovery timeout", state: "selected", repoKeys: ["flow"] },
+        visibility: {
+          ledger: true,
+          issueTracker: true,
+          repoRouting: true,
+          preparedWorktree: true,
+          codeReview: false,
+          codeReviewRequired: false,
+        },
+        findings: [],
+        nextAction: { type: "advance", summary: "Run Autoflow." },
+      }),
+      autoFlowIssue: async () => ({
+        status: "execution_handoff",
+        message: "Ready for executor.",
+        steps: [],
+        workerResults: [],
+        session: { id: "session", findings: [], workerResults: [], createdAt: nowIso(), updatedAt: nowIso() },
+      }),
+      adoptPendingLiveWorker: async () => ({
+        id: "task-188",
+        issueRef: "GH-188",
+        repoKey: "flow",
+        workJobId: "job-188",
+        prompt: "Implement GH-188.",
+        workspacePath: "/tmp/flow-gh-188",
+      }),
+      recordLocalThreadResult: async (_sessionId: string, result: { issueRef: string; status: string; workJobId?: string; blockers?: string[] }) => {
+        recordedResult = result;
+        return result;
+      },
+      recordEvidence: async () => undefined,
+      recordDocumentation: async () => undefined,
+      recordPullRequest: async () => undefined,
+      advanceIssue: async () => ({
+        status: "awaiting_review",
+        message: "Ready for review.",
+      }),
+    } as never,
+    agentSessionDriver: {
+      ...fakeAgentDriver(),
+      async postPrompt() {
+        return new Promise(() => undefined);
+      },
+      async getSession() {
+        return {
+          id: "agent-gh-188",
+          workspacePath: "/tmp/flow-gh-188",
+          status: "running",
+          timeline: [],
+        };
+      },
+    },
+    postPromptTimeoutMs: 20,
+    recoveryPollAttempts: 2,
+    recoveryPollIntervalMs: 10,
+  });
+
+  const status = await runner.tick({ wait: true });
+
+  assert.equal(status.activeCount, 0);
+  assert.equal(status.issues["GH-188"]?.phase, "failed");
+  assert.match(status.issues["GH-188"]?.summary ?? "", /did not complete work within recovery window/);
+  assert.equal(recordedResult?.issueRef, "GH-188");
+  assert.equal(recordedResult?.status, "failed");
+  assert.match(recordedResult?.blockers?.join("\n") ?? "", /did not complete work within recovery window/);
 });
 
 test("StandaloneAutoflowRunner persists running status for separate status readers", async () => {

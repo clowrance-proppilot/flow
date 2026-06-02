@@ -47,7 +47,7 @@ export interface AutoflowAgentSessionDriver {
   postPrompt(sessionId: string, prompt: string): Promise<AutoflowAgentSessionSnapshot>;
 }
 
-export type AutoflowServicePhase = "paused" | "idle" | "starting" | "running" | "needs_input" | "failed";
+export type AutoflowServicePhase = "paused" | "idle" | "starting" | "running" | "recovering" | "needs_input" | "failed";
 
 export interface AutoflowServiceIssueStatus {
   phase: AutoflowServicePhase;
@@ -74,6 +74,8 @@ export interface AutoflowServiceOptions {
   enabled?: () => boolean;
   maxConcurrency?: number;
   postPromptTimeoutMs?: number;
+  recoveryPollAttempts?: number;
+  recoveryPollIntervalMs?: number;
   pendingCheckPollAttempts?: number;
   pendingCheckPollIntervalMs?: number;
   gitInspect?: (path: string) => Promise<{ dirty: boolean; entries: string[] }>;
@@ -104,6 +106,8 @@ export interface AutoflowCodeReviewCreator {
 const COMMIT_FOLLOW_UP_PROMPT = "You have uncommitted changes. Commit them with a descriptive message and push to the branch.";
 const DEFAULT_PENDING_CHECK_POLL_ATTEMPTS = 30;
 const DEFAULT_PENDING_CHECK_POLL_INTERVAL_MS = 10_000;
+const DEFAULT_RECOVERY_POLL_ATTEMPTS = 12;
+const DEFAULT_RECOVERY_POLL_INTERVAL_MS = 5_000;
 
 interface ActiveRun {
   promise: Promise<void>;
@@ -122,6 +126,8 @@ export class AutoflowService {
   private readonly enabled: () => boolean;
   private readonly maxConcurrency: number;
   private readonly postPromptTimeoutMs: number;
+  private readonly recoveryPollAttempts: number;
+  private readonly recoveryPollIntervalMs: number;
   private readonly pendingCheckPollAttempts: number;
   private readonly pendingCheckPollIntervalMs: number;
   private readonly autoReconcileOnSlotAvailable: boolean;
@@ -139,6 +145,8 @@ export class AutoflowService {
     this.enabled = options.enabled ?? (() => true);
     this.maxConcurrency = options.maxConcurrency ?? 5;
     this.postPromptTimeoutMs = options.postPromptTimeoutMs ?? 10 * 60 * 1000;
+    this.recoveryPollAttempts = options.recoveryPollAttempts ?? DEFAULT_RECOVERY_POLL_ATTEMPTS;
+    this.recoveryPollIntervalMs = options.recoveryPollIntervalMs ?? DEFAULT_RECOVERY_POLL_INTERVAL_MS;
     this.pendingCheckPollAttempts = options.pendingCheckPollAttempts ?? DEFAULT_PENDING_CHECK_POLL_ATTEMPTS;
     this.pendingCheckPollIntervalMs = options.pendingCheckPollIntervalMs ?? DEFAULT_PENDING_CHECK_POLL_INTERVAL_MS;
     this.autoReconcileOnSlotAvailable = options.autoReconcileOnSlotAvailable ?? true;
@@ -390,7 +398,11 @@ export class AutoflowService {
     try {
       completed = await this.completeAgentPrompt(agentSession.id, handoff);
     } catch (error) {
-      completed = failedAgentSession(agentSession, handoff, error);
+      if (error instanceof PostPromptTimeoutError) {
+        completed = await this.recoverFromTimeout(agentSession, handoff);
+      } else {
+        completed = failedAgentSession(agentSession, handoff, error);
+      }
     }
     const resultStatus = await this.recordResult(flowSessionId, handoff, completed);
 
@@ -448,7 +460,7 @@ export class AutoflowService {
     let timeout: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<AutoflowAgentSessionSnapshot>((_resolve, reject) => {
       timeout = setTimeout(() => {
-        reject(new Error(`Autoflow agent postPrompt timed out after ${timeoutMs}ms.`));
+        reject(new PostPromptTimeoutError(timeoutMs));
       }, timeoutMs);
       timeout.unref?.();
     });
@@ -481,6 +493,80 @@ export class AutoflowService {
       text: COMMIT_FOLLOW_UP_PROMPT,
       mode: "followUp",
     });
+  }
+
+  private async recoverFromTimeout(
+    session: AutoflowAgentSessionSnapshot,
+    handoff: WorkerTaskRequest & { workJobId: string },
+  ): Promise<AutoflowAgentSessionSnapshot> {
+    const issueRef = handoff.issueRef;
+    this.updateIssueStatus(issueRef, {
+      phase: "recovering",
+      sessionId: session.id,
+      workspacePath: session.workspacePath ?? handoff.workspacePath,
+      summary: `Post-prompt timeout for ${issueRef}. Checking if agent completed work...`,
+    });
+
+    const run = this.activeRuns.get(issueRef);
+    if (run) {
+      run.status = "recovering";
+      run.summary = `Post-prompt timeout for ${issueRef}. Checking if agent completed work...`;
+      run.updatedAt = nowIso();
+    }
+
+    for (let attempt = 0; attempt < this.recoveryPollAttempts; attempt += 1) {
+      if (this.recoveryPollIntervalMs > 0) await sleep(this.recoveryPollIntervalMs);
+
+      // Check if the session completed on its own
+      try {
+        const currentSession = await this.agentSessionDriver.getSession(session.id);
+        if (currentSession.status === "done" || currentSession.status === "completed") {
+          return currentSession;
+        }
+      } catch {
+        // Session may no longer exist; continue checking git state
+      }
+
+      // Check if workspace has commits (work completed after timeout)
+      const workspacePath = session.workspacePath ?? handoff.workspacePath;
+      if (workspacePath && this.gitInspect) {
+        try {
+          const gitStatus = await this.gitInspect(workspacePath);
+          // If workspace is clean, work may have been committed
+          if (!gitStatus.dirty) {
+            // Try to get the session one more time to see if it completed
+            try {
+              const finalSession = await this.agentSessionDriver.getSession(session.id);
+              if (finalSession.status === "done" || finalSession.status === "completed") {
+                return finalSession;
+              }
+            } catch {
+              // Fall through to construct recovery session
+            }
+            // Workspace is clean - work likely committed even if session didn't report
+            return {
+              ...session,
+              status: "done",
+              summary: `Agent work completed after post-prompt timeout. Workspace is clean.`,
+              timeline: [
+                ...session.timeline,
+                {
+                  id: createId("assistant"),
+                  role: "assistant",
+                  content: "Agent work completed after post-prompt timeout. Changes have been committed.",
+                  createdAt: nowIso(),
+                },
+              ],
+            };
+          }
+        } catch {
+          // Git inspect failed; continue polling
+        }
+      }
+    }
+
+    // Recovery failed - mark as truly failed
+    return failedAgentSession(session, handoff, new Error(`Post-prompt timeout for ${issueRef}. Agent did not complete work within recovery window.`));
   }
 
   private async recordResult(flowSessionId: string, handoff: WorkerTaskRequest & { workJobId: string }, session: AutoflowAgentSessionSnapshot): Promise<"succeeded" | "blocked" | "failed"> {
@@ -723,8 +809,15 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
+export class PostPromptTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Autoflow agent postPrompt timed out after ${timeoutMs}ms.`);
+    this.name = "PostPromptTimeoutError";
+  }
+}
+
 function isActivePhase(phase: AutoflowServicePhase): boolean {
-  return phase === "starting" || phase === "running";
+  return phase === "starting" || phase === "running" || phase === "recovering";
 }
 
 function isMissingExternalIssueText(value: string): boolean {

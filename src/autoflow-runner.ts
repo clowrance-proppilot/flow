@@ -30,6 +30,8 @@ export interface StandaloneAutoflowRunnerOptions {
   codeReviewCreator?: AutoflowCodeReviewCreator;
   maxConcurrency?: number;
   postPromptTimeoutMs?: number;
+  recoveryPollAttempts?: number;
+  recoveryPollIntervalMs?: number;
 }
 
 export class StandaloneAutoflowRunner {
@@ -52,6 +54,8 @@ export class StandaloneAutoflowRunner {
       codeReviewCreator: options.codeReviewCreator,
       maxConcurrency: options.maxConcurrency,
       postPromptTimeoutMs: options.postPromptTimeoutMs,
+      recoveryPollAttempts: options.recoveryPollAttempts,
+      recoveryPollIntervalMs: options.recoveryPollIntervalMs,
       autoReconcileOnSlotAvailable: false,
       onStatusChange: async (status) => {
         await this.persistStatus(status);
@@ -157,7 +161,7 @@ function autoflowStatusSummary(activeCount: number, blockedCount: number): strin
 }
 
 function isActiveAutoflowPhase(phase: string): boolean {
-  return phase === "starting" || phase === "running";
+  return phase === "starting" || phase === "running" || phase === "recovering";
 }
 
 function isTerminalWorkflowIssue(issue: WorkItem): boolean {
