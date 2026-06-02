@@ -519,57 +519,10 @@ export function findPullRequestForIssue(
 
 export function pullRequestMetadata(repoKeyOrName: string, pr: PullRequestStatus): Record<string, unknown> {
   const normalizedRepoKey = normalizeRepoKey(repoKeyOrName);
-  const global = globalPullRequestMetadata({
-    source: "repo",
-    repoKey: normalizedRepoKey,
-    repo: pr.repo,
-    number: pr.number,
-    url: pr.url,
-    headRefName: pr.headRefName,
-    state: pr.state,
-    mergedAt: pr.mergedAt,
-    mergeCommitSha: pr.mergeCommitSha,
-    isDraft: pr.isDraft,
-    mergeable: pr.mergeable,
-    mergeStateStatus: pr.mergeStateStatus,
-    reviewDecision: pr.reviewDecision,
-    checksPassing: pr.checksPassing,
-    checksPending: pr.checksPending,
-    templateMissingHeadings: pr.templateMissingHeadings,
-    autoReviewStatus: pr.autoReviewStatus,
-    autoReviewMustFix: pr.autoReviewMustFix,
-    autoReviewMustFixDetail: pr.autoReviewMustFixDetail,
-    autoReviewNeedsConfirmation: pr.autoReviewNeedsConfirmation,
-    autoReviewNeedsConfirmationDetail: pr.autoReviewNeedsConfirmationDetail,
-    reviewCommentCount: pr.reviewCommentCount,
-    reviewCommentAuthors: pr.reviewCommentAuthors,
-    recordedAt: nowIso(),
-  });
-  const prefix = `workflow.repos.${normalizedRepoKey}.pr`;
+  const snapshot = pullRequestStatusSnapshot(pr, "repo", normalizedRepoKey);
   return {
-    ...global,
-    [`${prefix}_repo`]: pr.repo,
-    [`${prefix}_number`]: pr.number,
-    [`${prefix}_url`]: pr.url,
-    [`${prefix}_head_ref_name`]: pr.headRefName,
-    [`${prefix}_state`]: pr.state,
-    [`${prefix}_merged_at`]: pr.mergedAt,
-    [`${prefix}_merge_commit_sha`]: pr.mergeCommitSha,
-    [`${prefix}_is_draft`]: pr.isDraft,
-    [`${prefix}_mergeable`]: pr.mergeable,
-    [`${prefix}_merge_state_status`]: pr.mergeStateStatus,
-    [`${prefix}_review_decision`]: pr.reviewDecision,
-    [`${prefix}_checks_passing`]: pr.checksPassing,
-    [`${prefix}_checks_pending`]: pr.checksPending,
-    [`${prefix}_template_missing_headings`]: templateMissingHeadingsMetadata(pr.templateMissingHeadings),
-    [`${prefix}_auto_review_status`]: pr.autoReviewStatus,
-    [`${prefix}_auto_review_must_fix`]: pr.autoReviewMustFix,
-    [`${prefix}_auto_review_must_fix_detail`]: pr.autoReviewMustFixDetail,
-    [`${prefix}_auto_review_needs_confirmation`]: pr.autoReviewNeedsConfirmation,
-    [`${prefix}_auto_review_needs_confirmation_detail`]: pr.autoReviewNeedsConfirmationDetail,
-    [`${prefix}_review_comment_count`]: pr.reviewCommentCount,
-    [`${prefix}_review_comment_authors`]: pr.reviewCommentAuthors,
-    [`${prefix}_recorded_at`]: global.prRecordedAt,
+    ...globalPullRequestMetadata(snapshot),
+    ...repoScopedPullRequestMetadata(normalizedRepoKey, snapshot),
   };
 }
 
@@ -600,6 +553,39 @@ export function globalPullRequestMetadata(pr: PullRequestMetadataSnapshot): Reco
     prAutoReviewNeedsConfirmationDisposition: pr.autoReviewNeedsConfirmationDisposition,
     prAutoReviewNeedsConfirmationPostedUrl: pr.autoReviewNeedsConfirmationPostedUrl,
     prRecordedAt: pr.recordedAt ?? nowIso(),
+  };
+}
+
+export function repoScopedPullRequestMetadata(
+  repoKey: string,
+  snapshot: PullRequestMetadataSnapshot,
+): Record<string, unknown> {
+  const prefix = `workflow.repos.${repoKey}.pr`;
+  return {
+    [`${prefix}_repo`]: snapshot.repo,
+    [`${prefix}_number`]: snapshot.number,
+    [`${prefix}_url`]: snapshot.url,
+    [`${prefix}_head_ref_name`]: snapshot.headRefName,
+    [`${prefix}_state`]: snapshot.state,
+    [`${prefix}_merged_at`]: snapshot.mergedAt,
+    [`${prefix}_merge_commit_sha`]: snapshot.mergeCommitSha,
+    [`${prefix}_is_draft`]: snapshot.isDraft,
+    [`${prefix}_mergeable`]: snapshot.mergeable,
+    [`${prefix}_merge_state_status`]: snapshot.mergeStateStatus,
+    [`${prefix}_review_decision`]: snapshot.reviewDecision,
+    [`${prefix}_checks_passing`]: snapshot.checksPassing,
+    [`${prefix}_checks_pending`]: snapshot.checksPending,
+    [`${prefix}_template_missing_headings`]: templateMissingHeadingsMetadata(snapshot.templateMissingHeadings),
+    [`${prefix}_auto_review_status`]: snapshot.autoReviewStatus,
+    [`${prefix}_auto_review_must_fix`]: snapshot.autoReviewMustFix,
+    [`${prefix}_auto_review_must_fix_detail`]: snapshot.autoReviewMustFixDetail,
+    [`${prefix}_auto_review_needs_confirmation`]: snapshot.autoReviewNeedsConfirmation,
+    [`${prefix}_auto_review_needs_confirmation_detail`]: snapshot.autoReviewNeedsConfirmationDetail,
+    [`${prefix}_review_comment_count`]: snapshot.reviewCommentCount,
+    [`${prefix}_review_comment_authors`]: snapshot.reviewCommentAuthors,
+    [`${prefix}_auto_review_needs_confirmation_disposition`]: snapshot.autoReviewNeedsConfirmationDisposition,
+    [`${prefix}_auto_review_needs_confirmation_posted_url`]: snapshot.autoReviewNeedsConfirmationPostedUrl,
+    [`${prefix}_recorded_at`]: snapshot.recordedAt ?? nowIso(),
   };
 }
 

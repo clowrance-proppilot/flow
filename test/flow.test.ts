@@ -57,6 +57,8 @@ import {
   metadataValueEquals,
   normalizeRepoKey,
   normalizeRepoKeys,
+  pullRequestMetadata,
+  repoScopedPullRequestMetadata,
   validateFlowConfig,
   createConfiguredWorkRuntime,
   createId,
@@ -6857,6 +6859,62 @@ test("Work Runtime records pull request metadata", async () => {
   assert.equal(issue?.metadata.prIsDraft, true);
   assert.equal(issue?.metadata["workflow.repos.app_api.head_sha"], "abc123");
   assert.equal(issue?.metadata["workflow.repos.app_api.dirty"], false);
+});
+
+test("pullRequestMetadata writes global and repo-scoped fields from one snapshot", () => {
+  const metadata = pullRequestMetadata("app-api", {
+    repo: "app-api",
+    number: 1401,
+    title: "ISSUE-14: PR metadata",
+    url: "https://github.com/ExampleOrg/app-api/pull/1401",
+    headRefName: "feature/issue-14-test",
+    state: "OPEN",
+    mergeCommitSha: "abc123",
+    isDraft: true,
+    mergeable: "MERGEABLE",
+    mergeStateStatus: "CLEAN",
+    reviewDecision: "REVIEW_REQUIRED",
+    checksPassing: false,
+    checksPending: true,
+    templateMissingHeadings: ["Summary"],
+    autoReviewStatus: "pending",
+    autoReviewMustFix: true,
+    autoReviewMustFixDetail: "Fix a blocker.",
+    autoReviewNeedsConfirmation: true,
+    autoReviewNeedsConfirmationDetail: "Confirm behavior.",
+    reviewCommentCount: 2,
+    reviewCommentAuthors: ["reviewer"],
+  });
+
+  assert.equal(metadata.prUrl, "https://github.com/ExampleOrg/app-api/pull/1401");
+  assert.equal(metadata["workflow.repos.app_api.pr_url"], metadata.prUrl);
+  assert.equal(metadata.prRecordedAt, metadata["workflow.repos.app_api.pr_recorded_at"]);
+  assert.deepEqual(metadata.prTemplateMissingHeadings, ["Summary"]);
+  assert.deepEqual(metadata["workflow.repos.app_api.pr_template_missing_headings"], ["Summary"]);
+  assert.equal(metadata.prAutoReviewMustFixDetail, "Fix a blocker.");
+  assert.equal(metadata["workflow.repos.app_api.pr_auto_review_must_fix_detail"], "Fix a blocker.");
+  assert.equal(metadata.prAutoReviewNeedsConfirmationDetail, "Confirm behavior.");
+  assert.equal(metadata["workflow.repos.app_api.pr_auto_review_needs_confirmation_detail"], "Confirm behavior.");
+});
+
+test("repoScopedPullRequestMetadata preserves review confirmation snapshot fields", () => {
+  const metadata = repoScopedPullRequestMetadata("app_api", {
+    source: "repo",
+    repoKey: "app_api",
+    repo: "app-api",
+    number: 1401,
+    url: "https://github.com/ExampleOrg/app-api/pull/1401",
+    autoReviewNeedsConfirmationDisposition: "posted",
+    autoReviewNeedsConfirmationPostedUrl: "https://github.com/ExampleOrg/app-api/pull/1401#issuecomment-1",
+    recordedAt: "2026-06-02T00:00:00.000Z",
+  });
+
+  assert.equal(metadata["workflow.repos.app_api.pr_auto_review_needs_confirmation_disposition"], "posted");
+  assert.equal(
+    metadata["workflow.repos.app_api.pr_auto_review_needs_confirmation_posted_url"],
+    "https://github.com/ExampleOrg/app-api/pull/1401#issuecomment-1",
+  );
+  assert.equal(metadata["workflow.repos.app_api.pr_recorded_at"], "2026-06-02T00:00:00.000Z");
 });
 
 test("Work Runtime records pull request metadata for repos outside configured topology", async () => {
