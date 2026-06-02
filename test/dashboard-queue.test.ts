@@ -276,8 +276,10 @@ test("Dashboard queue derives work status from Flow artifacts", async () => {
 
   const queue = await workRuntime.inspectDashboardQueue(10);
 
-  assert.equal(queue.find((issue) => issue.ref === "ISSUE-90")?.workStatus, "Done");
-  assert.match(queue.find((issue) => issue.ref === "ISSUE-90")?.workStatusDetail ?? "", /#20 is merged/);
+  // ISSUE-90 has prMergedAt set, so it should be reconciled to done and hidden from the queue
+  assert.equal(queue.some((issue) => issue.ref === "ISSUE-90"), false, "merged PR should be hidden from dashboard queue");
+  const mergedIssue = await ledger.readIssue("ISSUE-90");
+  assert.equal(mergedIssue?.state, "done", "merged PR should reconcile to done state");
   assert.equal(queue.find((issue) => issue.ref === "ISSUE-91")?.workStatus, "Blocked");
   assert.match(queue.find((issue) => issue.ref === "ISSUE-91")?.workStatusDetail ?? "", /worker-91 is blocked/);
   assert.equal(queue.find((issue) => issue.ref === "ISSUE-92")?.workStatus, "In Review");
@@ -319,4 +321,52 @@ test("Dashboard queue mirrors the current session selection", async () => {
   assert.equal(queueWithoutSession.find((issue) => issue.ref === "ISSUE-2")?.workStatus, "Ready");
   assert.equal(queue.find((issue) => issue.ref === "ISSUE-1")?.workStatus, "Queued");
   assert.equal(queue.find((issue) => issue.ref === "ISSUE-2")?.workStatus, "Active");
+});
+
+test("Dashboard queue hides merged PR issues even when issue tracker status is stale", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-dashboard-merged-drift-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  await ledger.writeIssue({
+    ref: "GH-DRIFT-MERGED",
+    title: "PR merged but issue tracker still open",
+    repoKeys: ["app_api"],
+    state: "awaiting_review",
+    metadata: {
+      issueStatus: "Open",
+      issueStatusCategory: "To Do",
+      prUrl: "https://github.com/example/flow/pull/500",
+      prMergedAt: "2026-05-31T08:00:00Z",
+      prState: "MERGED",
+    },
+  });
+
+  const queue = await workRuntime.inspectDashboardQueue(10);
+  const merged = await ledger.readIssue("GH-DRIFT-MERGED");
+
+  assert.equal(queue.some((issue) => issue.ref === "GH-DRIFT-MERGED"), false, "merged PR should be hidden from dashboard queue");
+  assert.equal(merged?.state, "done", "merged PR should reconcile to done state");
+});
+
+test("Dashboard queue hides issues with jiraStatus 'ready for qa'", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-dashboard-qa-drift-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  await ledger.writeIssue({
+    ref: "GH-DRIFT-QA",
+    title: "Issue in QA but not done in tracker",
+    repoKeys: ["app_api"],
+    state: "awaiting_review",
+    metadata: {
+      issueStatus: "In Review",
+      issueStatusCategory: "In Progress",
+      jiraStatus: "ready for qa",
+    },
+  });
+
+  const queue = await workRuntime.inspectDashboardQueue(10);
+  const qa = await ledger.readIssue("GH-DRIFT-QA");
+
+  assert.equal(queue.some((issue) => issue.ref === "GH-DRIFT-QA"), false, "ready for qa should be hidden from dashboard queue");
+  assert.equal(qa?.state, "done", "ready for qa should reconcile to done state");
 });
