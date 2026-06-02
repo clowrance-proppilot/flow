@@ -139,6 +139,41 @@ test("Readiness supports local no-PR workflows when code review is disabled", ()
   assert.equal(assessment.findings.some((finding) => finding.summary === "Pull request is missing."), false);
 });
 
+test("Readiness does not require a pull request for work already recorded on the base branch", () => {
+  const assessment = assessIssue({
+    issue: {
+      ref: "ISSUE-MAIN",
+      title: "Already integrated",
+      repoKeys: ["flow"],
+      state: "ready_to_run",
+      metadata: {
+        "workflow.repos.flow.branch": "main",
+        "workflow.repos.flow.base_branch": "main",
+      },
+    },
+    workerResults: [
+      {
+        taskId: "worker-main",
+        issueRef: "ISSUE-MAIN",
+        repoKey: "flow",
+        status: "succeeded",
+        summary: "Changed code on main",
+        changedFiles: ["src/flow.ts"],
+        testsRun: ["npm run check"],
+        blockers: [],
+        completedAt: nowIso(),
+      },
+    ],
+    evidenceRecorded: true,
+    documentationRecorded: true,
+    codeReviewRequired: true,
+  });
+
+  assert.equal(assessment.readyToAdvance, true);
+  assert.equal(assessment.reviewReady, true);
+  assert.equal(assessment.findings.some((finding) => finding.summary === "Pull request is missing."), false);
+});
+
 test("Readiness treats retryable handoff timeout after success as warning", () => {
   const assessment = assessIssue({
     issue: {

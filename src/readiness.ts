@@ -60,7 +60,7 @@ export function assessIssue(input: ReadinessAssessmentInput): ReadinessAssessmen
   const hasSuccessfulWorker = workerForReadiness?.status === "succeeded" &&
     (workerHasCompletionOutput(workerForReadiness) || Boolean(input.review?.prUrl));
   const externalProviderEscalation = input.issue.metadata.externalProviderEscalation;
-  const codeReviewRequired = input.codeReviewRequired ?? true;
+  const codeReviewRequired = (input.codeReviewRequired ?? true) && !isRecordedOnBaseBranch(input.issue);
 
   if (input.issue.repoKeys.length === 0) {
     findings.push(finding(input.issue.ref, "blocker", "Repo routing is missing."));
@@ -257,6 +257,24 @@ function latestSuccessfulWorkerResult(workerResults: WorkerTaskResult[]): Worker
     if (result?.status === "succeeded") return result;
   }
   return undefined;
+}
+
+function isRecordedOnBaseBranch(issue: WorkItem): boolean {
+  const repoKeys = issue.repoKeys.length ? issue.repoKeys : [""];
+  for (const repoKey of repoKeys) {
+    const branch = metadataString(
+      repoKey ? issue.metadata[`workflow.repos.${repoKey}.branch`] : issue.metadata.branch,
+    ) ?? metadataString(issue.metadata.branch);
+    const baseBranch = metadataString(
+      repoKey ? issue.metadata[`workflow.repos.${repoKey}.base_branch`] : issue.metadata.baseBranch,
+    ) ?? metadataString(issue.metadata.baseBranch) ?? "main";
+    if (branch && branch === baseBranch) return true;
+  }
+  return false;
+}
+
+function metadataString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function workerHasCompletionOutput(result: WorkerTaskResult): boolean {
