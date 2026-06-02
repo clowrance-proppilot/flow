@@ -1,10 +1,7 @@
 #!/usr/bin/env node
-import { execFile } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 
-const execFileAsync = promisify(execFile);
 const scriptPath = fileURLToPath(import.meta.url);
 const flowRoot = dirname(dirname(scriptPath));
 
@@ -13,10 +10,54 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
 }
 
 export async function main(args) {
-  const { issueRef, flowBin } = parseArgs(args);
-  const flowCommand = flowInvocationForBin(flowBin);
+  const { issueRef } = parseArgs(args);
 
-  const finalResult = await call(flowCommand, autoflowRunRequestForIssue(issueRef));
+  const { repoRoot } = await import("../src/flow-runtime.js");
+  const { validateFlowConfig } = await import("../src/config/config-loader.js");
+  const { createConfiguredWorkRuntime } = await import("../src/runtime-factory.js");
+  const { StandaloneAutoflowRunner, createDefaultAutoflowRunnerState } = await import("../src/autoflow-runner.js");
+  const { PiSessionDriver } = await import("../src/pi-session-driver.js");
+  const { ClaudeSessionDriver } = await import("../src/claude-session-driver.js");
+
+  const configValidation = await validateFlowConfig({ projectRoot: repoRoot });
+  const configuredRuntime = createConfiguredWorkRuntime({ projectRoot: repoRoot, flowConfig: configValidation.config });
+  const flowConfig = configuredRuntime.flowConfig;
+  const runtime = configuredRuntime.runtime;
+
+  const projectId = configString(flowConfig?.project, "name") ?? "default";
+  const agentSessionDriver = createAgentSessionDriver(projectId, flowConfig, runtime, repoRoot);
+
+  const runner = new StandaloneAutoflowRunner({
+    projectId,
+    runtime,
+    state: createDefaultAutoflowRunnerState(repoRoot),
+    agentSessionDriver,
+    codeReviewCreator: configuredRuntime.collaboration?.createCodeReview
+      ? {
+        async createPullRequest(input) {
+          const review = await configuredRuntime.collaboration.createCodeReview?.({
+            repo: input.repo,
+            title: input.title,
+            body: input.body,
+            sourceBranch: input.headRefName,
+            targetBranch: input.baseRefName,
+          });
+          if (!review) throw new Error("Code review creation is not configured.");
+          return {
+            repo: review.repo,
+            number: Number(review.id),
+            url: review.url,
+            headRefName: review.sourceBranch,
+            isDraft: review.isDraft,
+            checksPassing: review.checksPassing,
+            reviewDecision: review.reviewDecision,
+          };
+        },
+      }
+      : undefined,
+  });
+
+  const finalResult = await runner.tick({ issueRefs: [issueRef], wait: true });
   const issueStatus = finalResult?.issues?.[issueRef] ?? null;
   const output = {
     issueRef,
@@ -28,8 +69,16 @@ export async function main(args) {
   console.log(JSON.stringify(output, null, 2));
 }
 
-export function autoflowRunRequestForIssue(issueRef) {
-  return { op: "autoflow", mode: "run", id: issueRef };
+function createAgentSessionDriver(projectId, flowConfig, runtime, repoRoot) {
+  const provider = configString(configRecord(flowConfig?.runtime, "agentSession"), "provider") ?? "pi";
+  const options = {
+    runtime,
+    repoRoot,
+    flowSessionId: `autoflow-${projectId.toLowerCase()}`,
+  };
+  if (provider === "pi") return new PiSessionDriver(options);
+  if (provider === "claude") return new ClaudeSessionDriver(options);
+  throw new Error(`Unsupported runtime.agentSession.provider: ${provider}.`);
 }
 
 export function flowInvocationForBin(flowBin, platform = process.platform, nodePath = process.execPath) {
@@ -42,20 +91,6 @@ export function flowInvocationForBin(flowBin, platform = process.platform, nodeP
     return { command: flowBin, argsPrefix: [] };
   }
   return { command: nodePath, argsPrefix: [flowBin] };
-}
-
-async function call(flowCommand, body) {
-  const { stdout, stderr } = await execFileAsync(flowCommand.command, [
-    ...flowCommand.argsPrefix,
-    JSON.stringify(body),
-  ], {
-    cwd: process.cwd(),
-    maxBuffer: 20 * 1024 * 1024,
-  });
-  if (stderr.trim()) process.stderr.write(stderr);
-  const parsed = JSON.parse(stdout);
-  if (parsed.ok === false) throw new Error(`Flow CLI failed: ${JSON.stringify(parsed.error)}`);
-  return parsed.result;
 }
 
 function parseArgs(args) {
@@ -98,4 +133,14 @@ function parsePositiveInteger(value) {
     throw new Error(`Expected a positive integer, got ${value}.`);
   }
   return parsed;
+}
+
+function configString(config, key) {
+  const value = config?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function configRecord(config, key) {
+  const value = config?.[key];
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value : undefined;
 }

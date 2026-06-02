@@ -1,15 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { autoflowRunRequestForIssue, flowInvocationForBin } from "../scripts/autoflow-issue.mjs";
-
-test("autoflow issue script targets the standalone Autoflow runner", () => {
-  assert.deepEqual(autoflowRunRequestForIssue("GH-452"), {
-    op: "autoflow",
-    mode: "run",
-    id: "GH-452",
-  });
-});
+import { flowInvocationForBin } from "../scripts/autoflow-issue.mjs";
 
 test("autoflow issue script launches extensionless Flow bin through node on Windows", () => {
   assert.deepEqual(

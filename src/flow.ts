@@ -2,11 +2,9 @@
 
 import {
   bootstrapFlowConfig,
-  createDefaultAutoflowRunnerState,
   GhGitHubAdapter,
   flowLayout,
   migrateFlowConfig,
-  StandaloneAutoflowRunner,
   terminalWorkerStatusValues,
   type AcceptanceCriterionEvidence,
   validateFlowConfig,
@@ -28,8 +26,6 @@ import {
   requireWorkJobExecutor,
   requireWorkJobResult,
 } from "./dispatch-validators.js";
-import { ClaudeSessionDriver } from "./claude-session-driver.js";
-import { PiSessionDriver } from "./pi-session-driver.js";
 import { resolveCliIssue } from "./cli-issue.js";
 
 const configValidation = await validateFlowConfig({ projectRoot: repoRoot });
@@ -38,7 +34,6 @@ const flowConfig = configuredRuntime.flowConfig;
 const defaultSessionId = configString(flowConfig?.runtime, "defaultSessionId") ?? "cli";
 const workflowLedger = configuredRuntime.workflowLedger;
 const configuredIssueTracker = configuredRuntime.issueTracker;
-let cachedAutoflowRunner: StandaloneAutoflowRunner | undefined;
 const rawWorkRuntimeMethods = [
   "inspectDashboardQueue",
   "inspectQueue",
@@ -59,8 +54,6 @@ const rawWorkRuntimeMethods = [
   "adoptWorkspace",
   "advanceIssue",
   "diagnoseIssue",
-  "autoFlowIssue",
-  "resetAutoflowState",
   "refreshReviewState",
   "adoptPendingLocalThread",
   "adoptLocalThread",
@@ -101,11 +94,10 @@ async function routeFlowRequest(request: Record<string, unknown>): Promise<unkno
   if (op === "ledger") return handleLedgerRequest(request);
   if (op === "issue") return handleIssueRequest(request);
   if (op === "workflow") return handleWorkflowRequest(request);
-  if (op === "autoflow") return handleAutoflowRequest(request);
   if (op === "review") return handleReviewRequest(request);
   if (op === "runtime") return dispatch(requireString(request, "method"), paramsFromRequest(request));
   throw new JsonCliError("BAD_OP", `Unsupported Flow op: ${op}`, {
-    details: { supportedOps: ["manifest", "state", "queue", "backlog", "bootstrap", "config", "ledger", "issue", "workflow", "autoflow", "review", "runtime"] },
+    details: { supportedOps: ["manifest", "state", "queue", "backlog", "bootstrap", "config", "ledger", "issue", "workflow", "review", "runtime"] },
   });
 }
 
@@ -351,25 +343,6 @@ async function handleWorkflowRequest(request: Record<string, unknown>): Promise<
   }
 }
 
-async function handleAutoflowRequest(request: Record<string, unknown>): Promise<unknown> {
-  const mode = optionalString(request, "mode") ?? "status";
-  const runner = standaloneAutoflowRunner();
-  switch (mode) {
-    case "status":
-      return runner.status();
-    case "enable":
-      return runner.setEnabled(true);
-    case "disable":
-      return runner.setEnabled(false);
-    case "tick":
-      return runner.tick({ issueRefs: autoflowIssueRefs(request), wait: request.wait === true });
-    case "run":
-      return runner.tick({ issueRefs: autoflowIssueRefs(request), wait: true });
-    default:
-      throw badMode("autoflow", mode, ["status", "enable", "disable", "tick", "run"]);
-  }
-}
-
 async function handleReviewRequest(request: Record<string, unknown>): Promise<unknown> {
   const rawTarget = optionalString(request, "mode") ?? optionalString(request, "target") ?? "local";
   const target = rawTarget === "codeReview" ? "code_review" : rawTarget;
@@ -389,61 +362,6 @@ async function handleReviewRequest(request: Record<string, unknown>): Promise<un
   });
 }
 
-function autoflowIssueRefs(request: Record<string, unknown>): string[] | undefined {
-  const refs = [
-    optionalString(request, "id"),
-    ...asStringArray(request.ids) ?? [],
-  ].filter((ref): ref is string => Boolean(ref));
-  return refs.length ? refs : undefined;
-}
-
-function standaloneAutoflowRunner(): StandaloneAutoflowRunner {
-  if (cachedAutoflowRunner) return cachedAutoflowRunner;
-  const projectId = configString(flowConfig?.project, "name") ?? "default";
-  const agentSessionDriver = createCliAgentSessionDriver(projectId);
-  cachedAutoflowRunner = new StandaloneAutoflowRunner({
-    projectId,
-    runtime,
-    state: createDefaultAutoflowRunnerState(repoRoot),
-    agentSessionDriver,
-    codeReviewCreator: configuredRuntime.collaboration?.createCodeReview
-      ? {
-        async createPullRequest(input) {
-          const review = await configuredRuntime.collaboration.createCodeReview?.({
-            repo: input.repo,
-            title: input.title,
-            body: input.body,
-            sourceBranch: input.headRefName,
-            targetBranch: input.baseRefName,
-          });
-          if (!review) throw new Error("Code review creation is not configured.");
-          return {
-            repo: review.repo,
-            number: Number(review.id),
-            url: review.url,
-            headRefName: review.sourceBranch,
-            isDraft: review.isDraft,
-            checksPassing: review.checksPassing,
-            reviewDecision: review.reviewDecision,
-          };
-        },
-      }
-      : undefined,
-  });
-  return cachedAutoflowRunner;
-}
-
-function createCliAgentSessionDriver(projectId: string) {
-  const provider = configString(configRecord(flowConfig?.runtime, "agentSession"), "provider") ?? "pi";
-  const options = {
-    runtime,
-    repoRoot,
-    flowSessionId: `autoflow-${projectId.toLowerCase()}`,
-  };
-  if (provider === "pi") return new PiSessionDriver(options);
-  if (provider === "claude") return new ClaudeSessionDriver(options);
-  throw new Error(`Unsupported runtime.agentSession.provider: ${provider}.`);
-}
 
 function flowManifest(target?: string) {
   if (!target) {
@@ -461,7 +379,7 @@ function flowManifest(target?: string) {
         body: ["flow '{\"op\":\"state\"}'", "printf '%s\\n' '{\"op\":\"state\"}' | flow"],
       },
       detail: { op: "manifest", target: "<op>" },
-      targets: ["workflow", "issue", "autoflow", "review", "runtime", "config", "layout"],
+      targets: ["workflow", "issue", "review", "runtime", "config", "layout"],
       ops: {
         manifest: "Get compact or targeted capability metadata.",
         state: "Read current Flow state, optionally scoped by id.",
@@ -472,7 +390,6 @@ function flowManifest(target?: string) {
         ledger: "Verify workflow ledger.",
         issue: "Inspect, create, select, or adopt issue/workspace state through the configured issue tracker.",
         workflow: "Advance, audit, record, or observe workflow state.",
-        autoflow: "Run or inspect standalone Autoflow outside Desktop.",
         review: "Provider-neutral review of local readiness or external code review state.",
         runtime: "Call a raw Work Runtime method by name.",
       },
@@ -514,23 +431,6 @@ function flowManifest(target?: string) {
         { op: "issue", mode: "triage", apply: true, ids: ["GH-123", "GH-124"] },
       ],
       id: "Required issue/work item id for existing work items; create/intake/adoptBranch may omit id to allocate one. Triage mode does not require id.",
-    };
-  }
-  if (target === "autoflow") {
-    return {
-      target,
-      modes: ["status", "enable", "disable", "tick", "run"],
-      examples: [
-        { op: "autoflow", mode: "status" },
-        { op: "autoflow", mode: "tick" },
-        { op: "autoflow", mode: "run", id: "FLOW-123" },
-        { op: "autoflow", mode: "disable" },
-        { op: "autoflow", mode: "enable" },
-      ],
-      id: "Optional issue/work item id for targeted tick or run. Use ids for a bounded batch.",
-      state: {
-        enabled: "Stored in Flow SQL project state under autoflow.enabled.",
-      },
     };
   }
   if (target === "review") {
@@ -581,7 +481,7 @@ function flowManifest(target?: string) {
     error: {
       code: "UNKNOWN_MANIFEST_TARGET",
       message: `Unknown manifest target: ${target}`,
-      targets: ["workflow", "issue", "autoflow", "runtime", "config", "layout"],
+      targets: ["workflow", "issue", "runtime", "config", "layout"],
     },
   };
 }
@@ -859,10 +759,6 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
         String(params.sessionId ?? defaultSessionId),
         typeof params.issueRef === "string" ? params.issueRef : undefined,
       );
-    case "autoFlowIssue":
-      return runtime.autoFlowIssue(String(params.sessionId ?? defaultSessionId), params.options ?? {});
-    case "resetAutoflowState":
-      return runtime.resetAutoflowState(String(params.sessionId ?? defaultSessionId), asStringArray(params.issueRefs));
     case "refreshReviewState":
       return runtime.refreshReviewState(
         String(params.sessionId ?? defaultSessionId),
