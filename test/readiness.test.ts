@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assessIssue, nowIso } from "../src/index.js";
+import { assessIssue, nowIso, evaluatePullRequestGates, pullRequestGatesSatisfied } from "../src/index.js";
 
 test("Readiness blocks failed worker results", () => {
   const assessment = assessIssue({
@@ -817,4 +817,90 @@ test("Readiness blocks worker spawn when repo routing is missing", () => {
 
   assert.equal(assessment.readyToAdvance, false);
   assert.equal(assessment.findings[0].summary, "Repo routing is missing.");
+});
+
+// ── Shared PR gate evaluator tests ────────────────────────────────
+
+test("PR gate evaluator blocks draft pull requests", () => {
+  const gates = evaluatePullRequestGates({ isDraft: true });
+  assert.equal(gates.length, 1);
+  assert.equal(gates[0].rule, "draft");
+  assert.equal(pullRequestGatesSatisfied({ isDraft: true }), false);
+});
+
+test("PR gate evaluator blocks failed checks", () => {
+  const gates = evaluatePullRequestGates({ checksPassing: false });
+  assert.equal(gates.length, 1);
+  assert.equal(gates[0].rule, "checks_failed");
+});
+
+test("PR gate evaluator blocks pending checks", () => {
+  const gates = evaluatePullRequestGates({ checksPending: true });
+  assert.equal(gates.length, 1);
+  assert.equal(gates[0].rule, "checks_pending");
+});
+
+test("PR gate evaluator blocks merge conflicts", () => {
+  const gates = evaluatePullRequestGates({ mergeable: "CONFLICTING" });
+  assert.equal(gates.length, 1);
+  assert.equal(gates[0].rule, "conflicts");
+
+  const dirty = evaluatePullRequestGates({ mergeStateStatus: "DIRTY" });
+  assert.equal(dirty.length, 1);
+  assert.equal(dirty[0].rule, "conflicts");
+});
+
+test("PR gate evaluator blocks auto-review needs-confirmation without disposition", () => {
+  const gates = evaluatePullRequestGates({ autoReviewNeedsConfirmation: true });
+  assert.equal(gates.length, 1);
+  assert.equal(gates[0].rule, "auto_review_needs_confirmation");
+});
+
+test("PR gate evaluator blocks auto-review needs-confirmation with disposition but no posted URL", () => {
+  const gates = evaluatePullRequestGates({
+    autoReviewNeedsConfirmation: true,
+    autoReviewNeedsConfirmationDisposition: "accept",
+  });
+  assert.equal(gates.length, 1);
+  assert.equal(gates[0].rule, "auto_review_needs_confirmation");
+});
+
+test("PR gate evaluator passes auto-review needs-confirmation with disposition and posted URL", () => {
+  const gates = evaluatePullRequestGates({
+    autoReviewNeedsConfirmation: true,
+    autoReviewNeedsConfirmationDisposition: "accept",
+    autoReviewNeedsConfirmationPostedUrl: "https://example.com/comment/1",
+  });
+  assert.equal(gates.length, 0);
+  assert.equal(pullRequestGatesSatisfied({
+    autoReviewNeedsConfirmation: true,
+    autoReviewNeedsConfirmationDisposition: "accept",
+    autoReviewNeedsConfirmationPostedUrl: "https://example.com/comment/1",
+  }), true);
+});
+
+test("PR gate evaluator bypasses all gates for merged pull requests", () => {
+  const gates = evaluatePullRequestGates({
+    state: "MERGED",
+    isDraft: true,
+    checksPassing: false,
+    mergeable: "CONFLICTING",
+    autoReviewStatus: "failed",
+  });
+  assert.equal(gates.length, 0);
+  assert.equal(pullRequestGatesSatisfied({ state: "MERGED", isDraft: true }), true);
+});
+
+test("PR gate evaluator passes clean pull request", () => {
+  const gates = evaluatePullRequestGates({
+    isDraft: false,
+    checksPassing: true,
+    mergeable: "MERGEABLE",
+    autoReviewStatus: "passed",
+  });
+  assert.equal(gates.length, 0);
+  assert.equal(pullRequestGatesSatisfied({
+    isDraft: false,
+    checksPassing: true,
+  }), true);
 });
