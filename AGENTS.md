@@ -3,19 +3,30 @@
 These instructions apply to coding agents working in this repository. Longer
 prompt text for agent hosts lives in `prompts/`.
 
-## Dogfood Flow
+## Dogfood Flow (Core Bookkeeping)
 
-- When working on a Flow issue, use Flow as the workflow source of truth before
-  editing code.
-- Prefer registered `flow_*` tools when they are available. Otherwise use the
-  `flow` JSON CLI and parse its JSON stdout.
-- Select or create the issue, prepare or adopt the workspace, and claim or
-  record the work through Flow before making implementation changes.
+- When working on a Flow issue, use Flow for bookkeeping before editing code.
+- Prefer registered `flow_*` tools when available. Otherwise use the `flow`
+  JSON CLI and parse its JSON stdout.
+- Core Flow commands are deterministic bookkeeping: issue create/select, workspace
+  prepare/adopt, result/evidence/documentation/PR recording, and bounded workflow
+  state transitions. Use these directly.
+- For simple issue capture, use `flow createIssue` directly. Do not run intake
+  review or semantic dedupe unless specifically needed.
 - Do not silently bypass Flow by editing the primary checkout for issue work. If
   Flow cannot prepare/adopt a workspace or record the work, stop and surface the
   exact blocker before continuing directly.
 - Record results, evidence, tests, pull request state, and handoff notes through
   Flow.
+
+### Experimental App-Layer Behavior
+
+- Autoflow (live-agent orchestration), Desktop/UI status, and background
+  reconciliation are experimental app-layer behavior—not core bookkeeping.
+- Do not use Autoflow as the default executor. Use direct Flow commands for
+  issue work unless the requester explicitly asks for the Autoflow path.
+- Do not spawn agents, poll background status, or run multi-step closeout loops
+  from core Flow commands.
 
 ## Repo Hygiene
 
