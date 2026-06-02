@@ -15,6 +15,7 @@ export * from "./reconciliation.js";
 export * from "./work-runtime.js";
 export * from "./autoflow-service.js";
 export * from "./autoflow-runner.js";
+export * from "./agent-session-driver.js";
 export * from "./pi-session-driver.js";
 export * from "./pi-sdk-runner.js";
 export * from "./session-driver.js";

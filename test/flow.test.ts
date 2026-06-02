@@ -2339,7 +2339,7 @@ test("Desktop static routes serve built HTML and keep missing UI 404s", async ()
   }
 });
 
-test("Pi session driver starts issue-linked sessions and records FlowSessionLink", async () => {
+test("Pi session driver starts issue-linked sessions and records provider-neutral session link", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-session-start-"));
   const ledger = new MemoryWorkflowLedger();
   const runtime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
@@ -2367,10 +2367,11 @@ test("Pi session driver starts issue-linked sessions and records FlowSessionLink
   assert.match(session.timeline[0].content, /Agent session started/);
 
   const linksRaw = await readFile(join(root, ".flow", "runtime", "pi-session-links.json"), "utf8");
-  const linksPayload = JSON.parse(linksRaw) as { links: Array<{ issueRef: string; flowSessionId: string; piSessionId: string }> };
+  const linksPayload = JSON.parse(linksRaw) as { links: Array<{ issueRef: string; flowSessionId: string; provider: string; sessionId: string }> };
   assert.equal(linksPayload.links[0].issueRef, "GH-34");
   assert.equal(linksPayload.links[0].flowSessionId, "desktop");
-  assert.equal(linksPayload.links[0].piSessionId, session.id);
+  assert.equal(linksPayload.links[0].provider, "pi");
+  assert.equal(linksPayload.links[0].sessionId, session.id);
 });
 
 test("Pi session driver appends user prompt and assistant response", async () => {

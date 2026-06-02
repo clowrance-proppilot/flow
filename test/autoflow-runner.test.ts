@@ -205,7 +205,7 @@ test("AutoflowService runs Hatchet payloads through Flow internals and durable P
       provider: "pi",
       issueRef: "GH-416",
       flowSessionId: "flow-gh-416",
-      piSessionId: "pi-gh-416",
+      sessionId: "pi-gh-416",
     },
   });
 

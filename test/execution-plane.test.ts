@@ -48,7 +48,7 @@ test("Autoflow semantic steps do not assign domain policy to Hatchet", () => {
   assert.equal(autoflowSemanticSteps.some((step) => step.includes("hatchet")), false);
 });
 
-test("Hatchet payload carries only a durable Pi session handle", () => {
+test("Hatchet payload carries only a durable agent session handle", () => {
   const payload = toHatchetAutoflowPayload({
     projectId: "flow",
     issueRef: "gh-412",
@@ -58,7 +58,7 @@ test("Hatchet payload carries only a durable Pi session handle", () => {
       provider: "pi",
       issueRef: "gh-412",
       flowSessionId: "desktop-flow-gh-412",
-      piSessionId: "pi-gh-412",
+      sessionId: "pi-gh-412",
       sessionFile: " C:/tmp/pi-session.jsonl ",
       workspacePath: " C:/repo/.worktrees/gh-412 ",
     },
@@ -68,7 +68,7 @@ test("Hatchet payload carries only a durable Pi session handle", () => {
     provider: "pi",
     issueRef: "GH-412",
     flowSessionId: "desktop-flow-gh-412",
-    piSessionId: "pi-gh-412",
+    sessionId: "pi-gh-412",
     sessionFile: "C:/tmp/pi-session.jsonl",
     workspacePath: "C:/repo/.worktrees/gh-412",
   });

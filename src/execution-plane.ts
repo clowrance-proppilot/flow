@@ -33,7 +33,7 @@ export interface AutoflowExecutionRequest {
   requestedBy: FlowExecutionControlSurface;
   runId?: string;
   reason?: string;
-  durableSession?: DurablePiSessionHandle;
+  durableSession?: DurableAgentSessionHandle;
 }
 
 export interface AutoflowExecutionHandle {
@@ -70,16 +70,16 @@ export interface HatchetAutoflowPayload {
   requestedBy: FlowExecutionControlSurface;
   runId: string;
   reason?: string;
-  durableSession?: DurablePiSessionHandle;
+  durableSession?: DurableAgentSessionHandle;
   concurrencyKey: string;
   semanticSteps: readonly AutoflowSemanticStep[];
 }
 
-export interface DurablePiSessionHandle {
-  provider: "pi";
+export interface DurableAgentSessionHandle {
+  provider: string;
   issueRef: string;
   flowSessionId: string;
-  piSessionId: string;
+  sessionId: string;
   sessionFile?: string;
   workspacePath?: string;
 }
@@ -125,7 +125,7 @@ function normalizeAutoflowExecutionRequest(request: AutoflowExecutionRequest): O
     requestedBy: request.requestedBy,
     runId,
     ...(reason ? { reason } : {}),
-    ...(request.durableSession ? { durableSession: normalizeDurablePiSessionHandle(request.durableSession) } : {}),
+    ...(request.durableSession ? { durableSession: normalizeDurableAgentSessionHandle(request.durableSession) } : {}),
   };
 }
 
@@ -139,12 +139,12 @@ function requiredTrimmed(value: string, field: string): string {
   return trimmed;
 }
 
-function normalizeDurablePiSessionHandle(handle: DurablePiSessionHandle): DurablePiSessionHandle {
+function normalizeDurableAgentSessionHandle(handle: DurableAgentSessionHandle): DurableAgentSessionHandle {
   return {
-    provider: "pi",
+    provider: requiredTrimmed(handle.provider, "durableSession.provider"),
     issueRef: requiredTrimmed(handle.issueRef, "durableSession.issueRef").toUpperCase(),
     flowSessionId: requiredTrimmed(handle.flowSessionId, "durableSession.flowSessionId"),
-    piSessionId: requiredTrimmed(handle.piSessionId, "durableSession.piSessionId"),
+    sessionId: requiredTrimmed(handle.sessionId, "durableSession.sessionId"),
     ...(handle.sessionFile?.trim() ? { sessionFile: handle.sessionFile.trim() } : {}),
     ...(handle.workspacePath?.trim() ? { workspacePath: handle.workspacePath.trim() } : {}),
   };

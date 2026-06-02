@@ -1,5 +1,5 @@
 import { createId, nowIso, WorkerStatusValue, type WorkerTaskRequest } from "./contracts.js";
-import type { DurablePiSessionHandle, HatchetAutoflowPayload, HatchetAutoflowRunResult } from "./execution-plane.js";
+import type { DurableAgentSessionHandle, HatchetAutoflowPayload, HatchetAutoflowRunResult } from "./execution-plane.js";
 import type { AdvanceIssueResult, AutoFlowIssueResult, FlowDoctorResult, FlowWorkRuntime, LocalThreadResultInput } from "./work-runtime.js";
 
 export type AutoflowServiceRuntime = Pick<
@@ -283,7 +283,7 @@ export class AutoflowService {
     };
   }
 
-  private spawnRun(issueRef: string, repoKeys: string[] = [], title?: string, metadata: Record<string, unknown> = {}, durableSession?: DurablePiSessionHandle): void {
+  private spawnRun(issueRef: string, repoKeys: string[] = [], title?: string, metadata: Record<string, unknown> = {}, durableSession?: DurableAgentSessionHandle): void {
     const run: ActiveRun = {
       promise: Promise.resolve(),
       status: "starting",
@@ -318,7 +318,7 @@ export class AutoflowService {
       });
   }
 
-  private async runCandidate(issueRef: string, repoKeys: string[] = [], title?: string, metadata: Record<string, unknown> = {}, durableSession?: DurablePiSessionHandle): Promise<void> {
+  private async runCandidate(issueRef: string, repoKeys: string[] = [], title?: string, metadata: Record<string, unknown> = {}, durableSession?: DurableAgentSessionHandle): Promise<void> {
     // Each issue gets its own session to avoid Windows EPERM on concurrent session file writes
     const flowSessionId = durableSession?.flowSessionId ?? `desktop-${this.projectId}-${issueRef.toLowerCase()}`;
     await this.ensureFlowSession(flowSessionId);
@@ -367,30 +367,30 @@ export class AutoflowService {
       adopter: "Flow Autoflow",
       summary: `Flow Autoflow started ${issueRef}.`,
     });
-    const piSession = durableSession?.piSessionId
-      ? await this.agentSessionDriver.getSession(durableSession.piSessionId).catch(() => this.agentSessionDriver.openOrCreateIssueSession(issueRef))
+    const agentSession = durableSession?.sessionId
+      ? await this.agentSessionDriver.getSession(durableSession.sessionId).catch(() => this.agentSessionDriver.openOrCreateIssueSession(issueRef))
       : await this.agentSessionDriver.openOrCreateIssueSession(issueRef);
 
     const run = this.activeRuns.get(issueRef);
     if (run) {
       run.status = "running";
-      run.sessionId = piSession.id;
+      run.sessionId = agentSession.id;
       run.workspacePath = handoff.workspacePath;
       run.summary = `Autoflow working ${issueRef}.`;
       run.updatedAt = nowIso();
     }
     this.updateIssueStatus(issueRef, {
       phase: "running",
-      sessionId: piSession.id,
+      sessionId: agentSession.id,
       workspacePath: handoff.workspacePath,
       summary: `Autoflow working ${issueRef}.`,
     });
 
     let completed: AutoflowAgentSessionSnapshot;
     try {
-      completed = await this.completeAgentPrompt(piSession.id, handoff);
+      completed = await this.completeAgentPrompt(agentSession.id, handoff);
     } catch (error) {
-      completed = failedAgentSession(piSession, handoff, error);
+      completed = failedAgentSession(agentSession, handoff, error);
     }
     const resultStatus = await this.recordResult(flowSessionId, handoff, completed);
 
