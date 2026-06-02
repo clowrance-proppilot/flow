@@ -1034,6 +1034,91 @@ test("AutoflowService uses provider-neutral fallback summary when agent has no a
   assert.match(capturedSummary!, /agent session completed GH-426/i);
 });
 
+test("AutoflowService records clean agent summary before assistant timeline text", async () => {
+  let capturedSummary: string | undefined;
+  const runtime = {
+    inspectQueue: async () => [{
+      ref: "GH-427",
+      title: "Persist clean Claude summary",
+      repoKeys: ["flow"],
+      state: "queued",
+      metadata: {},
+    }],
+    summarizeHandoff: async () => "handoff",
+    createSession: async (id: string) => ({ id, findings: [], workerResults: [], createdAt: nowIso(), updatedAt: nowIso() }),
+    selectIssue: async () => undefined,
+    diagnoseIssue: async () => ({
+      issueRef: "GH-427",
+      status: "ok",
+      issue: { ref: "GH-427", title: "Persist clean Claude summary", state: "selected", repoKeys: ["flow"] },
+      visibility: {
+        ledger: true,
+        issueTracker: true,
+        repoRouting: true,
+        preparedWorktree: true,
+        codeReview: false,
+        codeReviewRequired: false,
+      },
+      findings: [],
+      nextAction: { type: "advance", summary: "Run Autoflow." },
+    }),
+    autoFlowIssue: async () => ({
+      status: "execution_handoff",
+      message: "Ready for executor.",
+      steps: [],
+      workerResults: [],
+      session: { id: "session", findings: [], workerResults: [], createdAt: nowIso(), updatedAt: nowIso() },
+    }),
+    adoptPendingLiveWorker: async () => ({
+      id: "task-427",
+      issueRef: "GH-427",
+      repoKey: "flow",
+      workJobId: "job-427",
+      prompt: "Implement GH-427.",
+      workspacePath: "/tmp/flow-gh-427",
+    }),
+    recordLocalThreadResult: async (_sessionId: string, result: { summary: string }) => {
+      capturedSummary = result.summary;
+      return result;
+    },
+    recordEvidence: async () => undefined,
+    recordDocumentation: async () => undefined,
+    recordPullRequest: async () => undefined,
+    advanceIssue: async () => ({
+      status: "awaiting_review",
+      message: "Ready for review.",
+    }),
+  };
+  const cleanSummarySession: AutoflowAgentSessionSnapshot = {
+    id: "agent-gh-427",
+    workspacePath: "/tmp/flow-gh-427",
+    status: "done",
+    summary: "Clean Claude SDK result summary.",
+    timeline: [{
+      id: "assistant-noisy",
+      role: "assistant",
+      content: "[tool:Bash] noisy progress output",
+      createdAt: nowIso(),
+    }],
+  };
+  const service = new AutoflowService({
+    projectId: "flow",
+    runtime: runtime as never,
+    agentSessionDriver: {
+      async getSession() { return cleanSummarySession; },
+      async openOrCreateIssueSession() { return cleanSummarySession; },
+      async sendUserMessage() { return cleanSummarySession; },
+      async postPrompt() { return cleanSummarySession; },
+    },
+    autoReconcileOnSlotAvailable: false,
+  });
+
+  assert.equal((await service.reconcile()).activeCount, 1);
+  await service.waitForIdle();
+
+  assert.equal(capturedSummary, "Clean Claude SDK result summary.");
+});
+
 function fakeAgentDriver(): AutoflowAgentSessionDriver {
   const session = fakeAgentDriverSession();
   return {

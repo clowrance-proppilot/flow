@@ -49,6 +49,7 @@ export interface AgentSessionSnapshot {
   sessionFile?: string;
   workspacePath?: string;
   status: AgentSessionStatus;
+  summary?: string;
   error?: string;
   startedAt: string;
   updatedAt: string;
@@ -306,6 +307,7 @@ export class AgentSessionDriver {
         session.sessionFile = result.sessionFile ?? session.sessionFile;
         session.workspacePath = result.workspacePath ?? session.workspacePath;
         session.status = result.status ?? "active";
+        session.summary = result.summary ?? session.summary;
         session.error = undefined;
         session.timeline.push(...result.timeline ?? []);
         if (result.summary && !session.timeline.some((item) => item.role === "assistant" && item.content === result.summary)) {
@@ -320,6 +322,7 @@ export class AgentSessionDriver {
         console.error(`[flow-desktop] ${this.provider.displayName} session ${session.id} failed:`, error);
         session.status = "failed";
         session.error = errorMessage(error);
+        session.summary = session.error;
         session.timeline.push({
           id: timelineId("assistant"),
           role: "assistant",
@@ -515,7 +518,7 @@ export class AgentSessionDriver {
       title: session.issueRef,
       status: session.status === "running" ? "running" : session.status === "failed" ? "failed" : "idle",
       updatedAt: session.updatedAt,
-      preview: latestText(session),
+      preview: session.summary ?? latestText(session),
     };
   }
 }

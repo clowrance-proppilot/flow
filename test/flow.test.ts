@@ -2405,6 +2405,48 @@ test("Pi session driver appends user prompt and assistant response", async () =>
   assert.equal(updated.timeline.length >= 3, true);
 });
 
+test("Pi session driver persists clean agent summaries", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-agent-summary-"));
+  const ledger = new MemoryWorkflowLedger();
+  const runtime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
+  await ledger.writeIssue({
+    ref: "GH-427",
+    title: "Persist agent summary",
+    repoKeys: [],
+    state: "queued",
+    metadata: {},
+  });
+
+  const driver = new PiSessionDriver({
+    runtime,
+    repoRoot: root,
+    flowSessionId: "desktop",
+    agent: {
+      async prompt(input) {
+        return {
+          sessionId: input.sessionId,
+          status: "active",
+          summary: "Clean executor summary.",
+          timeline: [{
+            id: "assistant-noisy",
+            role: "assistant",
+            content: "[tool:Bash] noisy progress output",
+            createdAt: new Date().toISOString(),
+          }],
+        };
+      },
+    },
+  });
+
+  const started = await driver.startSession("GH-427");
+  const updated = await driver.postPrompt(started.id, "Run the executor.");
+
+  assert.equal(updated.summary, "Clean executor summary.");
+  const stateRaw = await readFile(join(root, ".flow", "runtime", "pi-session-state.json"), "utf8");
+  const state = JSON.parse(stateRaw) as { sessions: Array<{ summary?: string }> };
+  assert.equal(state.sessions[0]?.summary, "Clean executor summary.");
+});
+
 test("Claude session driver starts issue-linked sessions and records provider-neutral session link", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-claude-session-start-"));
   const ledger = new MemoryWorkflowLedger();

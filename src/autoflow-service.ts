@@ -395,10 +395,10 @@ export class AutoflowService {
     const resultStatus = await this.recordResult(flowSessionId, handoff, completed);
 
     let finalPhase: AutoflowServicePhase = completed.status === "failed" ? "failed" : resultStatus === "blocked" ? "needs_input" : "idle";
-    let finalSummary = completed.error ?? latestAssistantText(completed) ?? `Autoflow finished ${issueRef}.`;
+    let finalSummary = agentSessionSummary(completed) ?? `Autoflow finished ${issueRef}.`;
     if (completed.status !== "failed" && resultStatus === "succeeded") {
       await this.recordCloseoutInputs(flowSessionId, handoff, {
-        summary: completed.error ?? latestAssistantText(completed) ?? `Autoflow completed ${handoff.issueRef}.`,
+        summary: agentSessionSummary(completed) ?? `Autoflow completed ${handoff.issueRef}.`,
         changedFiles: extractChangedFilesFromTimeline(completed.timeline),
         testsRun: extractTestsRunFromTimeline(completed.timeline),
       });
@@ -521,7 +521,7 @@ export class AutoflowService {
       taskId: handoff.id,
       workJobId: handoff.workJobId,
       status,
-      summary: session.error ?? latestAssistantText(session) ?? `Agent session completed ${handoff.issueRef}.`,
+      summary: agentSessionSummary(session) ?? `Agent session completed ${handoff.issueRef}.`,
       changedFiles,
       testsRun,
       blockers,
@@ -733,6 +733,10 @@ function isMissingExternalIssueText(value: string): boolean {
 
 function latestAssistantText(session: AutoflowAgentSessionSnapshot): string | undefined {
   return [...session.timeline].reverse().find((item) => item.role === "assistant")?.content.trim() || undefined;
+}
+
+function agentSessionSummary(session: AutoflowAgentSessionSnapshot): string | undefined {
+  return session.error?.trim() || session.summary?.trim() || latestAssistantText(session);
 }
 
 function metadataString(value: unknown): string | undefined {
