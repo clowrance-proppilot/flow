@@ -1819,6 +1819,88 @@ body {
   outline-offset: 2px;
 }
 
+/* Error Boundary Fallback */
+.flow-desktop.error-boundary-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 2rem;
+  background:
+    radial-gradient(circle at 72% 18%, rgb(30 64 175 / 0.18), transparent 32rem),
+    radial-gradient(circle at 10% 88%, rgb(14 165 233 / 0.1), transparent 28rem),
+    var(--th-app);
+}
+
+.error-boundary-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  max-width: 28rem;
+  padding: 2rem;
+  text-align: center;
+  background: var(--th-card);
+  border: 1px solid var(--th-border);
+  border-radius: 0.8rem;
+}
+
+.error-boundary-icon {
+  font-size: 2.5rem;
+  line-height: 1;
+  color: #f59e0b;
+}
+
+.error-boundary-title {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--th-fg);
+}
+
+.error-boundary-message {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--th-fg-muted);
+  line-height: 1.5;
+}
+
+.error-boundary-detail {
+  width: 100%;
+  padding: 0.75rem;
+  margin: 0;
+  font-size: 0.75rem;
+  font-family: "SF Mono", "Cascadia Code", "Fira Code", monospace;
+  color: var(--th-fg-soft);
+  background: var(--th-input);
+  border: 1px solid var(--th-border);
+  border-radius: 0.4rem;
+  overflow-x: auto;
+  text-align: left;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.error-boundary-retry {
+  padding: 0.5rem 1.25rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--th-fg);
+  background: var(--th-primary);
+  border: none;
+  border-radius: 0.4rem;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.error-boundary-retry:hover {
+  background: var(--th-primary-dark);
+}
+
+.error-boundary-retry:active {
+  transform: scale(0.98);
+}
+
 /* Accessibility: reduced motion */
 @media (prefers-reduced-motion: reduce) {
   .flow-desktop .autoflow-health-dot,
