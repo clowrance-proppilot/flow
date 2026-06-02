@@ -1,7 +1,8 @@
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, session } from "electron";
 import { join, resolve, dirname } from "node:path";
 import { existsSync, watch, type FSWatcher } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { randomBytes } from "node:crypto";
 import express from "express";
 import type { Server } from "node:http";
 import { DashboardState } from "../src/dashboard-state.js";
@@ -28,6 +29,8 @@ let mainWindow: BrowserWindow | null = null;
 let dashboardServer: Server | undefined;
 let rendererAutoReloadWatcher: FSWatcher | undefined;
 let rendererAutoReloadTimer: ReturnType<typeof setTimeout> | undefined;
+const localApiToken = randomBytes(32).toString("hex");
+const activeProjectSurfaces = new Map<string, DesktopProjectSurface>();
 
 // Resolve the flow repo root. In dev this is the repo itself;
 // in a packaged build we use cwd or an env override.
@@ -107,6 +110,7 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
       }),
     };
     projectSurfaces.set(project.id, surface);
+    activeProjectSurfaces.set(project.id, surface);
     return surface;
   };
 
@@ -158,6 +162,30 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
   server.disable("x-powered-by");
   const jsonBody = express.json({ limit: "256kb" });
 
+  // Local trust boundary: require auth token for all API routes
+  server.use((req, res, next) => {
+    // Health check and static assets are unauthenticated
+    if (req.path === "/healthz" || (req.method === "GET" && !req.path.startsWith("/api/"))) {
+      next();
+      return;
+    }
+    const token = req.headers["x-flow-token"] ?? req.query._token;
+    if (token !== localApiToken) {
+      res.status(403).json({ ok: false, error: "Forbidden" });
+      return;
+    }
+    next();
+  });
+
+  // Security headers for all responses
+  server.use((_req, res, next) => {
+    res.set("X-Content-Type-Options", "nosniff");
+    res.set("X-Frame-Options", "DENY");
+    res.set("Referrer-Policy", "no-referrer");
+    res.set("Cache-Control", "no-store");
+    next();
+  });
+
   const routeContext: RouteContext = {
     projectRegistry,
     projectSurface,
@@ -198,6 +226,26 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
 }
 
 function createWindow(port: number): BrowserWindow {
+  // Set CSP on the default session before creating the window
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        "Content-Security-Policy": [
+          "default-src 'self'; " +
+          "script-src 'self'; " +
+          "style-src 'self' 'unsafe-inline'; " +
+          "img-src 'self' data:; " +
+          "font-src 'self'; " +
+          "connect-src 'self'; " +
+          "base-uri 'none'; " +
+          "form-action 'none'; " +
+          "frame-ancestors 'none'",
+        ],
+      },
+    });
+  });
+
   const window = new BrowserWindow({
     width: 1280,
     height: 860,
@@ -210,12 +258,14 @@ function createWindow(port: number): BrowserWindow {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      spellcheck: false,
     },
   });
 
   window.once("ready-to-show", () => window.show());
 
-  void window.loadURL(`http://127.0.0.1:${port}/`);
+  // Pass the local API token via query parameter
+  void window.loadURL(`http://127.0.0.1:${port}/?_token=${localApiToken}`);
 
   if (isDev) {
     window.webContents.openDevTools({ mode: "detach" });
@@ -253,6 +303,12 @@ app.on("before-quit", () => {
   rendererAutoReloadWatcher = undefined;
   if (rendererAutoReloadTimer) clearTimeout(rendererAutoReloadTimer);
   rendererAutoReloadTimer = undefined;
+  // Persist active session state before shutting down
+  for (const surface of activeProjectSurfaces.values()) {
+    void surface.piSessionDriver.persistState?.().catch((error: unknown) => {
+      console.error("[flow-desktop] session state persist failed:", error);
+    });
+  }
   dashboardServer?.close();
 });
 

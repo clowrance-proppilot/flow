@@ -214,6 +214,12 @@ export class AgentSessionDriver {
     return this.startSession(issueRef);
   }
 
+  async persistState(): Promise<void> {
+    await this.ensureLoadedLinks();
+    await this.persistLinks();
+    await this.persistSessionState();
+  }
+
   private async resolveIssue(issueRef: string): Promise<WorkItem> {
     const view = await this.runtime.inspectIssue(issueRef);
     if (view) return view;

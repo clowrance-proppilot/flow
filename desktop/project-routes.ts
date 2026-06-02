@@ -4,6 +4,17 @@ import type { Express, RequestHandler } from "express";
 import { message, requireActiveProject, summarizeProjectIssues } from "./route-helpers.js";
 import type { RouteContext } from "./route-types.js";
 
+const PROJECT_ID_RE = /^[a-zA-Z0-9_-]+$/;
+const MAX_PROJECT_ROOT_LENGTH = 4096;
+
+function validateProjectId(value: string): boolean {
+  return PROJECT_ID_RE.test(value) && value.length <= 256;
+}
+
+function validateProjectRoot(value: string): boolean {
+  return value.length > 0 && value.length <= MAX_PROJECT_ROOT_LENGTH;
+}
+
 export function registerProjectRoutes(server: Express, context: RouteContext, jsonBody: RequestHandler): void {
   const { projectRegistry, projectSurface, invalidateProjectSurface } = context;
 
@@ -58,7 +69,12 @@ export function registerProjectRoutes(server: Express, context: RouteContext, js
 
   server.get("/api/projects/:projectId/icon", async (req, res) => {
     try {
-      const project = (await projectRegistry.listProjects()).find((candidate) => candidate.id === String(req.params.projectId ?? ""));
+      const projectId = String(req.params.projectId ?? "");
+      if (!projectId || !validateProjectId(projectId)) {
+        res.status(400).json({ ok: false, error: "Invalid projectId format." });
+        return;
+      }
+      const project = (await projectRegistry.listProjects()).find((candidate) => candidate.id === projectId);
       if (!project?.icon) {
         res.status(404).end();
         return;
@@ -83,9 +99,9 @@ export function registerProjectRoutes(server: Express, context: RouteContext, js
 
   server.post("/api/projects", jsonBody, async (req, res) => {
     try {
-      const root = typeof req.body?.root === "string" ? req.body.root : "";
-      if (!root.trim()) {
-        res.status(400).json({ ok: false, error: "Missing project root." });
+      const root = typeof req.body?.root === "string" ? req.body.root.trim() : "";
+      if (!root || !validateProjectRoot(root)) {
+        res.status(400).json({ ok: false, error: "Missing or invalid project root." });
         return;
       }
       const project = await projectRegistry.addProject(root);
@@ -100,6 +116,10 @@ export function registerProjectRoutes(server: Express, context: RouteContext, js
   server.delete("/api/projects/:projectId", async (req, res) => {
     try {
       const projectId = String(req.params.projectId ?? "");
+      if (!projectId || !validateProjectId(projectId)) {
+        res.status(400).json({ ok: false, error: "Invalid projectId format." });
+        return;
+      }
       await projectRegistry.removeProject(projectId);
       invalidateProjectSurface?.(projectId);
       const projects = await projectRegistry.listProjects();
@@ -113,7 +133,12 @@ export function registerProjectRoutes(server: Express, context: RouteContext, js
 
   server.post("/api/projects/:projectId/active", async (req, res) => {
     try {
-      const project = await projectRegistry.setActiveProject(String(req.params.projectId ?? ""));
+      const projectId = String(req.params.projectId ?? "");
+      if (!projectId || !validateProjectId(projectId)) {
+        res.status(400).json({ ok: false, error: "Invalid projectId format." });
+        return;
+      }
+      const project = await projectRegistry.setActiveProject(projectId);
       res.json({ ok: true, project });
     } catch (error) {
       console.error("[flow-desktop] set active project failed:", error);
@@ -125,6 +150,10 @@ export function registerProjectRoutes(server: Express, context: RouteContext, js
     try {
       const enabled = req.body?.enabled !== false;
       const projectId = String(req.params.projectId ?? "");
+      if (!projectId || !validateProjectId(projectId)) {
+        res.status(400).json({ ok: false, error: "Invalid projectId format." });
+        return;
+      }
       const project = (await projectRegistry.listProjects()).find((candidate) => candidate.id === projectId);
       if (!project) throw new Error(`Unknown Flow project ${projectId}.`);
       const surface = await projectSurface(project);

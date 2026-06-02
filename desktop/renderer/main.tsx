@@ -660,7 +660,9 @@ function App() {
     if (!sessionId || subscribedSessionId.current === sessionId) return;
     eventSourceRef.current?.close();
     subscribedSessionId.current = sessionId;
-    const source = new EventSource(`/api/sessions/${encodeURIComponent(sessionId)}/events`);
+    const token = new URLSearchParams(window.location.search).get("_token") ?? "";
+    const eventUrl = `/api/sessions/${encodeURIComponent(sessionId)}/events${token ? `?_token=${token}` : ""}`;
+    const source = new EventSource(eventUrl);
     eventSourceRef.current = source;
     const apply = (event: MessageEvent<string>) => {
       const parsed = JSON.parse(event.data) as PiSessionEvent;
@@ -671,6 +673,7 @@ function App() {
     for (const name of ["assistantDelta", "toolStarted", "toolUpdated", "toolFinished", "runFailed"] as const) {
       source.addEventListener(name, apply);
     }
+    // On error, close and clear; do not auto-reconnect to avoid duplicate listeners
     source.onerror = () => {
       source.close();
       if (eventSourceRef.current === source) eventSourceRef.current = null;
