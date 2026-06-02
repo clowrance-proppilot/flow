@@ -39,6 +39,7 @@ export function createConfiguredWorkRuntime(options: ConfiguredWorkRuntimeOption
     issueTracker,
     defaultJiraProjectKey: configString(flowConfig?.issueTracker, "projectKey"),
     autoflowBlockedThreshold: flowConfig?.runtime?.autoflowBlockedThreshold,
+    staleWorkerRunTimeoutMs: flowConfig?.runtime?.staleWorkerRunTimeoutMs,
     debugEnabled: flowConfig?.runtime?.debug,
     ...(flowConfig
       ? {

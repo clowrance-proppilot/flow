@@ -578,3 +578,87 @@ test("Work Runtime reconciliation keeps branch-matched PR authoritative over sta
     "https://github.com/ExampleOrg/app-api/pull/1344#issuecomment-4461307698",
   );
 });
+
+test("ReconciliationEngine expires stale worker runs using default 20-minute timeout", async () => {
+  const ledger = new MemoryWorkflowLedger();
+  const engine = new ReconciliationEngine({
+    topology: legacyHostTopology,
+    sourceControl: { async inspect() { return { branch: "main", headSha: "abc", dirty: false, entries: [] }; } },
+    ledger,
+  });
+
+  const staleUpdatedAt = new Date(Date.now() - 21 * 60 * 1000).toISOString();
+  await ledger.recordWorkerRun({
+    taskId: "task-stale-default",
+    issueRef: "ISSUE-100",
+    repoKey: "app_api",
+    status: "running",
+    summary: "Old running task",
+    blockers: [],
+    updatedAt: staleUpdatedAt,
+  });
+
+  await engine.reconcileStaleWorkerRuns("ISSUE-100");
+
+  const runs = await ledger.listWorkerRuns("ISSUE-100");
+  const staleRun = runs.find((r) => r.taskId === "task-stale-default");
+  assert.equal(staleRun?.status, "failed");
+  assert.match(staleRun?.summary ?? "", /expired after 20 minutes/);
+});
+
+test("ReconciliationEngine expires stale worker runs using configured timeout", async () => {
+  const ledger = new MemoryWorkflowLedger();
+  const customTimeoutMs = 5 * 60 * 1000; // 5 minutes
+  const engine = new ReconciliationEngine({
+    topology: legacyHostTopology,
+    sourceControl: { async inspect() { return { branch: "main", headSha: "abc", dirty: false, entries: [] }; } },
+    ledger,
+    staleWorkerRunTimeoutMs: customTimeoutMs,
+  });
+
+  const staleUpdatedAt = new Date(Date.now() - 6 * 60 * 1000).toISOString();
+  await ledger.recordWorkerRun({
+    taskId: "task-stale-custom",
+    issueRef: "ISSUE-200",
+    repoKey: "app_api",
+    status: "running",
+    summary: "Running task past custom timeout",
+    blockers: [],
+    updatedAt: staleUpdatedAt,
+  });
+
+  await engine.reconcileStaleWorkerRuns("ISSUE-200");
+
+  const runs = await ledger.listWorkerRuns("ISSUE-200");
+  const staleRun = runs.find((r) => r.taskId === "task-stale-custom");
+  assert.equal(staleRun?.status, "failed");
+  assert.match(staleRun?.summary ?? "", /expired after 5 minutes/);
+});
+
+test("ReconciliationEngine keeps fresh worker runs when using configured timeout", async () => {
+  const ledger = new MemoryWorkflowLedger();
+  const customTimeoutMs = 10 * 60 * 1000; // 10 minutes
+  const engine = new ReconciliationEngine({
+    topology: legacyHostTopology,
+    sourceControl: { async inspect() { return { branch: "main", headSha: "abc", dirty: false, entries: [] }; } },
+    ledger,
+    staleWorkerRunTimeoutMs: customTimeoutMs,
+  });
+
+  const freshUpdatedAt = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+  await ledger.recordWorkerRun({
+    taskId: "task-fresh-custom",
+    issueRef: "ISSUE-300",
+    repoKey: "app_api",
+    status: "running",
+    summary: "Recent running task",
+    blockers: [],
+    updatedAt: freshUpdatedAt,
+  });
+
+  await engine.reconcileStaleWorkerRuns("ISSUE-300");
+
+  const runs = await ledger.listWorkerRuns("ISSUE-300");
+  const freshRun = runs.find((r) => r.taskId === "task-fresh-custom");
+  assert.equal(freshRun?.status, "running");
+});

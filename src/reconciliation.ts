@@ -28,6 +28,7 @@ export interface ReconciliationDeps {
   sourceControl: SourceControlForReconciliation;
   collaboration?: CollaborationForReconciliation;
   ledger: WorkflowLedger;
+  staleWorkerRunTimeoutMs?: number;
   debug?: (event: string, details: Record<string, unknown>) => void;
 }
 
@@ -45,6 +46,7 @@ export class ReconciliationEngine {
   private readonly sourceControl: SourceControlForReconciliation;
   private readonly collaboration?: CollaborationForReconciliation;
   private readonly ledger: WorkflowLedger;
+  private readonly staleWorkerRunTimeoutMs: number;
   private readonly debug: (event: string, details: Record<string, unknown>) => void;
 
   constructor(deps: ReconciliationDeps) {
@@ -52,6 +54,7 @@ export class ReconciliationEngine {
     this.sourceControl = deps.sourceControl;
     this.collaboration = deps.collaboration;
     this.ledger = deps.ledger;
+    this.staleWorkerRunTimeoutMs = deps.staleWorkerRunTimeoutMs ?? defaultStaleWorkerRunMs();
     this.debug = deps.debug ?? (() => {});
   }
 
@@ -144,7 +147,7 @@ export class ReconciliationEngine {
   }
 
   async reconcileStaleWorkerRuns(issueRef: string): Promise<void> {
-    const staleAfterMs = staleWorkerRunMs();
+    const staleAfterMs = this.staleWorkerRunTimeoutMs;
     const now = Date.now();
     const runs = await this.ledger.listWorkerRuns(issueRef);
     for (const run of runs) {
@@ -766,6 +769,6 @@ function autoReviewNeedsConfirmationDefaultDisposition(): "accept" | "reject" | 
   return undefined;
 }
 
-function staleWorkerRunMs(): number {
+function defaultStaleWorkerRunMs(): number {
   return 20 * 60 * 1000;
 }

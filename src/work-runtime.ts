@@ -104,6 +104,7 @@ export interface WorkRuntimeOptions {
   projectRoot?: string;
   defaultJiraProjectKey?: string;
   autoflowBlockedThreshold?: number;
+  staleWorkerRunTimeoutMs?: number;
   debugEnabled?: boolean;
   readiness?: ReadinessEvaluator;
 }
@@ -486,6 +487,7 @@ export class FlowWorkRuntime {
       sourceControl: this.sourceControl,
       collaboration: this.collaboration,
       ledger: this.ledger,
+      staleWorkerRunTimeoutMs: options.staleWorkerRunTimeoutMs,
       debug: (event, details) => this.debug(event, details),
     });
   }
