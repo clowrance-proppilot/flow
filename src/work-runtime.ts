@@ -73,6 +73,12 @@ import {
   type PullRequestMetadataSnapshot,
 } from "./reconciliation.js";
 import {
+  type PullRequestGateInput,
+  type PullRequestGateRule,
+  evaluatePullRequestGates,
+  isPullRequestMerged as isPullRequestGateMerged,
+} from "./pr-gate.js";
+import {
   normalizeRepoKey,
   normalizeRepoKeys,
   existingString,
@@ -2577,7 +2583,7 @@ export class FlowWorkRuntime {
       : undefined;
     if (target && !pr) blockers.push(`Pull request ${target.repo}#${target.number} could not be read.`);
     if (pr) blockers.push(...pullRequestCloseoutBlockers(issue, pr));
-    if (pr && !isPullRequestStatusMerged(pr) && !collaborationCanMerge(this.collaboration)) {
+    if (pr && !isPullRequestGateMerged(pr) && !collaborationCanMerge(this.collaboration)) {
       blockers.push("GitHub pull request merge writer is not configured.");
     }
 
@@ -2607,7 +2613,7 @@ export class FlowWorkRuntime {
     const github = this.collaboration;
     if (!github?.getPullRequest) throw new Error("GitHub pull request reader is not configured.");
     if (!collaborationCanMerge(github)) throw new Error("GitHub pull request merge writer is not configured.");
-    const alreadyMerged = isPullRequestStatusMerged(pr);
+    const alreadyMerged = isPullRequestGateMerged(pr);
     const merge = alreadyMerged
       ? { url: pr.url, mergedAt: pr.mergedAt, mergeCommitSha: pr.mergeCommitSha }
       : await github.mergePullRequest(target.repo, target.number, { method: options.mergeMethod ?? "squash" });
@@ -2633,7 +2639,7 @@ export class FlowWorkRuntime {
     const writtenAt = nowIso();
     const updated = await this.ledger.writeIssue({
       ...evidenceIssue,
-      state: jiraVerified || isPullRequestStatusMerged(pr) ? "done" : evidenceIssue.state,
+      state: jiraVerified || isPullRequestGateMerged(pr) ? "done" : evidenceIssue.state,
       metadata: {
         ...evidenceIssue.metadata,
         ...pullRequestMetadata(this.repoKeyFromName(pr.repo), pr),
@@ -3717,14 +3723,6 @@ function reviewMetadata(issue: WorkItem) {
   };
 }
 
-function isPullRequestMetadataMerged(review: NonNullable<ReturnType<typeof reviewMetadata>>): boolean {
-  return review.state?.toUpperCase() === "MERGED" || Boolean(review.mergedAt);
-}
-
-function isPullRequestStatusMerged(pr: PullRequestStatus): boolean {
-  return pr.state?.toUpperCase() === "MERGED" || Boolean(pr.mergedAt);
-}
-
 function closeoutPullRequestTarget(
   issue: WorkItem,
   repoNameFallback: (repoKey: string) => string,
@@ -3738,29 +3736,35 @@ function closeoutPullRequestTarget(
 }
 
 function pullRequestCloseoutBlockers(issue: WorkItem, pr: PullRequestStatus): string[] {
-  if (isPullRequestStatusMerged(pr)) return [];
-  const blockers: string[] = [];
-  if (pr.isDraft) blockers.push("Pull request is still draft.");
-  if (pr.reviewDecision === "CHANGES_REQUESTED" || pr.reviewDecision === "REVIEW_REQUIRED") {
-    blockers.push("Pull request approval review is missing.");
-  }
-  if (pr.checksPending === true) blockers.push("Pull request checks are still running.");
-  else if (pr.checksPassing !== true) blockers.push("Pull request checks are not passing.");
-  if (isPullRequestConflicted(pr)) blockers.push("Pull request is not mergeable.");
-  if (pr.templateMissingHeadings && pr.templateMissingHeadings.length > 0) {
-    blockers.push(`Pull request template is missing headings: ${pr.templateMissingHeadings.join(", ")}.`);
-  }
-  if (pr.autoReviewStatus === "failed") blockers.push("Auto-review check is failing.");
-  if (pr.autoReviewStatus === "pending") blockers.push("Auto-review check is still pending.");
-  if (pr.autoReviewMustFix === true) blockers.push("Auto-review must-fix feedback is unresolved.");
-  if (
-    pr.autoReviewNeedsConfirmation === true &&
-    issue.metadata.prAutoReviewNeedsConfirmationDisposition !== "accept" &&
-    typeof issue.metadata.prAutoReviewNeedsConfirmationPostedUrl !== "string"
-  ) {
-    blockers.push("Auto-review confirmation is unresolved.");
-  }
-  return blockers;
+  if (isPullRequestGateMerged(pr)) return [];
+  const gateInput: PullRequestGateInput = {
+    ...pr,
+    // Closeout treats undefined checksPassing as "not passing"
+    checksPassing: pr.checksPending === true ? pr.checksPassing : (pr.checksPassing ?? false),
+    autoReviewNeedsConfirmationDisposition: typeof issue.metadata.prAutoReviewNeedsConfirmationDisposition === "string"
+      ? issue.metadata.prAutoReviewNeedsConfirmationDisposition
+      : undefined,
+    autoReviewNeedsConfirmationPostedUrl: typeof issue.metadata.prAutoReviewNeedsConfirmationPostedUrl === "string"
+      ? issue.metadata.prAutoReviewNeedsConfirmationPostedUrl
+      : undefined,
+  };
+  const gates = evaluatePullRequestGates(gateInput);
+  const closeoutMessages: Record<PullRequestGateRule, string> = {
+    draft: "Pull request is still draft.",
+    conflicts: "Pull request is not mergeable.",
+    checks_pending: "Pull request checks are still running.",
+    checks_failed: "Pull request checks are not passing.",
+    template_missing: "Pull request template is missing headings",
+    auto_review_failed: "Auto-review check is failing.",
+    auto_review_pending: "Auto-review check is still pending.",
+    auto_review_must_fix: "Auto-review must-fix feedback is unresolved.",
+    auto_review_needs_confirmation: "Auto-review confirmation is unresolved.",
+    approval_required: "Pull request approval review is missing.",
+  };
+  return gates.map((gate) => {
+    if (gate.rule === "template_missing") return `${closeoutMessages.template_missing}: ${gate.detail}.`;
+    return closeoutMessages[gate.rule];
+  });
 }
 
 function codeReviewTargetFromMetadata(
@@ -3800,19 +3804,29 @@ function missingReviewFindings(message: string): any[] {
 
 function pullRequestBlockersFromMetadata(review: NonNullable<ReturnType<typeof reviewMetadata>>): string[] {
   if (review.state?.toUpperCase() === "MERGED" || review.mergedAt) return [];
-  const blockers: string[] = [];
-  if (review.isDraft) blockers.push("Pull request is still draft.");
-  if (review.checksPending === true) blockers.push("Pull request checks are still running.");
-  else if (review.checksPassing === false) blockers.push("Pull request checks are not passing.");
-  if (isPullRequestConflicted(review)) blockers.push("Pull request has merge conflicts.");
-  if (review.autoReviewStatus === "failed") blockers.push("Auto-review check is failing.");
-  if (review.autoReviewStatus === "pending") blockers.push("Auto-review check is still pending.");
-  if (review.autoReviewMustFix === true) blockers.push("Auto-review must-fix feedback is unresolved.");
-  if (review.autoReviewNeedsConfirmation === true && review.autoReviewNeedsConfirmationDisposition !== "accept" && !review.autoReviewNeedsConfirmationPostedUrl) {
-    blockers.push("Auto-review confirmation is unresolved.");
-  }
-  if (review.humanReviewRequired && review.reviewDecision !== "APPROVED") blockers.push("Approval review is required.");
-  return blockers;
+  const gates = evaluatePullRequestGates(review);
+  const metadataMessages: Record<PullRequestGateRule, string> = {
+    draft: "Pull request is still draft.",
+    conflicts: "Pull request has merge conflicts.",
+    checks_pending: "Pull request checks are still running.",
+    checks_failed: "Pull request checks are not passing.",
+    template_missing: "Pull request template is missing headings",
+    auto_review_failed: "Auto-review check is failing.",
+    auto_review_pending: "Auto-review check is still pending.",
+    auto_review_must_fix: "Auto-review must-fix feedback is unresolved.",
+    auto_review_needs_confirmation: "Auto-review confirmation is unresolved.",
+    approval_required: "Approval review is required.",
+  };
+  return gates
+    .filter((gate) => {
+      // Metadata path only blocks on needs-confirmation when disposition is not "accept"
+      if (gate.rule === "auto_review_needs_confirmation" && review.autoReviewNeedsConfirmationDisposition === "accept") return false;
+      return true;
+    })
+    .map((gate) => {
+      if (gate.rule === "template_missing") return `${metadataMessages.template_missing}: ${gate.detail}.`;
+      return metadataMessages[gate.rule];
+    });
 }
 
 function reviewSummary(target: string, findings: any[], diffs: any[]): string {
@@ -4027,7 +4041,7 @@ function doctorNextAction(
 
 function isFlowTerminal(issue: WorkItem): boolean {
   const review = reviewMetadata(issue);
-  const pullRequestMerged = !review?.prUrl || isPullRequestMetadataMerged(review);
+  const pullRequestMerged = !review?.prUrl || isPullRequestGateMerged(review);
   return isIssueTrackerDone(issue) && pullRequestMerged;
 }
 
@@ -4095,7 +4109,7 @@ function dashboardWorkStatus(input: {
       detail: `Active handoff ${activeWorkerRun.taskId} is ${activeWorkerRun.status}.`,
     };
   }
-  if (review && isPullRequestMetadataMerged(review)) {
+  if (review && isPullRequestGateMerged(review)) {
     return {
       label: "Done",
       detail: `Pull request ${pullRequestDisplayRef(review.prUrl)} is merged.`,

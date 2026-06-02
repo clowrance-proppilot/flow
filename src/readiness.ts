@@ -5,6 +5,13 @@ import {
   createId,
   nowIso,
 } from "./contracts.js";
+import {
+  type PullRequestGateInput,
+  evaluatePullRequestGates,
+  defaultPullRequestGateMessage,
+  isPullRequestMerged,
+  isEmptyAutoReviewDetail,
+} from "./pr-gate.js";
 
 export interface ReadinessAssessmentInput {
   issue: WorkItem;
@@ -123,41 +130,27 @@ export function assessIssue(input: ReadinessAssessmentInput): ReadinessAssessmen
     ));
   }
 
-  if (input.review?.prUrl && !pullRequestMerged && input.review.isDraft) {
-    findings.push(finding(input.issue.ref, "blocker", "Pull request is still draft."));
-  }
+  const prGateInput: PullRequestGateInput | undefined = input.review?.prUrl && !pullRequestMerged
+    ? input.review
+    : undefined;
+  const prGateResults = prGateInput ? evaluatePullRequestGates(prGateInput) : [];
 
-  if (input.review?.prUrl && !pullRequestMerged && isPullRequestConflicted(input.review)) {
-    findings.push(finding(input.issue.ref, "blocker", "Pull request has merge conflicts."));
-  }
-
-  if (input.review?.prUrl && !pullRequestMerged && input.review.checksPending === true) {
-    findings.push(finding(input.issue.ref, "blocker", "Pull request checks are still running."));
-  } else if (input.review?.prUrl && !pullRequestMerged && input.review.checksPassing === false) {
-    findings.push(finding(input.issue.ref, "blocker", "Pull request checks are not passing."));
-  }
-
-  if (input.review?.prUrl && !pullRequestMerged && hasMissingPullRequestTemplateHeadings(input.review)) {
-    findings.push(finding(
-      input.issue.ref,
-      "blocker",
-      "Pull request does not follow the repo template.",
-      `Missing template headings: ${input.review.templateMissingHeadings.join(", ")}.`,
-    ));
-  }
-
-  if (input.review?.prUrl && !pullRequestMerged && input.review.autoReviewStatus === "failed") {
-    findings.push(finding(input.issue.ref, "blocker", "Auto review checks failed."));
-  }
-
-  if (input.review?.prUrl && !pullRequestMerged && input.review.autoReviewStatus === "pending") {
-    findings.push(finding(input.issue.ref, "blocker", "Auto review is still running."));
-  }
-
-  if (input.review?.prUrl && !pullRequestMerged && input.review.autoReviewMustFix && !isEmptyAutoReviewDetail(input.review.autoReviewMustFixDetail)) {
-    const detail = input.review.autoReviewMustFixDetail ??
-      "Resolve the auto-review must-fix feedback before advancing.";
-    findings.push(finding(input.issue.ref, "blocker", "Auto review has must-fix feedback.", detail));
+  for (const gate of prGateResults) {
+    if (gate.rule === "approval_required") continue; // handled as info findings below
+    if (gate.rule === "auto_review_must_fix" && isEmptyAutoReviewDetail(gate.detail)) continue;
+    const msg = defaultPullRequestGateMessage(gate.rule, gate.detail);
+    if (gate.rule === "auto_review_needs_confirmation") {
+      const disposition = input.review?.autoReviewNeedsConfirmationDisposition;
+      const detail = input.review?.autoReviewNeedsConfirmationDetail ??
+        "Review the auto-review needs-confirmation item and record accept/reject/defer before advancing.";
+      if (disposition) {
+        findings.push(finding(input.issue.ref, "blocker", "Auto review confirmation has not been posted to the code review.", detail));
+      } else {
+        findings.push(finding(input.issue.ref, "blocker", msg.summary, detail));
+      }
+    } else {
+      findings.push(finding(input.issue.ref, "blocker", msg.summary, msg.detail));
+    }
   }
 
   if (input.review?.prUrl && !pullRequestMerged && input.review.autoReviewNeedsConfirmation) {
@@ -167,10 +160,6 @@ export function assessIssue(input: ReadinessAssessmentInput): ReadinessAssessmen
       "Review the auto-review needs-confirmation item and record accept/reject/defer before advancing.";
     if (disposition && postedUrl) {
       findings.push(finding(input.issue.ref, "info", `Auto review needs-confirmation resolved as ${disposition}.`, detail));
-    } else if (disposition) {
-      findings.push(finding(input.issue.ref, "blocker", "Auto review confirmation has not been posted to the code review.", detail));
-    } else {
-      findings.push(finding(input.issue.ref, "blocker", "Auto review requires confirmation.", detail));
     }
   }
 
@@ -224,17 +213,11 @@ export function assessIssue(input: ReadinessAssessmentInput): ReadinessAssessmen
 
   const hasBlocker = findings.some((item) => item.severity === "blocker");
   const pullRequestGateSatisfied = codeReviewRequired ? Boolean(input.review?.prUrl) : true;
-  const pullRequestStateReady = !input.review?.prUrl ||
-      (pullRequestMerged || input.review?.isDraft === false) &&
-      (pullRequestMerged || !isPullRequestConflicted(input.review)) &&
-      (pullRequestMerged || input.review?.checksPending !== true) &&
-      (pullRequestMerged || input.review?.checksPassing !== false) &&
-      (pullRequestMerged || !hasMissingPullRequestTemplateHeadings(input.review)) &&
-      (pullRequestMerged || input.review?.autoReviewStatus !== "failed") &&
-      (pullRequestMerged || input.review?.autoReviewStatus !== "pending") &&
-      (pullRequestMerged || input.review?.autoReviewMustFix !== true || isEmptyAutoReviewDetail(input.review?.autoReviewMustFixDetail)) &&
-      (pullRequestMerged || input.review?.autoReviewNeedsConfirmation !== true ||
-        Boolean(input.review?.autoReviewNeedsConfirmationDisposition && input.review?.autoReviewNeedsConfirmationPostedUrl));
+  const pullRequestStateReady = !prGateInput ||
+    prGateResults.filter((g) =>
+      g.rule !== "approval_required" &&
+      !(g.rule === "auto_review_must_fix" && isEmptyAutoReviewDetail(g.detail))
+    ).length === 0;
   const reviewReady =
     !hasBlocker &&
     hasSuccessfulWorker &&
@@ -298,31 +281,6 @@ function isExternalProviderEscalation(value: unknown): value is { provider: stri
     Boolean((value as { provider?: string }).provider) &&
     typeof (value as { blocker?: unknown }).blocker === "string" &&
     Boolean((value as { blocker?: string }).blocker);
-}
-
-function isPullRequestConflicted(review: { mergeable?: string; mergeStateStatus?: string } | undefined): boolean {
-  const mergeable = review?.mergeable?.toUpperCase();
-  const mergeStateStatus = review?.mergeStateStatus?.toUpperCase();
-  return mergeable === "CONFLICTING" || mergeStateStatus === "DIRTY";
-}
-
-function isPullRequestMerged(review: { state?: string; mergedAt?: string } | undefined): boolean {
-  return review?.state?.toUpperCase() === "MERGED" || Boolean(review?.mergedAt);
-}
-
-function isEmptyAutoReviewDetail(value: unknown): boolean {
-  if (typeof value !== "string") return false;
-  const normalized = value
-    .replace(/^[-*]\s*/, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  return /^none(?:\s+(?:identified|found))?\.?$/i.test(normalized);
-}
-
-function hasMissingPullRequestTemplateHeadings(review: { templateMissingHeadings?: string[] } | undefined): review is {
-  templateMissingHeadings: string[];
-} {
-  return Array.isArray(review?.templateMissingHeadings) && review.templateMissingHeadings.length > 0;
 }
 
 function isStaleReviewSnapshot(checkedAt: string | undefined): boolean {
