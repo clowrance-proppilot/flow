@@ -662,3 +662,149 @@ test("ReconciliationEngine keeps fresh worker runs when using configured timeout
   const freshRun = runs.find((r) => r.taskId === "task-fresh-custom");
   assert.equal(freshRun?.status, "running");
 });
+
+test("ReconciliationEngine logs debug event when sourceControl.inspect fails", async () => {
+  const debugEvents: Array<{ event: string; details: Record<string, unknown> }> = [];
+  const ledger = new MemoryWorkflowLedger();
+  const engine = new ReconciliationEngine({
+    topology: legacyHostTopology,
+    sourceControl: {
+      async inspect() {
+        throw new Error("ENOENT: worktree missing");
+      },
+    },
+    ledger,
+    debug: (event, details) => debugEvents.push({ event, details }),
+  });
+
+  const issue: import("../src/index.js").WorkItem = {
+    ref: "ISSUE-500",
+    title: "Inspect failure logging",
+    repoKeys: ["app_api"],
+    state: "ready_to_run",
+    metadata: {
+      "workflow.repos.app_api.worktree_path": "/tmp/missing-worktree",
+    },
+  };
+
+  const result = await engine.reconcile(issue, undefined, { persist: false });
+
+  assert.equal(result.ref, "ISSUE-500");
+  const inspectEvent = debugEvents.find((e) => e.event === "reconcile.inspect_repo.error");
+  assert.ok(inspectEvent, "expected reconcile.inspect_repo.error debug event");
+  assert.equal(inspectEvent.details.issueRef, "ISSUE-500");
+  assert.equal(inspectEvent.details.repoKey, "app_api");
+  assert.equal(inspectEvent.details.operation, "sourceControl.inspect");
+  assert.equal(inspectEvent.details.error, "ENOENT: worktree missing");
+});
+
+test("ReconciliationEngine logs debug event when collaboration.findPullRequests fails during preload", async () => {
+  const debugEvents: Array<{ event: string; details: Record<string, unknown> }> = [];
+  const ledger = new MemoryWorkflowLedger();
+  const engine = new ReconciliationEngine({
+    topology: legacyHostTopology,
+    sourceControl: { async inspect() { return { branch: "main", headSha: "abc", dirty: false, entries: [] }; } },
+    collaboration: {
+      async findPullRequests() {
+        throw new Error("GitHub API rate limit exceeded");
+      },
+    },
+    ledger,
+    debug: (event, details) => debugEvents.push({ event, details }),
+  });
+
+  const issues: import("../src/index.js").WorkItem[] = [{
+    ref: "ISSUE-600",
+    title: "Preload failure logging",
+    repoKeys: ["app_api"],
+    state: "ready_to_run",
+    metadata: {},
+  }];
+
+  const result = await engine.preloadPullRequests(issues);
+
+  assert.ok(result);
+  assert.deepEqual(result.get("app-api"), []);
+  const preloadEvent = debugEvents.find((e) => e.event === "reconcile.preload_pr.error");
+  assert.ok(preloadEvent, "expected reconcile.preload_pr.error debug event");
+  assert.equal(preloadEvent.details.repoName, "app-api");
+  assert.equal(preloadEvent.details.error, "GitHub API rate limit exceeded");
+});
+
+test("ReconciliationEngine logs debug event when getPullRequest fails for recorded PR", async () => {
+  const debugEvents: Array<{ event: string; details: Record<string, unknown> }> = [];
+  const ledger = new MemoryWorkflowLedger();
+  const engine = new ReconciliationEngine({
+    topology: legacyHostTopology,
+    sourceControl: { async inspect() { return { branch: "main", headSha: "abc", dirty: false, entries: [] }; } },
+    collaboration: {
+      async findPullRequests() { return []; },
+      async getPullRequest() {
+        throw new Error("Not Found");
+      },
+    },
+    ledger,
+    debug: (event, details) => debugEvents.push({ event, details }),
+  });
+
+  const issue: import("../src/index.js").WorkItem = {
+    ref: "ISSUE-700",
+    title: "Recorded PR failure logging",
+    repoKeys: ["app_api"],
+    state: "ready_to_run",
+    metadata: {
+      prRepo: "app-api",
+      prNumber: 999,
+      prUrl: "https://github.com/ExampleOrg/app-api/pull/999",
+      "workflow.repos.app_api.pr_repo": "app-api",
+      "workflow.repos.app_api.pr_number": 999,
+      "workflow.repos.app_api.pr_url": "https://github.com/ExampleOrg/app-api/pull/999",
+    },
+  };
+
+  const result = await engine.reconcile(issue, undefined, { persist: false });
+
+  assert.equal(result.ref, "ISSUE-700");
+  const recordedPrEvent = debugEvents.find((e) => e.event === "reconcile.recorded_pr.error");
+  assert.ok(recordedPrEvent, "expected reconcile.recorded_pr.error debug event");
+  assert.equal(recordedPrEvent.details.repo, "app-api");
+  assert.equal(recordedPrEvent.details.prNumber, 999);
+  assert.equal(recordedPrEvent.details.operation, "getPullRequest");
+  assert.equal(recordedPrEvent.details.error, "Not Found");
+});
+
+test("ReconciliationEngine reconcileSafely logs debug event and returns original issue on error", async () => {
+  const debugEvents: Array<{ event: string; details: Record<string, unknown> }> = [];
+  const ledger = new MemoryWorkflowLedger();
+  ledger.writeIssue = async () => {
+    throw new Error("ledger write failed");
+  };
+  const engine = new ReconciliationEngine({
+    topology: legacyHostTopology,
+    sourceControl: {
+      async inspect() {
+        return { branch: "main", headSha: "abc", dirty: false, entries: [] };
+      },
+    },
+    ledger,
+    debug: (event, details) => debugEvents.push({ event, details }),
+  });
+
+  const issue: import("../src/index.js").WorkItem = {
+    ref: "ISSUE-800",
+    title: "Safely failure logging",
+    repoKeys: ["app_api"],
+    state: "ready_to_run",
+    metadata: {
+      "workflow.repos.app_api.worktree_path": "/tmp/app-api-worktree",
+    },
+  };
+
+  const result = await engine.reconcileSafely(issue);
+
+  assert.equal(result, issue);
+  const safelyEvent = debugEvents.find((e) => e.event === "reconcile.safely.error");
+  assert.ok(safelyEvent, "expected reconcile.safely.error debug event");
+  assert.equal(safelyEvent.details.issueRef, "ISSUE-800");
+  assert.equal(typeof safelyEvent.details.error, "string");
+});
