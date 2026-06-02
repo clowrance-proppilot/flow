@@ -4,6 +4,7 @@ import type { GitRepoStatus } from "./adapters/git.js";
 import type { PullRequestStatus } from "./adapters/github.js";
 import type { ProjectTopology } from "./project-topology.js";
 import type { WorkflowLedger } from "./ledger.js";
+import { isPullRequestConflicted } from "./pr-gate.js";
 import {
   normalizeRepoKey,
   normalizeRepoKeys,
@@ -635,10 +636,7 @@ export function pullRequestStatusSnapshot(
   };
 }
 
-export function isPullRequestConflicted(snapshot: { mergeable?: string; mergeStateStatus?: string }): boolean {
-  return snapshot.mergeable?.toUpperCase() === "CONFLICTING" ||
-    snapshot.mergeStateStatus?.toUpperCase() === "DIRTY";
-}
+export { isPullRequestConflicted };
 
 // --- Internal helpers ---
 

@@ -21,6 +21,7 @@ export * from "./claude-session-driver.js";
 export * from "./pi-session-driver.js";
 export * from "./pi-sdk-runner.js";
 export * from "./session-driver.js";
+export * from "./pr-gate.js";
 export * from "./readiness.js";
 export * from "./ledger.js";
 export * from "./engine/ledger-contracts.js";
