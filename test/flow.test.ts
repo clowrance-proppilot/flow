@@ -5094,14 +5094,6 @@ test("Work Runtime does not create typed work while a Worker is active for the i
   assert.equal(queue.find((issue) => issue.ref === "ISSUE-71")?.workStatus, "Running");
 });
 
-
-
-
-
-
-
-
-
 test("Work Runtime blocked handoff includes copy-ready handoff prompt", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
   const ledger = new MemoryWorkflowLedger();
@@ -6653,8 +6645,6 @@ test("Work Runtime records pull request metadata for repos outside configured to
   assert.equal(issue?.metadata["workflow.repos.fs_python.pr_head_ref_name"], "feature/issue-15407-sedona");
 });
 
-
-
 test("Work Runtime doctor reports visibility, blockers, and next action", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
   const ledger = new MemoryWorkflowLedger();
@@ -6879,8 +6869,6 @@ test("Work Runtime doctor reports no next action for merged Done issue", async (
   assert.equal(result.nextAction.type, "done");
   assert.match(result.nextAction.summary, /complete/);
 });
-
-
 
 test("Work Runtime turns remediable PR review blockers into handoff requests", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
@@ -7117,9 +7105,6 @@ test("Work Runtime advance sends merge-conflict resolution handoff with a specif
   assert.equal(jobs.length, 1);
   assert.equal(approved.handoffRequest?.workJobId, jobs[0].id);
 });
-
-
-
 
 test("Beads metadata keeps legacy review-ready flag aligned with phase", () => {
   const metadata = workItemToBeadsMetadata({
