@@ -1,18 +1,12 @@
 import {
   ArrowLeft,
-  CircleCheck,
-  ClipboardList,
-  FileText,
-  Folder,
   Plus,
   RefreshCw,
   Search,
-  Send,
-  Stethoscope,
   Trash2,
   Waypoints,
 } from "lucide-react";
-import React, { Component, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { projectThemeFor } from "../../src/theme/project-theme";
 import { actionPayload, formatActionSummary, pendingConfirmationFromActionResult } from "./action-format";
@@ -20,29 +14,27 @@ import { errorMessage, fetchJson } from "./api";
 import { activityFromPiEvent, activityFromPiSession, conversationFromPiSession, seedConversation } from "./conversation";
 import { desktopRefreshIntervalsFromSettings } from "./refresh-settings";
 import {
-  contextLine,
   isExceptionalStatus,
   isActiveWorkStatus,
   isManualActionIssue,
   issueAttentionRank,
   issueDetail,
-  recordStatusClass,
-  recordStatusLabel,
   sessionStatusForUi,
   statusFilterThemeClass,
   statusRank,
   statusThemeClass,
-  workflowSteps,
   workStatusLabel,
 } from "./status";
 import type {
+  AutoflowActivityState,
+  AutoflowRunnerStatus,
+  ConfirmDialogState,
   ContextProjection,
   ConversationItem,
   CreatedIssue,
   DashboardIssue,
   DashboardPayload,
   DesktopAction,
-  AutoflowRunnerStatus,
   IssueType,
   PendingConfirmationState,
   PiActivityState,
@@ -53,64 +45,14 @@ import type {
   WorkStatusFilter,
 } from "./types";
 import { ISSUE_TYPES } from "./types";
+import { ErrorBoundary } from "./components/ErrorBoundary";
+import { AssistantChatSurface } from "./components/AssistantChatSurface";
+import { PendingActionNotice } from "./components/PendingActionNotice";
+import { AutoflowHealth, activityFromAutoflowStatus } from "./components/AutoflowHealth";
+import { IssueDetails } from "./components/IssueDetails";
+import { WorkflowTrack } from "./components/WorkflowTrack";
+import { useToast } from "./hooks/useToast";
 import "./styles.css";
-
-type AutoflowActivityState = PiActivityState & { issueRef?: string };
-
-type ToastItem = {
-  id: string;
-  message: string;
-  kind: "info" | "success" | "error";
-};
-
-type ConfirmDialogState = {
-  title: string;
-  message: string;
-  confirmLabel?: string;
-  onConfirm: () => void;
-};
-
-type ErrorBoundaryState = {
-  error: Error | null;
-};
-
-class ErrorBoundary extends Component<{ children: React.ReactNode }, ErrorBoundaryState> {
-  state: ErrorBoundaryState = { error: null };
-
-  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
-    return { error };
-  }
-
-  componentDidCatch(error: Error, info: React.ErrorInfo): void {
-    // Log to console for local debugging without exposing to the user
-    console.error("[Flow Desktop] Renderer error:", error, info.componentStack);
-  }
-
-  handleReset = (): void => {
-    this.setState({ error: null });
-  };
-
-  render(): React.ReactNode {
-    if (this.state.error) {
-      return (
-        <div className="flow-desktop error-boundary-fallback">
-          <div className="error-boundary-content">
-            <div className="error-boundary-icon" aria-hidden="true">⚠</div>
-            <h2 className="error-boundary-title">Something went wrong</h2>
-            <p className="error-boundary-message">
-              The Flow Desktop interface encountered an unexpected error.
-            </p>
-            <pre className="error-boundary-detail">{this.state.error.message}</pre>
-            <button type="button" className="error-boundary-retry" onClick={this.handleReset}>
-              Try again
-            </button>
-          </div>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
 
 function App() {
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
@@ -157,7 +99,7 @@ function App() {
   const issueSelectionRequest = useRef(0);
   const [refreshBackoff, setRefreshBackoff] = useState({ consecutiveFailures: 0, lastFailureTime: 0 });
   const pendingSelectionRef = useRef<string | null>(null);
-  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const { toasts, showToast, dismissToast } = useToast();
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
   const [draftByIssueRef, setDraftByIssueRef] = useState<Record<string, string>>({});
   const documentVisibleRef = useRef(true);
@@ -173,14 +115,6 @@ function App() {
     context.desktop?.dashboardRefreshIntervalMs,
     context.desktop?.refreshIntervalMs,
   ]);
-
-  const showToast = useCallback((message: string, kind: ToastItem["kind"] = "info") => {
-    const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    setToasts((current) => [...current, { id, message, kind }]);
-    window.setTimeout(() => {
-      setToasts((current) => current.filter((toast) => toast.id !== id));
-    }, kind === "error" ? 6000 : 4000);
-  }, []);
 
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -1223,7 +1157,7 @@ function App() {
                 type="button"
                 className="toast-dismiss"
                 aria-label="Dismiss notification"
-                onClick={() => setToasts((current) => current.filter((t) => t.id !== toast.id))}
+                onClick={() => dismissToast(toast.id)}
               >
                 &times;
               </button>
@@ -1246,419 +1180,6 @@ function App() {
           </div>
         </div>
       ) : null}
-    </div>
-  );
-}
-
-function AssistantChatSurface({
-  conversation,
-  disabled,
-  loading,
-  running,
-  activity,
-  notice,
-  onSubmit,
-  prompt,
-  onPromptChange,
-  issueRef,
-  showDoctor,
-  doctorBusy,
-  onDoctor,
-  autoflowBusy,
-  onAutoflow,
-  chatViewportRef,
-}: {
-  conversation: ConversationItem[];
-  disabled: boolean;
-  loading: boolean;
-  running: boolean;
-  activity: PiActivityState | null;
-  notice?: React.ReactNode;
-  onSubmit: (text: string) => Promise<void>;
-  prompt: string;
-  onPromptChange: (value: string) => void;
-  issueRef?: string;
-  showDoctor: boolean;
-  doctorBusy: boolean;
-  onDoctor: () => void;
-  autoflowBusy: boolean;
-  onAutoflow: () => void;
-  chatViewportRef?: React.RefObject<HTMLDivElement | null>;
-}) {
-  const visibleMessages = useMemo(
-    () => conversation.filter((item) => item.role === "user" || item.role === "assistant"),
-    [conversation],
-  );
-  const canSubmit = prompt.trim().length > 0 && !disabled;
-  const handleSubmit = useCallback(async () => {
-    if (!canSubmit) return;
-    await onSubmit(prompt);
-  }, [canSubmit, onSubmit, prompt]);
-
-  return (
-    <section className="assistant-thread" aria-label="Issue conversation">
-      <div className="timeline assistant-viewport" ref={chatViewportRef}>
-        {loading && !visibleMessages.length ? (
-          <div className="assistant-loading">
-            <div className="accent-spinner" />
-            <span>Loading conversation...</span>
-          </div>
-        ) : visibleMessages.length ? visibleMessages.map((item) => (
-          <article key={item.id} className={`message ${item.role}`}>
-            <div className="message-role">{item.role}</div>
-            <MessageMarkdown text={item.text} />
-          </article>
-        )) : <div className="assistant-empty-state" aria-hidden="true" />}
-        {activity && activity.phase !== "idle" ? (
-          <div className={`status-message ${activity.phase}`}>
-            <span className="status-message-dot" aria-hidden="true" />
-            <span className="status-message-label">{activity.label}</span>
-            {activity.toolName ? <span className="status-message-tool">{activity.toolName}</span> : null}
-            {activity.detail ? <span className="status-message-detail">{activity.detail}</span> : null}
-          </div>
-        ) : null}
-        {running && (!activity || activity.phase === "idle") ? (
-          <div className="status-message thinking">
-            <span className="status-message-dot" aria-hidden="true" />
-            <span className="status-message-label">Agent is working...</span>
-          </div>
-        ) : null}
-      </div>
-      {notice}
-      <div className="composer assistant-composer">
-        <textarea
-          value={prompt}
-          onChange={(event) => onPromptChange(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              void handleSubmit();
-            }
-          }}
-          placeholder={issueRef ? `Work on ${issueRef}...` : "Work with Flow..."}
-          rows={1}
-          disabled={disabled}
-        />
-        {showDoctor ? (
-          <button type="button" title="Run doctor" className="composer-tool-button" onClick={onDoctor} disabled={disabled || doctorBusy}>
-            <Stethoscope size={17} />
-          </button>
-        ) : null}
-        <button type="button" title="Run Autoflow" className="composer-tool-button" onClick={onAutoflow} disabled={disabled || autoflowBusy}>
-          <Waypoints size={17} />
-        </button>
-        <button type="button" title="Send prompt" className="assistant-send-button" onClick={() => void handleSubmit()} disabled={!canSubmit}>
-          <Send size={17} />
-        </button>
-      </div>
-    </section>
-  );
-}
-
-function MessageMarkdown({ text }: { text: string }) {
-  return <div className="message-text markdown-message">{renderMarkdownBlocks(text)}</div>;
-}
-
-function renderMarkdownBlocks(text: string): React.ReactNode[] {
-  const lines = text.replace(/\r\n/g, "\n").split("\n");
-  const blocks: React.ReactNode[] = [];
-  let paragraph: string[] = [];
-  let listItems: string[] = [];
-  let listType: "ul" | "ol" | "" = "";
-
-  const flushParagraph = () => {
-    if (!paragraph.length) return;
-    const content = paragraph.join(" ").trim();
-    if (content) blocks.push(<p key={`p-${blocks.length}`}>{renderInlineMarkdown(content, `p-${blocks.length}`)}</p>);
-    paragraph = [];
-  };
-  const flushList = () => {
-    if (!listItems.length) return;
-    const items = listItems.map((item, index) => <li key={`${listType}-${blocks.length}-${index}`}>{renderInlineMarkdown(item, `${listType}-${blocks.length}-${index}`)}</li>);
-    blocks.push(listType === "ol" ? <ol key={`ol-${blocks.length}`}>{items}</ol> : <ul key={`ul-${blocks.length}`}>{items}</ul>);
-    listItems = [];
-    listType = "";
-  };
-
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index] ?? "";
-    const trimmed = line.trim();
-
-    if (trimmed.startsWith("```")) {
-      flushParagraph();
-      flushList();
-      const code: string[] = [];
-      index += 1;
-      while (index < lines.length && !(lines[index] ?? "").trim().startsWith("```")) {
-        code.push(lines[index] ?? "");
-        index += 1;
-      }
-      blocks.push(<pre key={`code-${blocks.length}`}><code>{code.join("\n")}</code></pre>);
-      continue;
-    }
-
-    if (!trimmed) {
-      flushParagraph();
-      flushList();
-      continue;
-    }
-
-    const heading = trimmed.match(/^(#{1,3})\s+(.+)$/);
-    if (heading) {
-      flushParagraph();
-      flushList();
-      const level = heading[1].length;
-      const content = renderInlineMarkdown(heading[2], `h-${blocks.length}`);
-      blocks.push(level === 1 ? <h3 key={`h-${blocks.length}`}>{content}</h3> : <h4 key={`h-${blocks.length}`}>{content}</h4>);
-      continue;
-    }
-
-    const bullet = trimmed.match(/^[-*]\s+(.+)$/);
-    if (bullet) {
-      flushParagraph();
-      if (listType && listType !== "ul") flushList();
-      listType = "ul";
-      listItems.push(bullet[1]);
-      continue;
-    }
-
-    const ordered = trimmed.match(/^\d+[.)]\s+(.+)$/);
-    if (ordered) {
-      flushParagraph();
-      if (listType && listType !== "ol") flushList();
-      listType = "ol";
-      listItems.push(ordered[1]);
-      continue;
-    }
-
-    flushList();
-    paragraph.push(trimmed);
-  }
-
-  flushParagraph();
-  flushList();
-  return blocks.length ? blocks : [<p key="empty" />];
-}
-
-function renderInlineMarkdown(text: string, keyPrefix: string): React.ReactNode[] {
-  const nodes: React.ReactNode[] = [];
-  const pattern = /(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\(https?:\/\/[^)\s]+\))/g;
-  let cursor = 0;
-  for (const match of text.matchAll(pattern)) {
-    if (match.index === undefined) continue;
-    if (match.index > cursor) nodes.push(text.slice(cursor, match.index));
-    const token = match[0];
-    const key = `${keyPrefix}-${match.index}`;
-    if (token.startsWith("`")) {
-      nodes.push(<code key={key}>{token.slice(1, -1)}</code>);
-    } else if (token.startsWith("**")) {
-      nodes.push(<strong key={key}>{token.slice(2, -2)}</strong>);
-    } else {
-      const link = token.match(/^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/);
-      nodes.push(link ? <a key={key} href={link[2]} target="_blank" rel="noreferrer">{link[1]}</a> : token);
-    }
-    cursor = match.index + token.length;
-  }
-  if (cursor < text.length) nodes.push(text.slice(cursor));
-  return nodes;
-}
-
-function PendingActionNotice({
-  text,
-  pendingConfirmation,
-  approving,
-  onApprove,
-}: {
-  text: string;
-  pendingConfirmation?: PendingConfirmationState | null;
-  approving?: boolean;
-  onApprove?: () => void;
-}) {
-  const isConfirmation = text.toLowerCase().startsWith("needs confirmation:");
-  const body = pendingConfirmation?.summary || (isConfirmation ? text.replace(/^needs confirmation:\s*/i, "").trim() : text);
-  return (
-    <div className={isConfirmation ? "pending-action-notice needs-confirmation" : "pending-action-notice"} aria-label="Workflow notice">
-      <span className="pending-action-label">{isConfirmation ? "Needs confirmation" : "Workflow"}</span>
-      <span className="pending-action-text">{body}</span>
-      {pendingConfirmation && onApprove ? (
-        <button type="button" className="pending-action-button" onClick={onApprove} disabled={approving}>
-          {approving ? "Approving..." : "Approve"}
-        </button>
-      ) : null}
-    </div>
-  );
-}
-
-function StatusSummary({
-  activity,
-}: {
-  activity: PiActivityState | null;
-}) {
-  const showDetail = activity?.phase === "tool" || activity?.phase === "responding" || activity?.phase === "failed";
-  return (
-    <div className={`status-summary ${activity?.phase ?? "idle"}`} aria-label="Flow status">
-      <span className="pi-activity-pulse" aria-hidden="true" />
-      <span className="pi-activity-label">{activity?.label ?? "Agent not started"}</span>
-      {activity?.toolName ? <span className="pi-activity-tool">{activity.toolName}</span> : null}
-      {showDetail && activity?.detail ? <span className="pi-activity-detail">{activity.detail}</span> : null}
-    </div>
-  );
-}
-
-function activityFromAutoflowStatus(status: AutoflowRunnerStatus): AutoflowActivityState {
-  if (!status.enabled) {
-    return { phase: "idle", label: "Autoflow paused", detail: "Project automation is off.", updatedAt: status.updatedAt };
-  }
-
-  const issues = status.issues ?? {};
-  const entries = Object.entries(issues);
-  const running = entries.filter(([, s]) => s.phase === "running");
-  const starting = entries.filter(([, s]) => s.phase === "starting");
-  const needsInput = entries.filter(([, s]) => s.phase === "needs_input");
-  const failed = entries.filter(([, s]) => s.phase === "failed");
-
-  if (running.length > 0) {
-    const refs = running.map(([ref]) => ref).slice(0, 3).join(", ");
-    return {
-      phase: "thinking",
-      label: `Working ${running.length} issue${running.length === 1 ? "" : "s"}`,
-      detail: running.length <= 3 ? refs : `${refs} +${running.length - 3} more`,
-      updatedAt: status.updatedAt,
-    };
-  }
-  if (starting.length > 0) {
-    return {
-      phase: "starting",
-      label: `Starting ${starting.length} issue${starting.length === 1 ? "" : "s"}`,
-      updatedAt: status.updatedAt,
-    };
-  }
-  if (needsInput.length > 0) {
-    const refs = needsInput.map(([ref]) => ref).slice(0, 2).join(", ");
-    return {
-      phase: "failed",
-      label: `${needsInput.length} need${needsInput.length === 1 ? "s" : ""} input`,
-      detail: needsInput.length <= 2 ? refs : `${refs} +${needsInput.length - 2} more`,
-      updatedAt: status.updatedAt,
-    };
-  }
-  if (failed.length > 0) {
-    return {
-      phase: "failed",
-      label: `${failed.length} failed`,
-      detail: failed.map(([ref]) => ref).slice(0, 2).join(", "),
-      updatedAt: status.updatedAt,
-    };
-  }
-  return {
-    phase: "idle",
-    label: "Autoflow watching",
-    detail: status.activeCount > 0 ? `${status.activeCount} active` : "No active runs",
-    updatedAt: status.updatedAt,
-  };
-}
-
-function AutoflowHealth({
-  enabled,
-  activity,
-  autoflowStatus,
-}: {
-  enabled: boolean;
-  activity: AutoflowActivityState | null;
-  autoflowStatus?: AutoflowRunnerStatus | null;
-}) {
-  const stateClass = enabled ? activity?.phase ?? "idle" : "paused";
-  const label = activity?.label ?? (enabled ? "Autoflow watching" : "Autoflow paused");
-  const detail = activity?.detail ?? (enabled ? "No active runs" : "Project automation is off");
-  const concurrency = autoflowStatus?.maxConcurrency;
-  return (
-    <div className={`autoflow-health ${stateClass}`} aria-label="Autoflow health">
-      <span className="autoflow-health-dot" aria-hidden="true" />
-      <span className="autoflow-health-label">{label}</span>
-      {concurrency ? <span className="autoflow-health-concurrency">/{concurrency}</span> : null}
-      <span className="autoflow-health-detail">{detail}</span>
-    </div>
-  );
-}
-
-function IssueDetails({
-  issue,
-}: {
-  issue: DashboardIssue;
-}) {
-  const blockers = issue.blockerLabels ?? [];
-  const repos = issue.repositories ?? [];
-  return (
-    <section className="issue-detail">
-      <div className="detail-section">
-        <div className="eyebrow">Details</div>
-        <div className="detail-grid">
-          <span className="detail-label">Ref</span>
-          <span className="detail-value mono">{issue.ref}</span>
-
-          <span className="detail-label">Status</span>
-          <span className="detail-value">{workStatusLabel(issue)}</span>
-
-          {issue.workStatusDetail ? (
-            <>
-              <span className="detail-label">Source</span>
-              <span className="detail-value">{issue.workStatusDetail}</span>
-            </>
-          ) : null}
-
-          {repos.length ? (
-            <>
-              <span className="detail-label">Repos</span>
-              <span className="detail-value mono">{repos.join(", ")}</span>
-            </>
-          ) : null}
-
-          {issue.prStatus ? (
-            <>
-              <span className="detail-label">PR</span>
-              <span className="detail-value">{issue.prStatus}</span>
-              <span className="detail-label">Review</span>
-              <span className="detail-value">{issue.reviewStatus || "Pending"}</span>
-            </>
-          ) : null}
-
-          <span className="detail-label">Evidence</span>
-          <span className={recordStatusClass(issue.evidenceStatus)}>{recordStatusLabel(issue.evidenceStatus)}</span>
-
-          <span className="detail-label">Docs</span>
-          <span className={recordStatusClass(issue.documentationStatus)}>{recordStatusLabel(issue.documentationStatus)}</span>
-        </div>
-      </div>
-
-      {blockers.length ? (
-        <div className="detail-section">
-          <div className="eyebrow">{workStatusLabel(issue) === "Blocked" ? "Blockers" : "Readiness Notes"}</div>
-          <div className="blocker-list">
-            {blockers.map((label) => (
-              <div key={label} className={workStatusLabel(issue) === "Blocked" ? "blocker-note blocked" : "blocker-note"}>
-                {label}
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-function WorkflowTrack({ status }: { status?: string }) {
-  if (!status || isExceptionalStatus(status)) {
-    return <span className={statusThemeClass(status || "Unknown")}>{status || "Unknown"}</span>;
-  }
-  const currentIndex = workflowSteps.indexOf(status as typeof workflowSteps[number]);
-  return (
-    <div className="workflow-track" title={status}>
-      {workflowSteps.map((step, index) => (
-        <React.Fragment key={step}>
-          {index > 0 ? <span className={index <= currentIndex ? "track-line active" : "track-line"} /> : null}
-          <span className={index <= currentIndex ? "track-dot active" : "track-dot"} />
-        </React.Fragment>
-      ))}
     </div>
   );
 }
