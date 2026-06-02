@@ -14,6 +14,8 @@ import { errorMessage, fetchJson } from "./api";
 import { activityFromPiEvent, activityFromPiSession, conversationFromPiSession, seedConversation } from "./conversation";
 import { desktopRefreshIntervalsFromSettings } from "./refresh-settings";
 import {
+  autoflowPhaseLabel,
+  autoflowPhaseThemeClass,
   isExceptionalStatus,
   isActiveWorkStatus,
   isManualActionIssue,
@@ -154,6 +156,18 @@ function App() {
       ].join(" ").toLowerCase().includes(needle);
     }).sort((left, right) => issueAttentionRank(left) - issueAttentionRank(right) || left.ref.localeCompare(right.ref));
   }, [activeStatus, issues, query]);
+
+  const autoflowByIssueRef = useMemo(() => {
+    const map = new Map<string, { phase: string; summary?: string }>();
+    if (autoflowStatus?.issues) {
+      for (const [ref, status] of Object.entries(autoflowStatus.issues)) {
+        if (status.phase !== "idle" && status.phase !== "paused") {
+          map.set(ref, { phase: status.phase, summary: status.summary });
+        }
+      }
+    }
+    return map;
+  }, [autoflowStatus]);
 
   useEffect(() => {
     void refresh(true);
@@ -1052,29 +1066,43 @@ function App() {
         </div>
 
         <section className="issue-stack" ref={issueListRef}>
-          {filteredIssues.map((issue, issueIndex) => (
-            <article
-              key={issue.ref}
-              className={`${issue.ref === selectedIssueRef ? "issue-card active" : "issue-card"} ${statusFilterThemeClass(workStatusLabel(issue))} ${focusedIssueIndex === issueIndex ? "issue-card-focused" : ""}`.trim()}
-              aria-selected={focusedIssueIndex === issueIndex}
-            >
-              <button type="button" className="issue-summary" onClick={() => void selectIssueThread(issue.ref)}>
-                <div className="issue-row">
-                  <span className="issue-ref">{issue.ref}</span>
-                  <span className={statusThemeClass(workStatusLabel(issue))}>{workStatusLabel(issue)}</span>
-                </div>
-                <div className="issue-title">{issue.title || "Untitled issue"}</div>
-                {!isExceptionalStatus(workStatusLabel(issue)) ? <WorkflowTrack status={workStatusLabel(issue)} /> : null}
-                {issueDetail(issue) ? <div className="issue-note">{issueDetail(issue)}</div> : null}
-                <div className="issue-actions-preview">
-                  {issue.prStatus ? <span>Open PR</span> : null}
-                  {isManualActionIssue(issue) && issue.evidenceStatus !== "Present" ? <span>Evidence</span> : null}
-                  {isManualActionIssue(issue) ? <span>Doctor</span> : null}
-                </div>
-              </button>
-              {expandedIssueRef === issue.ref ? <IssueDetails issue={issue} /> : null}
-            </article>
-          ))}
+          {filteredIssues.map((issue, issueIndex) => {
+            const autoflow = autoflowByIssueRef.get(issue.ref);
+            return (
+              <article
+                key={issue.ref}
+                className={`${issue.ref === selectedIssueRef ? "issue-card active" : "issue-card"} ${statusFilterThemeClass(workStatusLabel(issue))} ${focusedIssueIndex === issueIndex ? "issue-card-focused" : ""}`.trim()}
+                aria-selected={focusedIssueIndex === issueIndex}
+              >
+                <button type="button" className="issue-summary" onClick={() => void selectIssueThread(issue.ref)}>
+                  <div className="issue-row">
+                    <span className="issue-ref">{issue.ref}</span>
+                    <span className={statusThemeClass(workStatusLabel(issue))}>{workStatusLabel(issue)}</span>
+                  </div>
+                  <div className="issue-title">{issue.title || "Untitled issue"}</div>
+                  {autoflow ? (
+                    <div className={`issue-autoflow-indicator ${autoflowPhaseThemeClass(autoflow.phase)}`}>
+                      <span className="issue-autoflow-dot" aria-hidden="true" />
+                      <span>{autoflowPhaseLabel(autoflow.phase)}</span>
+                    </div>
+                  ) : null}
+                  {autoflow?.phase === "needs_input" ? (
+                    <div className="issue-intervention-note">
+                      {autoflow.summary || "Autoflow needs your input to continue."}
+                    </div>
+                  ) : null}
+                  {!isExceptionalStatus(workStatusLabel(issue)) && !autoflow ? <WorkflowTrack status={workStatusLabel(issue)} /> : null}
+                  {!autoflow && issueDetail(issue) ? <div className="issue-note">{issueDetail(issue)}</div> : null}
+                  <div className="issue-actions-preview">
+                    {issue.prStatus ? <span>Open PR</span> : null}
+                    {isManualActionIssue(issue) && issue.evidenceStatus !== "Present" ? <span>Evidence</span> : null}
+                    {isManualActionIssue(issue) ? <span>Doctor</span> : null}
+                  </div>
+                </button>
+                {expandedIssueRef === issue.ref ? <IssueDetails issue={issue} autoflowStatus={autoflow} /> : null}
+              </article>
+            );
+          })}
           {!filteredIssues.length ? (
             <div className="empty-state" role="status">
               {loading ? (

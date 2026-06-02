@@ -1901,9 +1901,162 @@ body {
   transform: scale(0.98);
 }
 
+/* Per-issue Autoflow indicator on cards */
+.flow-desktop .issue-autoflow-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.42rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--th-fg-muted);
+}
+
+.flow-desktop .issue-autoflow-dot {
+  width: 0.42rem;
+  height: 0.42rem;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #64748b;
+}
+
+.flow-desktop .autoflow-phase-active .issue-autoflow-dot,
+.flow-desktop .autoflow-phase-active .autoflow-detail-dot {
+  background: #38bdf8;
+  box-shadow: 0 0 0 0 rgb(56 189 248 / 0.45);
+  animation: pi-pulse 1.45s ease-out infinite;
+}
+
+.flow-desktop .autoflow-phase-intervention .issue-autoflow-dot,
+.flow-desktop .autoflow-phase-intervention .autoflow-detail-dot {
+  background: #f59e0b;
+  animation: pi-pulse 1.45s ease-out infinite;
+}
+
+.flow-desktop .autoflow-phase-failed .issue-autoflow-dot,
+.flow-desktop .autoflow-phase-failed .autoflow-detail-dot {
+  background: #ef4444;
+}
+
+.flow-desktop .autoflow-phase-idle .issue-autoflow-dot,
+.flow-desktop .autoflow-phase-idle .autoflow-detail-dot {
+  background: #64748b;
+}
+
+.flow-desktop .issue-autoflow-indicator.autoflow-phase-active {
+  color: #38bdf8;
+}
+
+.flow-desktop .issue-autoflow-indicator.autoflow-phase-intervention {
+  color: #fbbf24;
+}
+
+.flow-desktop .issue-autoflow-indicator.autoflow-phase-failed {
+  color: #f87171;
+}
+
+/* Intervention note on issue card */
+.flow-desktop .issue-intervention-note {
+  margin-top: 0.35rem;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid rgb(245 158 11 / 0.35);
+  border-radius: 0.4rem;
+  background: rgb(245 158 11 / 0.08);
+  color: #fbbf24;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+/* Autoflow detail section in expanded issue details */
+.flow-desktop .autoflow-detail-section {
+  border-color: rgb(56 189 248 / 0.3);
+  background: rgb(56 189 248 / 0.06);
+}
+
+.flow-desktop .autoflow-detail-section.autoflow-phase-intervention {
+  border-color: rgb(245 158 11 / 0.35);
+  background: rgb(245 158 11 / 0.06);
+}
+
+.flow-desktop .autoflow-detail-section.autoflow-phase-failed {
+  border-color: rgb(239 68 68 / 0.35);
+  background: rgb(239 68 68 / 0.06);
+}
+
+.flow-desktop .autoflow-detail-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+.flow-desktop .autoflow-detail-phase {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.flow-desktop .autoflow-detail-dot {
+  width: 0.46rem;
+  height: 0.46rem;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #64748b;
+}
+
+.flow-desktop .autoflow-detail-summary {
+  margin-top: 0.4rem;
+  color: var(--th-fg-soft);
+  font-size: 0.76rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.flow-desktop .autoflow-intervention-panel {
+  margin-top: 0.55rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid rgb(245 158 11 / 0.35);
+  border-radius: 0.45rem;
+  background: rgb(245 158 11 / 0.1);
+}
+
+.flow-desktop .autoflow-intervention-text {
+  margin: 0;
+  color: #fbbf24;
+  font-size: 0.76rem;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+/* Blocker collapse toggle */
+.flow-desktop .blocker-collapse {
+  margin-top: 0.25rem;
+}
+
+.flow-desktop .blocker-collapse-summary {
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--th-fg-muted);
+  padding: 0.25rem 0;
+}
+
+.flow-desktop .blocker-collapse-summary:hover {
+  color: var(--th-fg);
+}
+
+.flow-desktop .blocker-collapse[open] .blocker-collapse-summary {
+  margin-bottom: 0.35rem;
+}
+
 /* Accessibility: reduced motion */
 @media (prefers-reduced-motion: reduce) {
   .flow-desktop .autoflow-health-dot,
+  .flow-desktop .issue-autoflow-dot,
+  .flow-desktop .autoflow-detail-dot,
   .flow-desktop .status-message-dot,
   .flow-desktop .pi-activity-pulse,
   .flow-desktop .accent-spinner,
