@@ -208,6 +208,7 @@ export interface AdvanceIssueResult {
 
 export interface AutoFlowIssueOptions {
   autoPrepareWorkspace?: boolean;
+  autoApproveExecution?: boolean;
   maxSteps?: number;
 }
 
@@ -1914,6 +1915,12 @@ export class FlowWorkRuntime {
         if (!confirmationId) return this.autoFlowResult(last, steps, workerResults);
         if (action === "prepare_workspace") {
           if (options.autoPrepareWorkspace === false) return this.autoFlowResult(last, steps, workerResults);
+          this.debug("autoflow.confirmation.approve", { sessionId, step, action, confirmationId });
+          last = await this.advanceIssue(sessionId, confirmationId);
+          continue;
+        }
+        if (action === "request_execution") {
+          if (!options.autoApproveExecution) return this.autoFlowResult(last, steps, workerResults);
           this.debug("autoflow.confirmation.approve", { sessionId, step, action, confirmationId });
           last = await this.advanceIssue(sessionId, confirmationId);
           continue;

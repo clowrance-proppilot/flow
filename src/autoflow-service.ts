@@ -10,6 +10,7 @@ export type AutoflowServiceRuntime = Pick<
   | "inspectQueue"
   | "selectIssue"
   | "autoFlowIssue"
+  | "adoptLiveWorker"
   | "adoptPendingLiveWorker"
   | "diagnoseIssue"
   | "listWorkerResults"
@@ -349,7 +350,11 @@ export class AutoflowService {
       this.activeRuns.delete(issueRef);
       return;
     }
-    const autoflow = await this.runtime.autoFlowIssue(flowSessionId, { autoPrepareWorkspace: true, maxSteps: 20 });
+    const autoflow = await this.runtime.autoFlowIssue(flowSessionId, {
+      autoPrepareWorkspace: true,
+      autoApproveExecution: true,
+      maxSteps: 20,
+    });
     if (!isExecutionReady(autoflow)) {
       if (canCloseoutBlockedAutoflow(autoflow)) {
         const closed = await this.recordCloseoutInputsFromExistingResult(flowSessionId, issueRef);
@@ -371,10 +376,18 @@ export class AutoflowService {
       return;
     }
 
-    const handoff = await this.runtime.adoptPendingLiveWorker(flowSessionId, {
-      adopter: "Flow Autoflow",
-      summary: `Flow Autoflow started ${issueRef}.`,
-    });
+    const handoff = autoflow.handoffRequest
+      ? await this.runtime.adoptLiveWorker(flowSessionId, {
+        ...autoflow.handoffRequest,
+        createdAt: autoflow.handoffRequest.createdAt ?? nowIso(),
+      }, {
+        adopter: "Flow Autoflow",
+        summary: `Flow Autoflow started ${issueRef}.`,
+      })
+      : await this.runtime.adoptPendingLiveWorker(flowSessionId, {
+        adopter: "Flow Autoflow",
+        summary: `Flow Autoflow started ${issueRef}.`,
+      });
     const agentSession = durableSession?.sessionId
       ? await this.agentSessionDriver.getSession(durableSession.sessionId).catch(() => this.agentSessionDriver.openOrCreateIssueSession(issueRef))
       : await this.agentSessionDriver.openOrCreateIssueSession(issueRef);
