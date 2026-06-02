@@ -133,3 +133,18 @@ export type AutoflowRunnerStatus = {
   summary: string;
   updatedAt: string;
 };
+
+export type AutoflowActivityState = PiActivityState & { issueRef?: string };
+
+export type ToastItem = {
+  id: string;
+  message: string;
+  kind: "info" | "success" | "error";
+};
+
+export type ConfirmDialogState = {
+  title: string;
+  message: string;
+  confirmLabel?: string;
+  onConfirm: () => void;
+};
