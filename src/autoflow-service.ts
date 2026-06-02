@@ -521,7 +521,7 @@ export class AutoflowService {
       taskId: handoff.id,
       workJobId: handoff.workJobId,
       status,
-      summary: session.error ?? latestAssistantText(session) ?? `Pi session completed ${handoff.issueRef}.`,
+      summary: session.error ?? latestAssistantText(session) ?? `Agent session completed ${handoff.issueRef}.`,
       changedFiles,
       testsRun,
       blockers,

@@ -951,6 +951,89 @@ test("AutoflowService polls pending pull request checks through closeout", async
   assert.equal(status.issues["GH-396"]?.summary, "GH-396 closeout completed with status merged_jira_verified.");
 });
 
+test("AutoflowService uses provider-neutral fallback summary when agent has no assistant text", async () => {
+  let capturedSummary: string | undefined;
+  const runtime = {
+    inspectQueue: async () => [{
+      ref: "GH-426",
+      title: "Claude SDK executor smoke",
+      repoKeys: ["flow"],
+      state: "queued",
+      metadata: {},
+    }],
+    summarizeHandoff: async () => "handoff",
+    createSession: async (id: string) => ({ id, findings: [], workerResults: [], createdAt: nowIso(), updatedAt: nowIso() }),
+    selectIssue: async () => undefined,
+    diagnoseIssue: async () => ({
+      issueRef: "GH-426",
+      status: "ok",
+      issue: { ref: "GH-426", title: "Claude SDK executor smoke", state: "selected", repoKeys: ["flow"] },
+      visibility: {
+        ledger: true,
+        issueTracker: true,
+        repoRouting: true,
+        preparedWorktree: true,
+        codeReview: false,
+        codeReviewRequired: false,
+      },
+      findings: [],
+      nextAction: { type: "advance", summary: "Run Autoflow." },
+    }),
+    autoFlowIssue: async () => ({
+      status: "execution_handoff",
+      message: "Ready for executor.",
+      steps: [],
+      workerResults: [],
+      session: { id: "session", findings: [], workerResults: [], createdAt: nowIso(), updatedAt: nowIso() },
+    }),
+    adoptPendingLiveWorker: async () => ({
+      id: "task-426",
+      issueRef: "GH-426",
+      repoKey: "flow",
+      workJobId: "job-426",
+      prompt: "Implement GH-426.",
+      workspacePath: "/tmp/flow-gh-426",
+    }),
+    recordLocalThreadResult: async (_sessionId: string, result: { summary: string }) => {
+      capturedSummary = result.summary;
+      return result;
+    },
+    recordEvidence: async () => undefined,
+    recordDocumentation: async () => undefined,
+    recordPullRequest: async () => undefined,
+    advanceIssue: async () => ({
+      status: "awaiting_review",
+      message: "Ready for review.",
+    }),
+  };
+  // Session with no assistant messages and no error — forces the fallback path
+  const emptyTimelineSession: AutoflowAgentSessionSnapshot = {
+    id: "agent-gh-426",
+    workspacePath: "/tmp/flow-gh-426",
+    status: "done",
+    summary: undefined,
+    timeline: [],
+  };
+  const service = new AutoflowService({
+    projectId: "flow",
+    runtime: runtime as never,
+    agentSessionDriver: {
+      async getSession() { return emptyTimelineSession; },
+      async openOrCreateIssueSession() { return emptyTimelineSession; },
+      async sendUserMessage() { return emptyTimelineSession; },
+      async postPrompt() { return emptyTimelineSession; },
+    },
+    autoReconcileOnSlotAvailable: false,
+  });
+
+  assert.equal((await service.reconcile()).activeCount, 1);
+  await service.waitForIdle();
+
+  assert.ok(capturedSummary, "expected recordLocalThreadResult to be called");
+  assert.ok(!capturedSummary!.toLowerCase().includes("pi"), `fallback summary must not mention Pi: "${capturedSummary}"`);
+  assert.match(capturedSummary!, /agent session completed GH-426/i);
+});
+
 function fakeAgentDriver(): AutoflowAgentSessionDriver {
   const session = fakeAgentDriverSession();
   return {
