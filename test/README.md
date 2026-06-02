@@ -8,7 +8,7 @@ For faster local feedback, use one of the explicit category scripts:
 | Command | Files |
 | --- | --- |
 | `npm run test:core` | `test/flow.test.ts` |
-| `npm run test:autoflow` | `test/autoflow-runner.test.ts` |
+| `npm run test:autoflow` | `test/experimental/autoflow-runner.test.ts` |
 | `npm run test:dashboard` | `test/dashboard-state.test.ts` |
 | `npm run test:sql` | `test/sql-state.test.ts`, `test/sql-store.test.ts` |
 

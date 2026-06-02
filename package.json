@@ -59,7 +59,7 @@
     "test": "npm run check:cli-contract && npm run check:dashboard-readonly && npm run check:core-import-boundary && npm run test:fast --",
     "test:fast": "node --import tsx scripts/test-flow.mjs",
     "test:core": "npm run test:fast -- test/flow.test.ts",
-    "test:autoflow": "npm run test:fast -- test/autoflow-runner.test.ts",
+    "test:autoflow": "npm run test:fast -- test/experimental/autoflow-runner.test.ts",
     "test:dashboard": "npm run test:fast -- test/dashboard-state.test.ts",
     "test:sql": "npm run test:fast -- test/sql-state.test.ts test/sql-store.test.ts",
     "test:coverage": "node scripts/test-coverage.mjs",

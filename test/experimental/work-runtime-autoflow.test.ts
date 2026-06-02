@@ -3,8 +3,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { FlowStore, MemoryWorkflowLedger, nowIso } from "../src/index.js";
-import { testWorkRuntime } from "./helpers/test-fixtures.js";
+import { FlowStore, MemoryWorkflowLedger, nowIso } from "../../src/index.js";
+import { testWorkRuntime } from "../helpers/test-fixtures.js";
 
 test("Work Runtime autoflow stops at execution handoff confirmation", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-"));

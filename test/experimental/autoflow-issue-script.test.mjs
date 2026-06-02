@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { flowInvocationForBin } from "../scripts/autoflow-issue.mjs";
+import { flowInvocationForBin } from "../../scripts/autoflow-issue.mjs";
 
 test("autoflow issue script launches extensionless Flow bin through node on Windows", () => {
   assert.deepEqual(
