@@ -2494,6 +2494,7 @@ test("Claude agent runner maps SDK messages into AgentRunner result", async () =
   assert.equal(calls[0]?.prompt, "Implement the runner.");
   assert.equal(calls[0]?.options?.cwd, "/repo/flow/.worktrees/gh-425");
   assert.deepEqual(calls[0]?.options?.allowedTools, ["Read", "Edit"]);
+  assert.equal("settingSources" in (calls[0]?.options ?? {}), false);
   assert.equal((calls[0]?.options?.systemPrompt as { preset?: string })?.preset, "claude_code");
   assert.equal(calls[0]?.options?.sessionId, "123e4567-e89b-12d3-a456-426614174000");
   assert.equal(result.sessionId, "123e4567-e89b-12d3-a456-426614174000");
@@ -2535,6 +2536,38 @@ test("Claude agent runner resumes follow-up sessions", async () => {
 
   assert.equal(calls[0]?.options?.resume, "123e4567-e89b-12d3-a456-426614174111");
   assert.equal(calls[0]?.options?.sessionId, undefined);
+});
+
+test("Claude agent runner honors explicit SDK setting sources", async () => {
+  const calls: Array<{ options?: Record<string, unknown> }> = [];
+  const runner = new ClaudeAgentRunner({
+    settingSources: ["project"],
+    loadModule: async () => ({
+      query({ options }) {
+        calls.push({ options: options as Record<string, unknown> });
+        return (async function* () {
+          yield {
+            type: "result",
+            subtype: "success",
+            session_id: "123e4567-e89b-12d3-a456-426614174222",
+            uuid: "result-1",
+            is_error: false,
+            result: "Settings scoped.",
+          };
+        })();
+      },
+    }),
+  });
+
+  await runner.prompt({
+    sessionId: "123e4567-e89b-12d3-a456-426614174222",
+    issueRef: "GH-425",
+    prompt: "Scope settings.",
+    repoRoot: "/repo/flow",
+    workspacePath: "/repo/flow/.worktrees/gh-425",
+  });
+
+  assert.deepEqual(calls[0]?.options?.settingSources, ["project"]);
 });
 
 test("Pi session driver queues follow-up prompts while a run is active", async () => {

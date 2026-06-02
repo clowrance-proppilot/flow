@@ -46,7 +46,7 @@ export class ClaudeAgentRunner implements AgentRunner {
     this.allowedTools = options.allowedTools ?? FLOW_CLAUDE_AGENT_TOOLS;
     this.loadModule = options.loadModule ?? loadClaudeAgentSdkModule;
     this.permissionMode = options.permissionMode ?? "dontAsk";
-    this.settingSources = options.settingSources ?? ["project"];
+    this.settingSources = options.settingSources;
     this.systemPromptAppend = options.systemPromptAppend;
     this.tools = options.tools ?? [...this.allowedTools];
   }
@@ -64,7 +64,7 @@ export class ClaudeAgentRunner implements AgentRunner {
       allowedTools: [...this.allowedTools],
       cwd,
       permissionMode: this.permissionMode,
-      settingSources: this.settingSources,
+      ...(this.settingSources ? { settingSources: this.settingSources } : {}),
       systemPrompt: {
         type: "preset",
         preset: "claude_code",
