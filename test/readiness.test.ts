@@ -368,6 +368,42 @@ test("Readiness treats provider-credential executor failures as retryable", () =
   assert.equal(assessment.findings.some((finding) => finding.summary === "Auto review checks failed."), true);
 });
 
+test("Readiness treats Claude SDK setup failures as retryable", () => {
+  const assessment = assessIssue({
+    issue: {
+      ref: "ISSUE-CLAUDE-SDK",
+      title: "Retry Claude SDK setup",
+      repoKeys: ["flow"],
+      state: "blocked",
+      metadata: {
+        "workflow.repos.flow.worktree_path": "/repo/flow/.worktrees/feature-issue-claude-sdk",
+      },
+    },
+    workerResults: [
+      {
+        taskId: "worker-claude-sdk",
+        issueRef: "ISSUE-CLAUDE-SDK",
+        repoKey: "flow",
+        status: "failed",
+        summary: "Claude Agent SDK is not installed. Install dependency @anthropic-ai/claude-agent-sdk to run Claude sessions.",
+        changedFiles: [],
+        testsRun: [],
+        blockers: ["Cannot find package '@anthropic-ai/claude-agent-sdk' imported from dist/bin/src/claude-agent-runner.js"],
+        nextPickup: "Install dependencies, then retry Autoflow.",
+        completedAt: nowIso(),
+      },
+    ],
+  });
+
+  assert.equal(assessment.readyToAdvance, true);
+  assert.equal(assessment.reviewReady, false);
+  assert.equal(assessment.findings.some((finding) => finding.severity === "blocker"), false);
+  assert.equal(
+    assessment.findings.some((finding) => finding.severity === "warning" && finding.summary.includes("Claude Agent SDK")),
+    true,
+  );
+});
+
 test("Readiness waits for pending pull request checks instead of requesting remediation", () => {
   const assessment = assessIssue({
     issue: {

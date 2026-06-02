@@ -390,7 +390,12 @@ export function isRetryableWorkerFailure(result: WorkerTaskResult | undefined): 
   if (text.includes("provider credentials")) return true;
   if (text.includes("executor setup")) return true;
   if (text.includes("environment setup")) return true;
+  if (text.includes("agent sdk")) return true;
+  if (text.includes("sdk is not installed")) return true;
+  if (text.includes("sdk import")) return true;
   if (text.includes("pi sdk")) return true;
+  if (text.includes("claude agent sdk")) return true;
+  if (text.includes("@anthropic-ai/claude-agent-sdk")) return true;
   if (text.includes("@earendil-works/pi-coding-agent")) return true;
   if (text.includes("worker session stalled")) return true;
   if (text.includes("autoflow") && text.includes("stuck")) return true;
@@ -410,7 +415,12 @@ function shouldTreatBlockerAsRetryable(blocker: string, result: WorkerTaskResult
     normalized.includes("provider credentials") ||
     normalized.includes("executor setup") ||
     normalized.includes("environment setup") ||
+    normalized.includes("agent sdk") ||
+    normalized.includes("sdk is not installed") ||
+    normalized.includes("sdk import") ||
     normalized.includes("pi sdk") ||
+    normalized.includes("claude agent sdk") ||
+    normalized.includes("@anthropic-ai/claude-agent-sdk") ||
     normalized.includes("@earendil-works/pi-coding-agent") ||
     normalized.includes("worker session stalled") ||
     (normalized.includes("autoflow") && normalized.includes("stuck"));
