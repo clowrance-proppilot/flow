@@ -9,6 +9,7 @@ import {
   Search,
   Send,
   Stethoscope,
+  Trash2,
   Waypoints,
 } from "lucide-react";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -56,6 +57,19 @@ import "./styles.css";
 
 type AutoflowActivityState = PiActivityState & { issueRef?: string };
 
+type ToastItem = {
+  id: string;
+  message: string;
+  kind: "info" | "success" | "error";
+};
+
+type ConfirmDialogState = {
+  title: string;
+  message: string;
+  confirmLabel?: string;
+  onConfirm: () => void;
+};
+
 function App() {
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [activeProjectId, setActiveProjectId] = useState("");
@@ -101,6 +115,14 @@ function App() {
   const issueSelectionRequest = useRef(0);
   const [refreshBackoff, setRefreshBackoff] = useState({ consecutiveFailures: 0, lastFailureTime: 0 });
   const pendingSelectionRef = useRef<string | null>(null);
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
+  const [draftByIssueRef, setDraftByIssueRef] = useState<Record<string, string>>({});
+  const documentVisibleRef = useRef(true);
+  const chatViewportRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const issueListRef = useRef<HTMLDivElement>(null);
+  const [focusedIssueIndex, setFocusedIssueIndex] = useState(-1);
 
   const activeProject = projects.find((project) => project.id === activeProjectId);
   const selectedIssue = issues.find((issue) => issue.ref === selectedIssueRef);
@@ -109,6 +131,14 @@ function App() {
     context.desktop?.dashboardRefreshIntervalMs,
     context.desktop?.refreshIntervalMs,
   ]);
+
+  const showToast = useCallback((message: string, kind: ToastItem["kind"] = "info") => {
+    const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    setToasts((current) => [...current, { id, message, kind }]);
+    window.setTimeout(() => {
+      setToasts((current) => current.filter((toast) => toast.id !== id));
+    }, kind === "error" ? 6000 : 4000);
+  }, []);
 
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -187,17 +217,91 @@ function App() {
     };
   }, [activeProjectId, refreshIntervals.autoflowStatusMs]);
 
+  // Visibility-based polling optimization
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      documentVisibleRef.current = !document.hidden;
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    documentVisibleRef.current = !document.hidden;
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, []);
+
+  // Chat auto-scroll: scroll to bottom when conversation updates
   useEffect(() => {
     if (!selectedIssueRef) return;
+    const viewport = chatViewportRef.current;
+    if (!viewport) return;
+    const raf = window.requestAnimationFrame(() => {
+      viewport.scrollTop = viewport.scrollHeight;
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [conversation, selectedIssueRef]);
+
+  // Keyboard shortcuts
+  useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") returnToMonitor();
+      const target = event.target as HTMLElement;
+      const isInput = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
+
+      // Escape: close confirm dialog, clear search, or return to monitor
+      if (event.key === "Escape") {
+        if (confirmDialog) {
+          setConfirmDialog(null);
+          return;
+        }
+        if (query) {
+          setQuery("");
+          setFocusedIssueIndex(-1);
+          return;
+        }
+        if (selectedIssueRef) {
+          returnToMonitor();
+          return;
+        }
+      }
+
+      // Slash: focus search (when not in an input)
+      if (event.key === "/" && !isInput) {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+        return;
+      }
+
+      // Ctrl/Cmd+N: new issue form
+      if ((event.metaKey || event.ctrlKey) && event.key === "n") {
+        event.preventDefault();
+        setNewIssueOpen(true);
+        return;
+      }
+
+      // j/k navigation in issue list (when not in an input)
+      if (!isInput && !selectedIssueRef && filteredIssues.length > 0) {
+        if (event.key === "j") {
+          event.preventDefault();
+          setFocusedIssueIndex((prev) => Math.min(prev + 1, filteredIssues.length - 1));
+          return;
+        }
+        if (event.key === "k") {
+          event.preventDefault();
+          setFocusedIssueIndex((prev) => Math.max(prev - 1, 0));
+          return;
+        }
+        if (event.key === "Enter" && focusedIssueIndex >= 0 && focusedIssueIndex < filteredIssues.length) {
+          event.preventDefault();
+          void selectIssueThread(filteredIssues[focusedIssueIndex].ref);
+          return;
+        }
+      }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedIssueRef]);
+  }, [selectedIssueRef, query, filteredIssues, focusedIssueIndex, confirmDialog]);
 
   async function refresh(initial = false): Promise<void> {
     if (refreshInFlight.current) return;
+    // Skip non-initial refreshes when the document is hidden
+    if (!initial && !documentVisibleRef.current) return;
     refreshInFlight.current = true;
     if (initial || !hasLoaded.current) {
       setLoading(true);
@@ -334,6 +438,44 @@ function App() {
     } finally {
       setAddingProject(false);
     }
+  }
+
+  async function removeProject(projectId: string): Promise<void> {
+    const project = projects.find((p) => p.id === projectId);
+    if (!project) return;
+    setConfirmDialog({
+      title: "Remove project",
+      message: `Remove "${project.name}" from Flow Desktop? This will not delete any files on disk.`,
+      confirmLabel: "Remove",
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        setError("");
+        try {
+          const result = await fetchJson<{ ok?: boolean; activeProjectId?: string; projects: ProjectRecord[] }>(
+            `/api/projects/${encodeURIComponent(projectId)}`,
+            { method: "DELETE" },
+          );
+          setProjects(result.projects ?? []);
+          setActiveProjectId(result.activeProjectId || result.projects[0]?.id || "");
+          if (projectId === activeProjectId) {
+            pendingSelectionRef.current = null;
+            setSelectedIssueRef("");
+            setSelectedSessionId("");
+            setSessionIdByIssueRef({});
+            setExpandedIssueRef("");
+            setSystemNotice("");
+            setPendingConfirmation(null);
+            setActiveSessionStatus("idle");
+            setPiActivity(null);
+            setAutoflowActivity(null);
+          }
+          showToast(`Removed "${project.name}".`, "success");
+          await refresh(true);
+        } catch (caught) {
+          setError(errorMessage(caught, "Unable to remove project."));
+        }
+      },
+    });
   }
 
   async function refreshAutoflowStatus(): Promise<void> {
@@ -536,6 +678,10 @@ function App() {
     eventSourceRef.current?.close();
     eventSourceRef.current = null;
     subscribedSessionId.current = "";
+    // Preserve current prompt as a draft for the outgoing issue
+    if (selectedIssueRef && prompt.trim()) {
+      setDraftByIssueRef((current) => ({ ...current, [selectedIssueRef]: prompt }));
+    }
     setSelectedIssueRef(issueRef);
     setSelectedSessionId("");
     setExpandedIssueRef((current) => current === issueRef ? "" : issueRef);
@@ -546,6 +692,8 @@ function App() {
     setSystemNotice("");
     setPendingConfirmation(null);
     setError("");
+    // Restore draft for the incoming issue
+    setPrompt(draftByIssueRef[issueRef] ?? "");
     void loadIssueThread(issueRef, requestId);
   }
 
@@ -736,29 +884,54 @@ function App() {
           </form>
         ) : null}
         <div className="project-list">
-          {projects.map((project) => {
+          {loading && !projects.length ? (
+            <div className="project-list-loading" aria-label="Loading projects">
+              <span className="project-skeleton" />
+              <span className="project-skeleton" />
+              <span className="project-skeleton" />
+            </div>
+          ) : projects.length ? projects.map((project) => {
             const theme = projectThemeFor(project);
             return (
-              <button
-                key={project.id}
-                type="button"
-                className={project.id === activeProjectId ? "project-card active" : "project-card"}
-                onClick={() => void activateProject(project.id)}
-                aria-label={`${project.name}. ${project.attentionCount || 0} attention items. ${project.statusCounts?.total ?? 0} issues.`}
-                title={`${project.name}\n${project.root}`}
-                style={{
-                  "--project-color": theme.color,
-                  "--project-color-soft": theme.colorSoft,
-                  "--project-color-text": theme.colorText,
-                } as React.CSSProperties}
-              >
-                <span className="project-avatar" aria-hidden="true">
-                  {theme.iconUrl ? <img src={theme.iconUrl} alt="" /> : theme.initials}
-                </span>
-                {project.attentionCount ? <span className="project-badge danger">{project.attentionCount}</span> : null}
-              </button>
+              <div key={project.id} className="project-card-wrapper">
+                <button
+                  type="button"
+                  className={project.id === activeProjectId ? "project-card active" : "project-card"}
+                  onClick={() => void activateProject(project.id)}
+                  aria-label={`${project.name}. ${project.attentionCount || 0} attention items. ${project.statusCounts?.total ?? 0} issues.`}
+                  title={`${project.name}\n${project.root}`}
+                  style={{
+                    "--project-color": theme.color,
+                    "--project-color-soft": theme.colorSoft,
+                    "--project-color-text": theme.colorText,
+                  } as React.CSSProperties}
+                >
+                  <span className="project-avatar" aria-hidden="true">
+                    {theme.iconUrl ? <img src={theme.iconUrl} alt="" /> : theme.initials}
+                  </span>
+                  {project.attentionCount ? <span className="project-badge danger">{project.attentionCount}</span> : null}
+                </button>
+                {projects.length > 1 ? (
+                  <button
+                    type="button"
+                    className="project-remove-button"
+                    title={`Remove ${project.name}`}
+                    aria-label={`Remove ${project.name}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void removeProject(project.id);
+                    }}
+                  >
+                    <Trash2 size={10} />
+                  </button>
+                ) : null}
+              </div>
             );
-          })}
+          }) : (
+            <div className="project-list-empty" aria-label="No projects">
+              <span className="project-list-empty-text">No projects</span>
+            </div>
+          )}
         </div>
       </aside>
 
@@ -872,7 +1045,16 @@ function App() {
 
         <label className="search-box">
           <Search size={14} />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search issues" />
+          <input
+            ref={searchInputRef}
+            value={query}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setFocusedIssueIndex(-1);
+            }}
+            placeholder="Search issues  (press / to focus)"
+            aria-label="Search issues"
+          />
         </label>
 
         <div className="status-row">
@@ -890,11 +1072,12 @@ function App() {
           ))}
         </div>
 
-        <section className="issue-stack">
-          {filteredIssues.map((issue) => (
+        <section className="issue-stack" ref={issueListRef}>
+          {filteredIssues.map((issue, issueIndex) => (
             <article
               key={issue.ref}
-              className={`${issue.ref === selectedIssueRef ? "issue-card active" : "issue-card"} ${statusFilterThemeClass(workStatusLabel(issue))}`.trim()}
+              className={`${issue.ref === selectedIssueRef ? "issue-card active" : "issue-card"} ${statusFilterThemeClass(workStatusLabel(issue))} ${focusedIssueIndex === issueIndex ? "issue-card-focused" : ""}`.trim()}
+              aria-selected={focusedIssueIndex === issueIndex}
             >
               <button type="button" className="issue-summary" onClick={() => void selectIssueThread(issue.ref)}>
                 <div className="issue-row">
@@ -913,7 +1096,22 @@ function App() {
               {expandedIssueRef === issue.ref ? <IssueDetails issue={issue} /> : null}
             </article>
           ))}
-          {!filteredIssues.length ? <div className="empty-state">No matching issues</div> : null}
+          {!filteredIssues.length ? (
+            <div className="empty-state" role="status">
+              {loading ? (
+                <div className="empty-state-loading">
+                  <div className="accent-spinner" />
+                  <span>Loading issues...</span>
+                </div>
+              ) : query ? (
+                <span>No issues match &ldquo;{query}&rdquo;</span>
+              ) : activeStatus === "active" ? (
+                <span>No active issues. <button type="button" className="empty-state-link" onClick={() => setActiveStatus("all")}>Show all</button></span>
+              ) : (
+                <span>No issues in this project.</span>
+              )}
+            </div>
+          ) : null}
         </section>
       </aside>
 
@@ -963,12 +1161,46 @@ function App() {
               onDoctor={() => void invokeAction("run_doctor")}
               autoflowBusy={actionBusy === "autoflow"}
               onAutoflow={() => void invokeAction("autoflow")}
+              chatViewportRef={chatViewportRef}
             />
 
             {error ? <div className="error-line">{error}</div> : null}
           </main>
         </div>
       ) : error ? <div className="error-line shell-error">{error}</div> : null}
+
+      {toasts.length ? (
+        <div className="toast-container" role="status" aria-live="polite">
+          {toasts.map((toast) => (
+            <div key={toast.id} className={`toast toast-${toast.kind}`}>
+              <span className="toast-message">{toast.message}</span>
+              <button
+                type="button"
+                className="toast-dismiss"
+                aria-label="Dismiss notification"
+                onClick={() => setToasts((current) => current.filter((t) => t.id !== toast.id))}
+              >
+                &times;
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {confirmDialog ? (
+        <div className="confirm-overlay" role="dialog" aria-modal="true" aria-label={confirmDialog.title}>
+          <div className="confirm-dialog">
+            <h3 className="confirm-title">{confirmDialog.title}</h3>
+            <p className="confirm-message">{confirmDialog.message}</p>
+            <div className="confirm-actions">
+              <button type="button" className="confirm-cancel" onClick={() => setConfirmDialog(null)}>Cancel</button>
+              <button type="button" className="confirm-ok" onClick={() => void confirmDialog.onConfirm()}>
+                {confirmDialog.confirmLabel ?? "Confirm"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -989,6 +1221,7 @@ function AssistantChatSurface({
   onDoctor,
   autoflowBusy,
   onAutoflow,
+  chatViewportRef,
 }: {
   conversation: ConversationItem[];
   disabled: boolean;
@@ -1005,6 +1238,7 @@ function AssistantChatSurface({
   onDoctor: () => void;
   autoflowBusy: boolean;
   onAutoflow: () => void;
+  chatViewportRef?: React.RefObject<HTMLDivElement | null>;
 }) {
   const visibleMessages = useMemo(
     () => conversation.filter((item) => item.role === "user" || item.role === "assistant"),
@@ -1018,7 +1252,7 @@ function AssistantChatSurface({
 
   return (
     <section className="assistant-thread" aria-label="Issue conversation">
-      <div className="timeline assistant-viewport">
+      <div className="timeline assistant-viewport" ref={chatViewportRef}>
         {loading && !visibleMessages.length ? (
           <div className="assistant-loading">
             <div className="accent-spinner" />

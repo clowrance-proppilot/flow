@@ -1538,3 +1538,304 @@ body {
     padding: 0.5rem;
   }
 }
+
+/* Project list loading and empty states */
+.flow-desktop .project-list-loading {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.2rem 1.15rem;
+}
+
+.flow-desktop .project-skeleton {
+  display: block;
+  width: 2.9rem;
+  height: 2.9rem;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgb(30 43 63 / 0.5) 25%, rgb(30 43 63 / 0.28) 50%, rgb(30 43 63 / 0.5) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.flow-desktop .project-list-empty {
+  display: grid;
+  place-items: center;
+  padding: 1.5rem 1.15rem;
+  color: var(--th-fg-faint);
+  font-size: 0.72rem;
+  text-align: center;
+}
+
+.flow-desktop .project-list-empty-text {
+  opacity: 0.7;
+}
+
+/* Project card wrapper and remove button */
+.flow-desktop .project-card-wrapper {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+.flow-desktop .project-remove-button {
+  position: absolute;
+  top: -0.15rem;
+  right: -0.15rem;
+  display: grid;
+  place-items: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  border: 1px solid rgb(239 68 68 / 0.45);
+  border-radius: 999px;
+  background: rgb(239 68 68 / 0.18);
+  color: #fee2e2;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+  z-index: 2;
+}
+
+.flow-desktop .project-card-wrapper:hover .project-remove-button {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.flow-desktop .project-remove-button:hover {
+  background: rgb(239 68 68 / 0.35);
+  border-color: #ef4444;
+}
+
+/* Keyboard-focused issue card */
+.flow-desktop .issue-card-focused {
+  outline: 2px solid var(--th-primary);
+  outline-offset: -2px;
+}
+
+/* Empty state improvements */
+.flow-desktop .empty-state-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.flow-desktop .empty-state-loading .accent-spinner {
+  width: 1rem;
+  height: 1rem;
+  border-width: 1.5px;
+  animation: spin 0.8s linear infinite;
+}
+
+.flow-desktop .empty-state-link {
+  border: 0;
+  background: transparent;
+  color: var(--th-primary);
+  text-decoration: underline;
+  text-underline-offset: 0.12rem;
+  cursor: pointer;
+  font: inherit;
+  font-size: inherit;
+  padding: 0;
+}
+
+.flow-desktop .empty-state-link:hover {
+  color: #93c5fd;
+}
+
+/* Toast notifications */
+.flow-desktop .toast-container {
+  position: fixed;
+  bottom: 1.2rem;
+  right: 1.2rem;
+  z-index: 50;
+  display: grid;
+  gap: 0.5rem;
+  max-width: 22rem;
+  pointer-events: none;
+}
+
+.flow-desktop .toast {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  border: 1px solid var(--th-border);
+  border-radius: 0.65rem;
+  background: var(--th-card);
+  color: var(--th-fg);
+  padding: 0.62rem 0.85rem;
+  font-size: 0.78rem;
+  box-shadow: 0 1rem 2.5rem rgb(0 0 0 / 0.35);
+  pointer-events: auto;
+  animation: toast-slide-in 220ms ease-out;
+}
+
+.flow-desktop .toast-success {
+  border-color: rgb(34 197 94 / 0.45);
+  background: linear-gradient(135deg, rgb(6 78 59 / 0.92), var(--th-card));
+}
+
+.flow-desktop .toast-error {
+  border-color: rgb(239 68 68 / 0.45);
+  background: linear-gradient(135deg, rgb(127 29 29 / 0.92), var(--th-card));
+}
+
+.flow-desktop .toast-message {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.4;
+}
+
+.flow-desktop .toast-dismiss {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 1.3rem;
+  height: 1.3rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--th-fg-muted);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.flow-desktop .toast-dismiss:hover {
+  background: rgb(148 163 184 / 0.18);
+  color: var(--th-fg);
+}
+
+@keyframes toast-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.6rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Confirmation dialog */
+.flow-desktop .confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  background: rgb(1 5 13 / 0.62);
+  backdrop-filter: blur(3px);
+  animation: confirm-fade-in 160ms ease-out;
+}
+
+@keyframes confirm-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.flow-desktop .confirm-dialog {
+  width: min(26rem, calc(100vw - 2rem));
+  border: 1px solid var(--th-border);
+  border-radius: 0.85rem;
+  background:
+    linear-gradient(135deg, rgb(15 23 42 / 0.98), rgb(7 14 27 / 0.96)),
+    var(--th-card);
+  padding: 1.6rem;
+  box-shadow: 0 2rem 5rem rgb(0 0 0 / 0.5);
+  animation: confirm-scale-in 180ms ease-out;
+}
+
+@keyframes confirm-scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.flow-desktop .confirm-title {
+  margin: 0 0 0.55rem;
+  color: var(--th-fg);
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.flow-desktop .confirm-message {
+  margin: 0 0 1.3rem;
+  color: var(--th-fg-muted);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.flow-desktop .confirm-actions {
+  display: flex;
+  justify-content: end;
+  gap: 0.55rem;
+}
+
+.flow-desktop .confirm-actions button {
+  border: 1px solid var(--th-border);
+  border-radius: 0.52rem;
+  padding: 0.48rem 0.9rem;
+  font-size: 0.78rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.flow-desktop .confirm-cancel {
+  background: rgb(15 23 42 / 0.72);
+  color: var(--th-fg-muted);
+}
+
+.flow-desktop .confirm-cancel:hover {
+  background: rgb(30 43 63 / 0.72);
+  color: var(--th-fg);
+}
+
+.flow-desktop .confirm-ok {
+  border-color: rgb(239 68 68 / 0.45);
+  background: rgb(239 68 68 / 0.18);
+  color: #fee2e2;
+}
+
+.flow-desktop .confirm-ok:hover {
+  border-color: #ef4444;
+  background: rgb(239 68 68 / 0.3);
+}
+
+/* Accessibility: focus-visible for keyboard navigation */
+.flow-desktop button:focus-visible,
+.flow-desktop input:focus-visible,
+.flow-desktop textarea:focus-visible,
+.flow-desktop select:focus-visible {
+  outline: 2px solid var(--th-primary);
+  outline-offset: 2px;
+}
+
+/* Accessibility: reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .flow-desktop .autoflow-health-dot,
+  .flow-desktop .status-message-dot,
+  .flow-desktop .pi-activity-pulse,
+  .flow-desktop .accent-spinner,
+  .flow-desktop .project-skeleton {
+    animation: none;
+  }
+
+  .flow-desktop .toast,
+  .flow-desktop .confirm-overlay,
+  .flow-desktop .confirm-dialog {
+    animation: none;
+  }
+
+  .flow-desktop .issue-card:hover {
+    transform: none;
+  }
+}
