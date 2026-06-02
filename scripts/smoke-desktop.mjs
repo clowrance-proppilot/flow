@@ -185,7 +185,7 @@ async function writeFixtureConfig(root, projectName) {
 }
 
 function createReviewedIssue(cwd, request) {
-  const intake = runFlow(cwd, { ...request, mode: "intake", dryRun: true });
+  const intake = runFlow(cwd, { ...request, mode: "intake", dryRun: true, review: true });
   const reviewJob = intake.reviewJob;
   if (!reviewJob?.id || !reviewJob?.issueRef || !reviewJob?.repoKey || !reviewJob?.workType) {
     throw new Error(`issue intake did not return review job: ${JSON.stringify(intake)}`);

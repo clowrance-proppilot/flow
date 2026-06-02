@@ -196,7 +196,7 @@ async function approveIssueIntake(
   sessionId: string,
   options: CreateIssueOptions,
 ): Promise<void> {
-  const intake = await runtime.intakeIssue(sessionId, { ...options, dryRun: true });
+  const intake = await runtime.intakeIssue(sessionId, { ...options, dryRun: true, review: true });
   const reviewJob = intake.reviewJob;
   if (!reviewJob) assert.fail("expected issue intake review job");
   await runtime.recordWorkJobResult(sessionId, {
@@ -1104,7 +1104,7 @@ test("Flow CLI core works with only git available on PATH", async () => {
     summary: "Git-only Flow core",
     issueType: "Task",
   };
-  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true });
+  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true, review: true });
   const reviewJob = intake.reviewJob as { id: string; issueRef: string; repoKey: string; workType: string };
   await callFlow({
     op: "runtime",
@@ -1291,7 +1291,7 @@ test("Flow CLI can record evidence and documentation in one workflow call", asyn
     summary: "Record acceptance",
     issueType: "Task",
   };
-  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true });
+  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true, review: true });
   const reviewJob = intake.reviewJob as { id: string; issueRef: string; repoKey: string; workType: string };
   await callFlow({
     op: "runtime",
@@ -1347,7 +1347,7 @@ test("Flow CLI workflow recordResult and observe return next JSON commands", asy
     summary: "Observe JSON commands",
     issueType: "Task",
   };
-  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true });
+  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true, review: true });
   const reviewJob = intake.reviewJob as { id: string; issueRef: string; repoKey: string; workType: string };
   await callFlow({
     op: "runtime",
@@ -1425,7 +1425,7 @@ test("Flow workflow doctor strict mode exits nonzero when readiness is not ok", 
     summary: "Strict doctor check",
     issueType: "Task",
   };
-  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true });
+  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true, review: true });
   const reviewJob = (intake.payload.result as { reviewJob?: { id: string; issueRef: string; repoKey: string; workType: string } }).reviewJob;
   assert.ok(reviewJob);
   await callFlow({
@@ -1493,7 +1493,7 @@ test("Flow CLI review command returns local readiness state", async () => {
     summary: "Review local test",
     issueType: "Task",
   };
-  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true });
+  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true, review: true });
   const reviewJob = intake.reviewJob as { id: string; issueRef: string; repoKey: string; workType: string };
   await callFlow({
     op: "runtime",
@@ -1551,7 +1551,7 @@ test("Flow CLI review command accepts explicit local target", async () => {
     summary: "Review local explicit target",
     issueType: "Task",
   };
-  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true });
+  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true, review: true });
   const reviewJob = intake.reviewJob as { id: string; issueRef: string; repoKey: string; workType: string };
   await callFlow({
     op: "runtime",
@@ -1603,7 +1603,7 @@ test("Flow CLI review command returns code_review state", async () => {
     summary: "Review code review test",
     issueType: "Task",
   };
-  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true });
+  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true, review: true });
   const reviewJob = intake.reviewJob as { id: string; issueRef: string; repoKey: string; workType: string };
   await callFlow({
     op: "runtime",
@@ -3244,7 +3244,29 @@ test("Issue intake can submit executor review job for semantic dedupe", async ()
   assert.equal(JSON.stringify(result.reviewJob?.input).includes("FLOW-99"), true);
 });
 
-test("Issue creation requires completed executor intake review", async () => {
+test("Issue creation creates directly without executor intake review", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-issue-create-direct-"));
+  const ledger = new MemoryWorkflowLedger();
+  const runtime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    issueTracker: new LocalIssueTrackerAdapter({ ledger, projectName: "Flow" }),
+  });
+  await runtime.createSession("intake-session");
+
+  const created = await runtime.createIssue("intake-session", {
+    issueType: "Task",
+    summary: "Add SQLite workflow ledger",
+    description: "Persist workflow state in SQLite before adding Postgres.",
+    repoKeys: ["main"],
+  });
+
+  assert.equal(created.title, "Add SQLite workflow ledger");
+  assert.equal(created.state, "selected");
+  assert.equal((await ledger.listIssues(10)).length, 1);
+});
+
+test("Reviewed issue intake apply requires completed executor review", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-intake-review-required-"));
   const ledger = new MemoryWorkflowLedger();
   const runtime = testWorkRuntime({
@@ -3254,32 +3276,25 @@ test("Issue creation requires completed executor intake review", async () => {
   });
   await runtime.createSession("intake-session");
 
-  try {
-    await runtime.createIssue("intake-session", {
-      issueType: "Task",
-      summary: "Add SQLite workflow ledger",
-      description: "Persist workflow state in SQLite before adding Postgres.",
-      repoKeys: ["main"],
-    });
-    assert.fail("issue creation should require executor review");
-  } catch (error) {
-    assert.equal(error instanceof Error, true);
-    assert.equal((error as Error).message.includes("completed executor review"), true);
-  }
-
-  assert.equal((await ledger.listIssues(10)).length, 0);
-  const intake = await runtime.intakeIssue("intake-session", {
-    issueType: "Task",
+  const request = {
+    issueType: "Task" as const,
     summary: "Add SQLite workflow ledger",
     description: "Persist workflow state in SQLite before adding Postgres.",
     repoKeys: ["main"],
-    dryRun: true,
-  });
-  assert.equal(intake.reviewJob?.workType, "flow.issue_intake");
+    review: true,
+  };
+
+  const dryRun = await runtime.intakeIssue("intake-session", { ...request, dryRun: true });
+  assert.equal(dryRun.reviewJob?.workType, "flow.issue_intake");
+
+  await assert.rejects(
+    runtime.intakeIssue("intake-session", { ...request, apply: true }),
+    /Issue intake requires a completed executor review/,
+  );
 
   await runtime.recordWorkJobResult("intake-session", {
-    jobId: intake.reviewJob?.id ?? assert.fail("expected review job"),
-    issueRef: intake.reviewJob?.issueRef ?? assert.fail("expected review issue ref"),
+    jobId: dryRun.reviewJob?.id ?? assert.fail("expected review job"),
+    issueRef: dryRun.reviewJob?.issueRef ?? assert.fail("expected review issue ref"),
     repoKey: "main",
     workType: "flow.issue_intake",
     status: "succeeded",
@@ -3288,13 +3303,8 @@ test("Issue creation requires completed executor intake review", async () => {
     completedAt: nowIso(),
   });
 
-  const created = await runtime.createIssue("intake-session", {
-    issueType: "Task",
-    summary: "Add SQLite workflow ledger",
-    description: "Persist workflow state in SQLite before adding Postgres.",
-    repoKeys: ["main"],
-  });
-  assert.equal(created.title, "Add SQLite workflow ledger");
+  const created = await runtime.intakeIssue("intake-session", { ...request, apply: true });
+  assert.equal(created.issue?.title, "Add SQLite workflow ledger");
 });
 
 test("Issue intake works through Flow CLI without creating during dry-run", async () => {

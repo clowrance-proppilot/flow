@@ -530,7 +530,7 @@ test("Triage works through Flow CLI with dry-run mode", async () => {
 
   const createReviewedIssue = async (summary: string, issueType: string) => {
     const request = { op: "issue", mode: "create", summary, issueType };
-    const intake = await callFlow({ ...request, mode: "intake", dryRun: true });
+    const intake = await callFlow({ ...request, mode: "intake", dryRun: true, review: true });
     assert.equal(intake.ok, true);
     const reviewJob = (intake.result as { reviewJob?: { id: string; issueRef: string; repoKey: string; workType: string } }).reviewJob;
     assert.ok(reviewJob);
