@@ -7,8 +7,8 @@ import { configToProjectTopology, configToWorkTypeRegistry } from "./config/conf
 import { assessIssue } from "./readiness.js";
 import { createFlowStore, type FlowStoreBackend } from "./store.js";
 import { FlowWorkRuntime } from "./work-runtime.js";
-import { createWorkflowLedger, MigratingWorkflowLedger, type WorkflowLedger } from "./ledger.js";
-import { flowRuntimePath, flowUserWorkflowLedgerDatabasePath, flowWorkflowLedgerPath, resolveFlowPath } from "./flow-layout.js";
+import type { WorkflowLedger } from "./ledger.js";
+import { flowRuntimePath, flowUserWorkflowLedgerDatabasePath, resolveFlowPath } from "./flow-layout.js";
 import { createKyselyFlowState, createPostgresDialect, createPostgresSqlStateConfig, createSqliteSqlStateConfig } from "./sql-state.js";
 
 export interface ConfiguredWorkRuntimeOptions {
@@ -68,18 +68,28 @@ function createConfiguredWorkflowLedger(
 ): { workflowLedger: WorkflowLedger; workflowLedgerPath: string } {
   const ledger = flowConfig?.ledger;
   const type = configString(ledger, "type") ?? "sql";
+  if (type === "jsonl") {
+    throw new Error("JSONL workflow ledger is no longer supported. Remove ledger.type from your Flow config or set it to 'sql' (default, uses SQLite).");
+  }
+  if (type === "flow") {
+    const path = resolveSqlWorkflowLedgerPath(projectRoot, flowConfig);
+    return {
+      workflowLedgerPath: path,
+      workflowLedger: createKyselyFlowState({
+        root: projectRoot,
+        dialectConfig: createSqliteSqlStateConfig({ path }),
+      }),
+    };
+  }
   if (type === "sql") {
     const dialect = configString(ledger, "dialect") ?? "sqlite";
     if (dialect === "sqlite") {
       const path = resolveSqlWorkflowLedgerPath(projectRoot, flowConfig);
       return {
         workflowLedgerPath: path,
-        workflowLedger: new MigratingWorkflowLedger({
-          sourcePath: resolveWorkflowLedgerPath(projectRoot, flowConfig),
-          target: createKyselyFlowState({
-            root: projectRoot,
-            dialectConfig: createSqliteSqlStateConfig({ path }),
-          }),
+        workflowLedger: createKyselyFlowState({
+          root: projectRoot,
+          dialectConfig: createSqliteSqlStateConfig({ path }),
         }),
       };
     }
@@ -87,39 +97,23 @@ function createConfiguredWorkflowLedger(
       const connectionString = resolvePostgresConnectionString(ledger);
       return {
         workflowLedgerPath: "<postgres>",
-        workflowLedger: new MigratingWorkflowLedger({
-          sourcePath: resolveWorkflowLedgerPath(projectRoot, flowConfig),
-          target: createKyselyFlowState({
-            root: projectRoot,
-            dialectConfig: createPostgresSqlStateConfig({
-              connectionString,
-              dialect: createPostgresDialect(connectionString),
-            }),
+        workflowLedger: createKyselyFlowState({
+          root: projectRoot,
+          dialectConfig: createPostgresSqlStateConfig({
+            connectionString,
+            dialect: createPostgresDialect(connectionString),
           }),
         }),
       };
     }
     throw new Error(`Unsupported SQL workflow ledger dialect: ${dialect}.`);
   }
-  const workflowLedgerPath = resolveWorkflowLedgerPath(projectRoot, flowConfig);
-  return {
-    workflowLedgerPath,
-    workflowLedger: createWorkflowLedger({
-      cwd: projectRoot,
-      adapter: type,
-      path: workflowLedgerPath,
-    }),
-  };
+  throw new Error(`Unsupported workflow ledger adapter: ${type}. Supported adapters: sql.`);
 }
 
 function resolveRuntimeStorePath(projectRoot: string, flowConfig: FlowConfig | undefined): string {
   const configured = configString(flowConfig?.runtime, "storeDir") ?? configString(flowConfig?.runtime, "stateDir");
   return configured ? resolveFlowPath(projectRoot, configured) : flowRuntimePath(projectRoot);
-}
-
-function resolveWorkflowLedgerPath(projectRoot: string, flowConfig: FlowConfig | undefined): string {
-  const configured = configString(flowConfig?.runtime, "workflowLedgerPath");
-  return configured ? resolveFlowPath(projectRoot, configured) : flowWorkflowLedgerPath(projectRoot);
 }
 
 function resolveSqlWorkflowLedgerPath(projectRoot: string, flowConfig: FlowConfig | undefined): string {

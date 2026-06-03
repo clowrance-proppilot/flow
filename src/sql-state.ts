@@ -492,24 +492,24 @@ function contextProjection(records: FlowContextRecord[]): FlowContextProjection 
     threads: sorted.filter((record) => record.kind === "thread"),
     sessions: sorted.filter((record) => record.kind === "session"),
     artifacts: sorted.filter((record) => record.kind === "artifact"),
-    updatedAt: sorted[0]?.updatedAt ?? nowIso(),
+    updatedAt: sorted.at(-1)?.updatedAt ?? nowIso(),
   });
 }
 
 function activeContext(records: FlowContextRecord[]) {
-  const latest = records[0];
+  const latest = [...records].reverse().find((record) => record.kind === "prompt") ?? records.at(-1);
   return {
     projectId: latest?.projectId,
     issueRef: latest?.issueRef,
-    threadId: latest?.threadId,
-    sessionId: latest?.sessionId,
-    artifactId: latest?.kind === "artifact" ? latest.id : latest?.artifactRefs[0],
+    threadId: latest?.kind === "thread" ? latest.id : latest?.threadId,
+    sessionId: latest?.kind === "session" ? latest.id : latest?.sessionId,
+    artifactId: latest?.kind === "artifact" ? latest.id : latest?.artifactRefs.at(-1),
     updatedAt: latest?.updatedAt,
   };
 }
 
 function compareContextRecords(a: FlowContextRecord, b: FlowContextRecord): number {
-  return b.updatedAt.localeCompare(a.updatedAt) || b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id);
+  return a.updatedAt.localeCompare(b.updatedAt) || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id);
 }
 
 function workerResultToRun(result: WorkerTaskResult): WorkerRunRecord {

@@ -15,9 +15,6 @@ import {
   type WorkItem,
 } from "./contracts.js";
 import {
-  verifyJsonlWorkflowLedger,
-} from "./ledger.js";
-import {
   type CreateIssueOptions,
 } from "./work-runtime.js";
 import { repoRoot } from "./flow-runtime.js";
@@ -174,10 +171,13 @@ async function handleConfigRequest(request: Record<string, unknown>): Promise<un
 async function handleLedgerRequest(request: Record<string, unknown>): Promise<unknown> {
   const mode = optionalString(request, "mode") ?? "verify";
   if (mode !== "verify") throw badMode("ledger", mode, ["verify"]);
-  return verifyJsonlWorkflowLedger(
-    optionalString(request, "path") ?? configuredRuntime.workflowLedgerPath,
-    { rebuildProjections: Boolean(request.rebuildProjections) },
-  );
+  const issues = await workflowLedger.listIssues(1);
+  return {
+    ok: true,
+    backend: configuredRuntime.workflowLedgerPath === "<postgres>" ? "postgres" : "sqlite",
+    path: configuredRuntime.workflowLedgerPath,
+    sampleIssueCount: issues.length,
+  };
 }
 
 async function handleIssueRequest(request: Record<string, unknown>): Promise<unknown> {

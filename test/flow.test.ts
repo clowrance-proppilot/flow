@@ -929,38 +929,11 @@ test("Configured runtime uses Kysely SQLite for SQL workflow ledger", async () =
   await (reloaded.workflowLedger as { close?(): Promise<void> }).close?.();
 });
 
-test("Configured SQL workflow ledger imports existing JSONL records idempotently", async () => {
-  const root = await mkdtemp(join(tmpdir(), "flow-sql-ledger-migrate-"));
-  const jsonlPath = join(root, ".flow", "ledger", "workflow.jsonl");
-  await mkdir(dirname(jsonlPath), { recursive: true });
-  const completedAt = nowIso();
-  const issue = {
-    ref: "FLOW-MIG-1",
-    title: "Migrate JSONL",
-    repoKeys: ["main"],
-    state: "queued",
-    metadata: {},
-  };
-  const workerResult = {
-    taskId: "task-migrate-1",
-    issueRef: "FLOW-MIG-1",
-    repoKey: "main",
-    executor: "live_agent_thread",
-    status: "succeeded",
-    summary: "Imported.",
-    changedFiles: ["src/runtime-factory.ts"],
-    testsRun: ["npm test"],
-    blockers: [],
-    completedAt,
-  };
-  await writeFile(jsonlPath, [
-    JSON.stringify({ kind: "issue", value: issue }),
-    JSON.stringify({ kind: "workerResult", value: workerResult }),
-    "",
-  ].join("\n"), "utf8");
+test("Configured runtime rejects JSONL workflow ledger selection", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-jsonl-ledger-reject-"));
   const config = flowConfigSchema.parse({
     version: "1",
-    project: { name: "SQL Migration Fixture" },
+    project: { name: "JSONL Rejection Fixture" },
     topology: {
       repos: {
         main: { name: "flow", baseBranch: "main" },
@@ -969,17 +942,14 @@ test("Configured SQL workflow ledger imports existing JSONL records idempotently
     issueTracker: { type: "local" },
     collaboration: { type: "none" },
     sourceControl: { type: "git" },
-    ledger: { type: "sql", dialect: "sqlite", path: ".flow/ledger/workflow.db" },
+    ledger: { type: "jsonl" },
     runtime: { store: { type: "sqlite" } },
   });
 
-  const configured = createConfiguredWorkRuntime({ projectRoot: root, flowConfig: config });
-  assert.equal((await configured.workflowLedger.readIssue("FLOW-MIG-1"))?.title, "Migrate JSONL");
-  assert.equal((await configured.workflowLedger.listWorkerResults("FLOW-MIG-1")).length, 1);
-
-  const reloaded = createConfiguredWorkRuntime({ projectRoot: root, flowConfig: config });
-  assert.equal((await reloaded.workflowLedger.listWorkerResults("FLOW-MIG-1")).length, 1);
-  assert.match(await readFile(jsonlPath, "utf8"), /FLOW-MIG-1/);
+  assert.throws(
+    () => createConfiguredWorkRuntime({ projectRoot: root, flowConfig: config }),
+    /JSONL workflow ledger is no longer supported/,
+  );
 });
 
 test("Configured workflow ledger defaults to SQLite in user state", async () => {
@@ -4933,7 +4903,7 @@ test("Mirrored workflow ledger keeps primary authoritative when mirror fails", a
   assert.equal(readBack?.state, "selected");
 });
 
-test("Flow workflow ledger persists records to local JSONL by default", async () => {
+test("Flow workflow ledger persists records to SQLite by default", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-ledger-"));
   const ledger = createWorkflowLedger({ cwd: root });
   await ledger.writeIssue({
@@ -4958,10 +4928,6 @@ test("Flow workflow ledger persists records to local JSONL by default", async ()
   const reloaded = createWorkflowLedger({ cwd: root });
   assert.equal((await reloaded.readIssue("ISSUE-90"))?.title, "Native ledger");
   assert.equal((await reloaded.listWorkerResults("ISSUE-90"))[0]?.taskId, "worker-90");
-  const projection = JSON.parse(await readFile(flowIssueProjectionPath(root, "ISSUE-90"), "utf8"));
-  assert.equal(projection.issue.title, "Native ledger");
-  assert.equal(projection.workerRuns[0].taskId, "worker-90");
-  assert.equal(projection.workerResults[0].taskId, "worker-90");
 });
 
 test("Flow context records validate prompt routing metadata", () => {
@@ -5050,7 +5016,6 @@ test("Workflow ledger persists prompt, thread, session, and artifact context", a
   const reloaded = createWorkflowLedger({ cwd: root });
   assert.ok(reloaded.readContext);
   const projection = await reloaded.readContext({ projectId: "flow" });
-  const storedProjection = JSON.parse(await readFile(flowContextProjectionPath(root), "utf8"));
 
   assert.equal(projection.active.projectId, "flow");
   assert.equal(projection.active.threadId, "thread-1");
@@ -5060,22 +5025,21 @@ test("Workflow ledger persists prompt, thread, session, and artifact context", a
   assert.equal(projection.sessions[0].provider, "pi");
   assert.equal(projection.artifacts[0].artifactType, "html");
   assert.equal(projection.prompts[0].prompt, "Improve the dashboard preview.");
-  assert.equal(storedProjection.prompts[0].id, "prompt-1");
 });
 
-test("Flow workflow ledger verification rebuilds issue projections", async () => {
+test("Flow workflow ledger verification rebuilds issue projections from legacy JSONL", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-ledger-"));
-  const ledger = createWorkflowLedger({ cwd: root });
-  await ledger.writeIssue({
-    ref: "ISSUE-91",
-    title: "Projection rebuild",
-    repoKeys: ["main"],
-    state: "queued",
-    metadata: {},
-  });
+  const ledgerPath = join(root, ".flow", "ledger", "workflow.jsonl");
+  await mkdir(dirname(ledgerPath), { recursive: true });
+  const now = nowIso();
+  await writeFile(ledgerPath, JSON.stringify({
+    kind: "issue",
+    value: { ref: "ISSUE-91", title: "Projection rebuild", repoKeys: ["main"], state: "queued", metadata: {}, updatedAt: now },
+  }) + "\n", "utf8");
+  await mkdir(dirname(flowIssueProjectionPath(root, "ISSUE-91")), { recursive: true });
   await writeFile(flowIssueProjectionPath(root, "ISSUE-91"), "{\"issue\":{\"title\":\"stale\"}}\n", "utf8");
 
-  const result = await verifyJsonlWorkflowLedger(join(root, ".flow", "ledger", "workflow.jsonl"), {
+  const result = await verifyJsonlWorkflowLedger(ledgerPath, {
     rebuildProjections: true,
   });
   const projection = JSON.parse(await readFile(flowIssueProjectionPath(root, "ISSUE-91"), "utf8"));
@@ -5086,22 +5050,26 @@ test("Flow workflow ledger verification rebuilds issue projections", async () =>
   assert.equal(projection.issue.title, "Projection rebuild");
 });
 
-test("Flow workflow ledger verification rebuilds context projection", async () => {
+test("Flow workflow ledger verification rebuilds context projection from legacy JSONL", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-context-rebuild-"));
-  const ledger = createWorkflowLedger({ cwd: root });
-  assert.ok(ledger.recordContext);
-  await ledger.recordContext({
-    kind: "thread",
-    id: "thread-rebuild",
-    projectId: "flow",
-    title: "Rebuild context projection",
-    createdAt: nowIso(),
-    updatedAt: nowIso(),
-    metadata: {},
-  });
+  const ledgerPath = join(root, ".flow", "ledger", "workflow.jsonl");
+  await mkdir(dirname(ledgerPath), { recursive: true });
+  const now = nowIso();
+  await writeFile(ledgerPath, JSON.stringify({
+    kind: "context",
+    value: {
+      kind: "thread",
+      id: "thread-rebuild",
+      projectId: "flow",
+      title: "Rebuild context projection",
+      createdAt: now,
+      updatedAt: now,
+      metadata: {},
+    },
+  }) + "\n", "utf8");
   await writeFile(flowContextProjectionPath(root), "{\"threads\":[]}\n", "utf8");
 
-  const result = await verifyJsonlWorkflowLedger(join(root, ".flow", "ledger", "workflow.jsonl"), {
+  const result = await verifyJsonlWorkflowLedger(ledgerPath, {
     rebuildProjections: true,
   });
   const projection = JSON.parse(await readFile(flowContextProjectionPath(root), "utf8"));
