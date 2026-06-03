@@ -24,7 +24,7 @@ Use manifests as the authoritative command shape for agents.
 - `backlog`: backlog queue.
 - `bootstrap`: create starter Flow config.
 - `config`: validate, explain, or migrate config.
-- `ledger`: verify workflow ledger.
+- `ledger`: verify the active SQL workflow ledger.
 - `issue`: issue view, create, route, and workspace adoption.
 - `workflow`: readiness, handoff, evidence, docs, result, and closeout.
 - `autoflow`: experimental app-layer Autoflow control.
@@ -98,6 +98,9 @@ flow '{"op":"config","mode":"explain"}'
 flow '{"op":"config","mode":"migrate","write":true}'
 flow '{"op":"ledger","mode":"verify"}'
 ```
+
+`ledger verify` checks the configured SQL workflow ledger and returns a JSON
+health response. It does not read `workflow.jsonl` or rebuild projection files.
 
 ## Review
 
