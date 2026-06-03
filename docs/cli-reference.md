@@ -27,7 +27,7 @@ Use manifests as the authoritative command shape for agents.
 - `ledger`: verify workflow ledger.
 - `issue`: issue view, create, route, and workspace adoption.
 - `workflow`: readiness, handoff, evidence, docs, result, and closeout.
-- `autoflow`: standalone Autoflow control.
+- `autoflow`: experimental app-layer Autoflow control.
 - `review`: local or code review status.
 - `runtime`: raw Work Runtime method bridge.
 
@@ -68,6 +68,10 @@ flow '{"op":"workflow","mode":"recordAcceptance","id":"GH-123","summary":"Verifi
 ```
 
 ## Autoflow
+
+Autoflow is experimental app-layer behavior. Core CLI agent work should use the
+issue and workflow commands above; see [Agent handoff](agent-handoff.md) for the
+CLI-first local-worker pattern.
 
 ```bash
 flow '{"op":"autoflow","mode":"status"}'

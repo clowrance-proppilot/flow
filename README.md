@@ -73,6 +73,7 @@ More:
 - [Getting started](docs/getting-started.md)
 - [Configuration reference](docs/config-reference.md)
 - [CLI reference](docs/cli-reference.md)
+- [Agent handoff](docs/agent-handoff.md)
 - [Adapter authoring](docs/adapter-authoring.md)
 - [Desktop notes](docs/desktop.md)
 - [Troubleshooting](docs/troubleshooting.md)

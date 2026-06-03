@@ -17,6 +17,9 @@ Flow records handoff prompts and result state. It does not choose, launch,
 retry, or supervise agents. A handoff prompt is a copy-ready pickup note for the
 next local agent thread.
 
+For a concrete orchestrator-thread and local worker CLI recipe, see
+[Agent handoff](agent-handoff.md).
+
 Minimal local config:
 
 ```yaml
