@@ -100,7 +100,7 @@ flow '{"op":"ledger","mode":"verify"}'
 ```
 
 `ledger verify` checks the configured SQL workflow ledger and returns a JSON
-health response. It does not read `workflow.jsonl` or rebuild projection files.
+health response.
 
 ## Review
 

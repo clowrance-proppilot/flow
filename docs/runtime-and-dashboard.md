@@ -48,16 +48,16 @@ The dashboard is a mirror over Flow's ledger and runtime projection:
 
 ```text
 .flow/config.yaml
-.flow/ledger/workflow.jsonl
-.flow/ledger/issues/
 .flow/runtime/
+.flow/store/
+<user-state>/ledger/workflow.db
 ```
 
-For Flow itself, the ledger is committed so the project can dogfood shared
-workflow history. Runtime stays local because it is machine and session state.
+The workflow ledger defaults to SQLite in user state. Runtime stays local
+because it is machine and session state.
 
-Consumer repos can choose whether ledger history belongs in Git. Runtime should
-stay local.
+Consumer repos can choose a configured SQL ledger path when workflow history
+belongs with the project. Runtime should stay local.
 
 ## Read-Only Boundary
 

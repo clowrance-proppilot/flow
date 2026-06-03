@@ -26,7 +26,8 @@ sourceControl:
   type: "git"
 
 ledger:
-  type: "flow"
+  type: "sql"
+  dialect: "sqlite"
 
 workTypes:
   - workType: "flow.prepare_workspace"

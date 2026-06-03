@@ -49,8 +49,8 @@ flow '{"op":"workflow","mode":"recordEvidence","id":"FLOW-123","summary":"npm te
 ```text
 .flow/config.yaml
 .flow/runtime/
-.flow/ledger/workflow.jsonl
-.flow/ledger/issues/
+.flow/store/
+<user-state>/ledger/workflow.db
 ```
 
 Environment variables are only for process context, local launch mechanics, and

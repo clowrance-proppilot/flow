@@ -159,8 +159,6 @@ runtime:
     workerName: "flow-worker"
     slots: 4
     dashboardUrl: "http://127.0.0.1:8080"
-  eventLedgerPath: ".flow/ledger/events.jsonl"
-  workflowLedgerPath: ".flow/ledger/workflow.jsonl"
   defaultSessionId: "cli"
   autoflowBlockedThreshold: 5
   staleWorkerRunTimeoutMs: 600000

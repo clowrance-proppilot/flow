@@ -24,7 +24,8 @@ sourceControl:
   type: "git"
 
 ledger:
-  type: "flow"
+  type: "sql"
+  dialect: "sqlite"
 
 runtime:
   dashboard:
