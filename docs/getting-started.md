@@ -41,9 +41,9 @@ flow '{"op":"config","mode":"explain"}'
 ```
 
 The bootstrap command creates a starter config from repository metadata. Edit
-that file for topology, providers, runtime store, Autoflow, and dashboard
-settings. Do not use environment variables as the primary topology or provider
-selection surface.
+that file for topology, providers, runtime store, experimental app-layer
+Autoflow, and dashboard settings. Do not use environment variables as the
+primary topology or provider selection surface.
 
 ## First Workflow
 
@@ -77,7 +77,9 @@ flow '{"op":"workflow","mode":"recordDocumentation","id":"GH-123","disposition":
 
 ## Autoflow
 
-Autoflow drives the same runtime model automatically.
+Autoflow is experimental app-layer behavior built above the same Flow runtime
+model. Core agent work should use the JSON issue and workflow commands above,
+including `workflow adoptHandoff` for live local agent threads.
 
 ```bash
 flow '{"op":"autoflow","mode":"status"}'

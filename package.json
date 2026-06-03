@@ -47,11 +47,12 @@
     "tsconfig.json"
   ],
   "scripts": {
-    "check": "npm run check:cli-contract && npm run check:dashboard-readonly && npm run check:core-import-boundary && tsc -p tsconfig.json --noEmit",
+    "check": "npm run check:cli-contract && npm run check:dashboard-readonly && npm run check:core-import-boundary && npm run check:core-docs && tsc -p tsconfig.json --noEmit",
     "check:style": "npm run lint && npm run format:check",
     "check:dashboard-readonly": "node scripts/check-dashboard-readonly.mjs",
     "check:cli-contract": "node scripts/check-flow-cli-contract.mjs",
     "check:core-import-boundary": "node scripts/check-core-import-boundary.mjs",
+    "check:core-docs": "node scripts/check-core-docs.mjs",
     "lint": "eslint eslint.config.js",
     "lint:fix": "eslint --fix eslint.config.js",
     "format": "prettier --write \"package.json\" \"package-lock.json\" \".prettierrc\" \"eslint.config.js\"",

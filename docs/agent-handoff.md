@@ -111,6 +111,9 @@ $handoffPrompt = "Use Flow to work GH-123 in the prepared workspace."
 Set-Content -Path .\flow-handoff-prompt.txt -Value $handoffPrompt -Encoding utf8NoBOM
 ```
 
+The default worker record for this path is `live_agent_thread`: Flow tracks the
+handoff and result while the live local agent process does the implementation.
+
 Inspect changes and run tests before recording success:
 
 ```powershell
@@ -126,7 +129,7 @@ Record closeout:
 '@ | flow
 
 @'
-{"op":"workflow","mode":"recordResult","id":"GH-123","repoKey":"flow","summary":"Implemented agent handoff docs","changedFiles":["docs/agent-handoff.md"],"testsRun":["npm test"]}
+{"op":"workflow","mode":"recordResult","id":"GH-123","repoKey":"flow","executor":"live_agent_thread","summary":"Implemented agent handoff docs","changedFiles":["docs/agent-handoff.md"],"testsRun":["npm test"]}
 '@ | flow
 
 @'
