@@ -250,10 +250,10 @@ async function handleWorkflowRequest(request: Record<string, unknown>): Promise<
   const activeSessionId = sessionId(request);
   await ensureSession(activeSessionId);
   const issueRef = optionalString(request, "id");
-  if (["advance", "doctor", "audit", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation", "recordAcceptance", "observe"].includes(mode)) {
+  if (["advance", "doctor", "audit", "adoptHandoff", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation", "recordAcceptance", "observe"].includes(mode)) {
     requireValue(issueRef, "id");
   }
-  if (issueRef && ["advance", "doctor", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation", "recordAcceptance"].includes(mode)) {
+  if (issueRef && ["advance", "doctor", "adoptHandoff", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation", "recordAcceptance"].includes(mode)) {
     await runtime.selectIssue(activeSessionId, await queueIssue(issueRef));
   }
   switch (mode) {
@@ -278,6 +278,11 @@ async function handleWorkflowRequest(request: Record<string, unknown>): Promise<
     }
     case "handoff":
       return runtime.summarizeHandoff(activeSessionId);
+    case "adoptHandoff":
+      return runtime.adoptPendingLocalThread(activeSessionId, {
+        adopter: optionalString(request, "adopter"),
+        summary: optionalString(request, "summary"),
+      });
     case "recordResult":
       return runtime.recordLocalThreadResult(activeSessionId, {
         issueRef,
@@ -342,7 +347,7 @@ async function handleWorkflowRequest(request: Record<string, unknown>): Promise<
         ref: requireValue(issueRef, "ref"),
       });
     default:
-      throw badMode("workflow", mode, ["advance", "audit", "doctor", "handoff", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation", "recordAcceptance", "observe"]);
+      throw badMode("workflow", mode, ["advance", "audit", "doctor", "handoff", "adoptHandoff", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation", "recordAcceptance", "observe"]);
   }
 }
 
@@ -401,9 +406,11 @@ function flowManifest(target?: string) {
   if (target === "workflow") {
     return {
       target,
-      modes: ["advance", "audit", "doctor", "handoff", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation", "recordAcceptance", "observe"],
+      modes: ["advance", "audit", "doctor", "handoff", "adoptHandoff", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation", "recordAcceptance", "observe"],
       examples: [
         { op: "workflow", mode: "audit", id: "FLOW-123" },
+        { op: "workflow", mode: "adoptHandoff", id: "FLOW-123", adopter: "claude" },
+        { op: "workflow", mode: "recordResult", id: "FLOW-123", repoKey: "main", status: "succeeded", summary: "Implemented the handoff.", changedFiles: [], testsRun: [] },
         { op: "workflow", mode: "recordEvidence", id: "FLOW-123", summary: "npm test passed", criteria: ["tests"] },
         { op: "workflow", mode: "recordAcceptance", id: "FLOW-123", summary: "npm test passed", criteria: ["tests"], disposition: "not_needed" },
       ],

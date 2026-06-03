@@ -54,6 +54,7 @@ flow '{"op":"issue","mode":"create","summary":"Add SQL ledger docs","issueType":
 flow '{"op":"workflow","mode":"doctor","id":"GH-123"}'
 flow '{"op":"workflow","mode":"advance","id":"GH-123"}'
 flow '{"op":"workflow","mode":"handoff","id":"GH-123"}'
+flow '{"op":"workflow","mode":"adoptHandoff","id":"GH-123","adopter":"claude"}'
 flow '{"op":"workflow","mode":"observe","id":"GH-123"}'
 ```
 
@@ -66,6 +67,11 @@ flow '{"op":"workflow","mode":"recordEvidence","id":"GH-123","summary":"npm test
 flow '{"op":"workflow","mode":"recordDocumentation","id":"GH-123","disposition":"updated","summary":"Updated docs."}'
 flow '{"op":"workflow","mode":"recordAcceptance","id":"GH-123","summary":"Verified acceptance criteria.","criteria":["tests"],"disposition":"not_needed"}'
 ```
+
+`adoptHandoff` claims the current pending execution handoff for a live local
+agent thread and returns the handoff request, including `workspacePath`,
+`prompt`, `workJobId`, and task id. Use `recordResult` afterward to record the
+thread result.
 
 ## Autoflow
 

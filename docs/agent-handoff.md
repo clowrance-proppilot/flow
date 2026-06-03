@@ -95,12 +95,16 @@ Request handoff details:
 '@ | flow
 
 @'
+{"op":"workflow","mode":"adoptHandoff","id":"GH-123","adopter":"claude"}
+'@ | flow
+
+@'
 {"op":"workflow","mode":"observe","id":"GH-123"}
 '@ | flow
 ```
 
 If Flow returns a handoff prompt or handoff request, the orchestrator can save
-the prompt for a local worker:
+the returned `prompt` for a local worker:
 
 ```powershell
 $handoffPrompt = "Use Flow to work GH-123 in the prepared workspace."
@@ -189,13 +193,12 @@ Example handoff response shape:
   "ok": true,
   "op": "workflow",
   "result": {
-    "status": "execution_handoff",
-    "handoffRequest": {
-      "issueRef": "GH-123",
-      "repoKey": "flow",
-      "workspacePath": "C:/repo/.worktrees/feature-gh-123",
-      "prompt": "Use Flow to work this prompt."
-    }
+    "id": "worker-gh-123",
+    "issueRef": "GH-123",
+    "repoKey": "flow",
+    "workJobId": "job-gh-123",
+    "workspacePath": "C:/repo/.worktrees/feature-gh-123",
+    "prompt": "Use Flow to work this prompt."
   }
 }
 ```

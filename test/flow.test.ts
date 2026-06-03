@@ -1140,6 +1140,10 @@ test("Flow CLI core works with only git available on PATH", async () => {
     planningLane: false,
     triage: true,
   });
+  const workflowManifest = await callFlow({ op: "manifest", target: "workflow" });
+  assert.ok((workflowManifest.modes as string[]).includes("adoptHandoff"));
+  assert.ok((workflowManifest.examples as Array<{ mode?: string }>).some((example) => example.mode === "adoptHandoff"));
+  assert.ok((workflowManifest.examples as Array<{ mode?: string }>).some((example) => example.mode === "recordResult"));
 
   const viewed = await callFlow({ op: "issue", mode: "view", id: issue.ref });
   assert.equal(viewed.ref, issue.ref);
@@ -1388,6 +1392,101 @@ test("Flow CLI workflow recordResult and observe return next JSON commands", asy
   ]);
   assert.equal(observed.nextJsonCommands[0].request.mode, "recordEvidence");
   assert.equal(observed.nextJsonCommands[0].request.id, issue.ref);
+});
+
+test("Flow CLI workflow adoptHandoff claims pending live-thread handoff", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-cli-adopt-handoff-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  await writeFile(join(root, "README.md"), "# test\n");
+  await execFileAsync("git", ["add", "README.md"], { cwd: root });
+  await execFileAsync("git", ["-c", "user.name=Flow Test", "-c", "user.email=flow-test@example.com", "commit", "-m", "init"], { cwd: root });
+  const flowCli = join(process.cwd(), ".tmp", "test", "src", "flow.js");
+
+  const callFlow = async (body: Record<string, unknown>) => {
+    const { stdout } = await execFileAsync(process.execPath, [flowCli, JSON.stringify(body)], {
+      cwd: root,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+    const parsed = JSON.parse(stdout) as { ok?: boolean; result?: unknown; error?: unknown };
+    if (parsed.ok === false) throw new Error(`Flow CLI failed: ${JSON.stringify(parsed.error)}`);
+    return parsed.result as Record<string, unknown>;
+  };
+
+  await callFlow({ op: "bootstrap", storage: "repo-tracked" });
+  const issueRequest = {
+    op: "issue",
+    mode: "create",
+    summary: "Adopt handoff",
+    issueType: "Task",
+  };
+  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true, review: true });
+  const reviewJob = intake.reviewJob as { id: string; issueRef: string; repoKey: string; workType: string };
+  await callFlow({
+    op: "runtime",
+    method: "recordWorkJobResult",
+    params: {
+      result: {
+        jobId: reviewJob.id,
+        issueRef: reviewJob.issueRef,
+        repoKey: reviewJob.repoKey,
+        workType: reviewJob.workType,
+        status: "succeeded",
+        summary: "Executor approved issue intake.",
+        evidence: ["CLI test executor review."],
+        completedAt: nowIso(),
+      },
+    },
+  });
+  const issue = await callFlow(issueRequest) as { ref: string };
+  const workspace = root.replace(/\\/g, "/");
+
+  await callFlow({
+    op: "issue",
+    mode: "route",
+    id: issue.ref,
+    repoKeys: ["main"],
+  });
+  await callFlow({
+    op: "issue",
+    mode: "adoptWorkspace",
+    id: issue.ref,
+    repoKey: "main",
+    worktreePath: workspace,
+  });
+  const handoff = await callFlow({
+    op: "workflow",
+    mode: "adoptHandoff",
+    id: issue.ref,
+    adopter: "claude",
+  }) as { id: string; issueRef: string; repoKey: string; workJobId: string; prompt: string; workspacePath: string };
+
+  assert.equal(handoff.issueRef, issue.ref);
+  assert.equal(handoff.repoKey, "main");
+  assert.equal(handoff.workspacePath, workspace);
+  assert.match(handoff.prompt, /Use Flow to work this prompt/);
+  assert.ok(handoff.workJobId);
+
+  const result = await callFlow({
+    op: "workflow",
+    mode: "recordResult",
+    id: issue.ref,
+    repoKey: "main",
+    taskId: handoff.id,
+    workJobId: handoff.workJobId,
+    status: "succeeded",
+    summary: "Live thread completed the handoff.",
+    changedFiles: ["src/flow.ts"],
+    testsRun: ["npm run check"],
+  }) as { result: { taskId: string; workJobId: string }; nextJsonCommands: Array<{ request: { mode?: string } }> };
+
+  assert.equal(result.result.taskId, handoff.id);
+  assert.equal(result.result.workJobId, handoff.workJobId);
+  assert.deepEqual(result.nextJsonCommands.map((command) => command.request.mode), [
+    "recordEvidence",
+    "recordPullRequest",
+    "observe",
+    "advance",
+  ]);
 });
 
 test("Flow workflow doctor strict mode exits nonzero when readiness is not ok", async () => {
