@@ -3,6 +3,9 @@ import test from "node:test";
 
 // Forbidden import patterns from check-core-import-boundary.mjs
 const forbiddenImportPatterns: Array<{ pattern: RegExp; label: string }> = [
+  { pattern: /from\s+["']\.\/index(?:\.js)?["']/, label: "index barrel" },
+  { pattern: /from\s+["']\.\/experimental\//, label: "experimental/" },
+  { pattern: /from\s+["']\.\.\/experimental\//, label: "experimental/" },
   { pattern: /from\s+["']\.\/autoflow-runner(?:\.js)?["']/, label: "autoflow-runner" },
   { pattern: /from\s+["']\.\/autoflow-service(?:\.js)?["']/, label: "autoflow-service" },
   { pattern: /from\s+["']\.\/agent-session-driver(?:\.js)?["']/, label: "agent-session-driver" },
@@ -26,6 +29,16 @@ function detectForbiddenImport(source: string): string | null {
 test("detects forbidden autoflow-runner import", () => {
   const source = `import { AutoflowRunner } from "./autoflow-runner.js";`;
   assert.equal(detectForbiddenImport(source), "autoflow-runner");
+});
+
+test("detects forbidden experimental import", () => {
+  const source = `import { StandaloneAutoflowRunner } from "./experimental/autoflow-runner.js";`;
+  assert.equal(detectForbiddenImport(source), "experimental/");
+});
+
+test("detects forbidden core barrel import", () => {
+  const source = `import { StandaloneAutoflowRunner } from "./index.js";`;
+  assert.equal(detectForbiddenImport(source), "index barrel");
 });
 
 test("detects forbidden autoflow-service import", () => {

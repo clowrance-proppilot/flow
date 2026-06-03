@@ -388,7 +388,7 @@ test("Readiness treats Claude SDK setup failures as retryable", () => {
         summary: "Claude Agent SDK is not installed. Install dependency @anthropic-ai/claude-agent-sdk to run Claude sessions.",
         changedFiles: [],
         testsRun: [],
-        blockers: ["Cannot find package '@anthropic-ai/claude-agent-sdk' imported from dist/bin/src/claude-agent-runner.js"],
+        blockers: ["Cannot find package '@anthropic-ai/claude-agent-sdk' imported from dist/bin/src/experimental/claude-agent-runner.js"],
         nextPickup: "Install dependencies, then retry Autoflow.",
         completedAt: nowIso(),
       },

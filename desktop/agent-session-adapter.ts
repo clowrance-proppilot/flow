@@ -1,4 +1,4 @@
-import type { PiSessionDriver } from "../src/pi-session-driver.js";
+import type { PiSessionDriver } from "../src/experimental/pi-session-driver.js";
 import type { StandaloneAutoflowRunner } from "../src/experimental/autoflow-runner.js";
 import type { DesktopAgentPromptInput, DesktopAgentPromptResult, DesktopAgentSessionAdapter } from "./prompt-router.js";
 

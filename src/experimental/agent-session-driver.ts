@@ -1,9 +1,9 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { IssueStateValue, type WorkItem } from "./contracts.js";
-import type { SessionDriverEvent, SessionEventListener, SessionRef, SessionSnapshot, Unsubscribe, WorkspaceRef } from "./session-driver.js";
-import type { FlowWorkRuntime } from "./work-runtime.js";
+import { IssueStateValue, type WorkItem } from "../contracts.js";
+import type { SessionDriverEvent, SessionEventListener, SessionRef, SessionSnapshot, Unsubscribe, WorkspaceRef } from "../session-driver.js";
+import type { FlowWorkRuntime } from "../work-runtime.js";
 
 type RuntimeIssueSurface = Pick<FlowWorkRuntime, "createSession" | "inspectIssue" | "inspectQueue" | "inspectBacklog" | "selectIssue" | "summarizeHandoff">;
 

@@ -3,7 +3,7 @@ import { validateFlowConfig } from "../src/config/config-loader.js";
 import { createConfiguredWorkRuntime } from "../src/runtime-factory.js";
 import { GitAdapter } from "../src/adapters/git.js";
 import { createDefaultAutoflowRunnerState, StandaloneAutoflowRunner } from "../src/experimental/autoflow-runner.js";
-import { PiSessionDriver } from "../src/pi-session-driver.js";
+import { PiSessionDriver } from "../src/experimental/pi-session-driver.js";
 import type { DesktopProjectRecord } from "./project-registry.js";
 import type { DesktopProjectSurface } from "./route-types.js";
 import { LruMap } from "./lru-map.js";

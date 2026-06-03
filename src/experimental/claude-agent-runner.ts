@@ -1,5 +1,5 @@
 import type { AgentPromptInput, AgentPromptResult, AgentRunner, AgentTimelineItem } from "./agent-session-driver.js";
-import type { SessionDriverEvent } from "./session-driver.js";
+import type { SessionDriverEvent } from "../session-driver.js";
 
 type ClaudeAgentSdkModule = {
   query: (params: { prompt: string; options?: ClaudeQueryOptions }) => AsyncIterable<ClaudeSdkMessage>;

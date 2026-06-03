@@ -2,19 +2,21 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  HATCHET_AUTOFLOW_TASK_NAME,
-  HATCHET_AUTOFLOW_WORKER_NAME,
   createHatchetAutoflowTask,
   createHatchetClient,
   hatchetStatusToAutoflowPhase,
   HatchetAutoflowExecutionProvider,
   startHatchetAutoflowWorker,
-  type HatchetAutoflowPayload,
   type HatchetClientLike,
   type HatchetRunRef,
   type HatchetTaskDeclaration,
   type HatchetTaskOptions,
-} from "../src/index.js";
+} from "../src/hatchet-execution.js";
+import {
+  HATCHET_AUTOFLOW_TASK_NAME,
+  HATCHET_AUTOFLOW_WORKER_NAME,
+  type HatchetAutoflowPayload,
+} from "../src/execution-plane.js";
 
 class FakeRunRef implements HatchetRunRef {
   cancelled = false;

@@ -17,8 +17,6 @@ import {
   assessIssue,
   extractAutoReviewFeedback,
   nowIso,
-  beadUpdateArgsForIssue,
-  workItemToBeadsMetadata,
   workJobResultSchema,
   workJobSchema,
   parseWorkEnvelope,
@@ -65,8 +63,6 @@ import {
   LocalThreadExecutor,
   LocalIssueTrackerAdapter,
   NoopCodeCollaborationAdapter,
-  AutoflowService,
-  StandaloneAutoflowRunner,
   ProviderAdapterError,
   classifyProviderCliError,
   GitAdapter,
@@ -75,6 +71,7 @@ import {
   type ProjectedWorkSubject,
   type WorkItem,
 } from "../src/index.js";
+import { AutoflowService, StandaloneAutoflowRunner } from "../src/experimental/index.js";
 import { JsonCliError, runJsonCli, type JsonCliOptions } from "../src/json-cli.js";
 import {
   requireWorkItem,
@@ -94,10 +91,10 @@ import {
   nextAutoflowReconcileDelay,
   runEnabledProjectAutoflowReconcile,
 } from "../desktop/autoflow-reconcile.js";
-import { PiSessionDriver } from "../src/pi-session-driver.js";
-import { FLOW_PI_AGENT_TOOLS, PiSdkSessionRunner, childRunnerSource } from "../src/pi-sdk-runner.js";
-import { ClaudeAgentRunner } from "../src/claude-agent-runner.js";
-import { ClaudeSessionDriver } from "../src/claude-session-driver.js";
+import { PiSessionDriver } from "../src/experimental/pi-session-driver.js";
+import { FLOW_PI_AGENT_TOOLS, PiSdkSessionRunner, childRunnerSource } from "../src/experimental/pi-sdk-runner.js";
+import { ClaudeAgentRunner } from "../src/experimental/claude-agent-runner.js";
+import { ClaudeSessionDriver } from "../src/experimental/claude-session-driver.js";
 import { DesktopProjectRegistry } from "../desktop/project-registry.js";
 import type { DesktopProjectRecord } from "../desktop/project-registry.js";
 import type { DesktopProjectSurface } from "../desktop/route-types.js";
@@ -2060,6 +2057,15 @@ test("Desktop prompt router records ledger context and agent artifacts", async (
   assert.equal(projection.prompts[0].target, "artifact");
   assert.equal(projection.sessions[0].provider, "pi");
   assert.equal(projection.artifacts[0].title, "Prompt router diff");
+});
+
+test("Workflow ledger factory rejects removed Beads adapter", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-ledger-unsupported-"));
+
+  assert.throws(
+    () => createWorkflowLedger({ cwd: root, adapter: "beads" }),
+    /Unsupported workflow ledger adapter: beads/,
+  );
 });
 
 test("Desktop prompt router preserves prompt context when agent routing fails", async () => {
@@ -4300,7 +4306,7 @@ test("Work Runtime inspects queue from current Jira sprint before ledger", async
   const ledger = new MemoryWorkflowLedger();
   await ledger.writeIssue({
     ref: "ISSUE-15697",
-    title: "Stale closed bead",
+    title: "Stale closed issue",
     repoKeys: ["public_api"],
     state: "running",
     metadata: {
@@ -4467,7 +4473,6 @@ test("Work Runtime lets Jira review state override stale worker phase", async ()
 
   assert.equal(queue[0].state, "awaiting_human");
   assert.equal(stored?.state, "blocked");
-  assert.equal(stored ? workItemToBeadsMetadata(stored)["workflow.phase"] : "", "blocked");
   assert.equal(queue[0].metadata.jiraStatus, "In Review");
 });
 
@@ -7130,38 +7135,6 @@ test("Work Runtime advance sends merge-conflict resolution handoff with a specif
 
 
 
-
-test("Beads metadata keeps legacy review-ready flag aligned with phase", () => {
-  const metadata = workItemToBeadsMetadata({
-    ref: "ISSUE-15",
-    title: "Review ready",
-    repoKeys: ["app_api"],
-    state: "awaiting_review",
-    metadata: {
-      "workflow.repos.app_api.head_sha": "abc123",
-    },
-  });
-
-  assert.equal(metadata["workflow.phase"], "ready_for_review");
-  assert.equal(metadata["workflow.ready_for_review"], true);
-  assert.equal(metadata["workflow.repos.app_api.head_sha"], "abc123");
-});
-
-test("Beads metadata preserves branch kind and Jira issue type for workspace prep", () => {
-  const metadata = workItemToBeadsMetadata({
-    ref: "ISSUE-15720",
-    title: "Partner PartnerCloud Provider Integration",
-    repoKeys: ["app_api"],
-    state: "selected",
-    metadata: {
-      branchKind: "feature",
-      jiraIssueType: "Story",
-    },
-  });
-
-  assert.equal(metadata.branchKind, "feature");
-  assert.equal(metadata.jiraIssueType, "Story");
-});
 
 test("requireWorkItem returns valid WorkItem for correct input", () => {
   const valid = { ref: "FLOW-1", title: "Test issue", repoKeys: ["main"], state: "queued" as const, metadata: {} };

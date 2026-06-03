@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 
 import type { PiAgentPromptInput, PiAgentPromptResult, PiAgentRunner, PiTimelineItem } from "./pi-session-driver.js";
-import type { SessionDriverEvent } from "./session-driver.js";
+import type { SessionDriverEvent } from "../session-driver.js";
 
 type PiSdkModule = {
   createAgentSession?: (options?: Record<string, unknown>) => Promise<{

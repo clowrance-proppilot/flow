@@ -6,8 +6,8 @@ import {
   type WorkItem,
   type WorkJobExecutor,
   type WorkJobResult,
-  type CreateIssueOptions,
-} from "./index.js";
+} from "./contracts.js";
+import type { CreateIssueOptions } from "./work-runtime.js";
 import { JsonCliError } from "./json-cli.js";
 
 export const createIssueOptionsSchema = z.object({

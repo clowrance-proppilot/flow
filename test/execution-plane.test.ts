@@ -7,7 +7,7 @@ import {
   autoflowSemanticSteps,
   hatchetRepoConcurrencyKey,
   toHatchetAutoflowPayload,
-} from "../src/index.js";
+} from "../src/execution-plane.js";
 
 test("Hatchet Autoflow payload keeps Flow semantics explicit", () => {
   const payload = toHatchetAutoflowPayload({

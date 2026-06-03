@@ -3,12 +3,16 @@ import test from "node:test";
 
 import {
   AutoflowService,
-  HATCHET_AUTOFLOW_TASK_NAME,
-  HATCHET_AUTOFLOW_VERSION,
   StandaloneAutoflowRunner,
-  nowIso,
   type AutoflowAgentSessionDriver,
   type AutoflowAgentSessionSnapshot,
+} from "../../src/experimental/index.js";
+import {
+  HATCHET_AUTOFLOW_TASK_NAME,
+  HATCHET_AUTOFLOW_VERSION,
+} from "../../src/execution-plane.js";
+import {
+  nowIso,
 } from "../../src/index.js";
 
 class MemoryRunnerState {

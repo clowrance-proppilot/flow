@@ -100,7 +100,7 @@ export type ConversationItem = {
   createdAt: string;
 };
 
-export type { PiSessionSnapshot, PiSessionStatus, PiTimelineItem } from "../../src/pi-session-driver";
+export type { PiSessionSnapshot, PiSessionStatus, PiTimelineItem } from "../../src/experimental/pi-session-driver";
 export type { SessionDriverEvent as PiSessionEvent } from "../../src/session-driver";
 
 export type PendingConfirmationState = {

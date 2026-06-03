@@ -12,7 +12,7 @@ import {
 } from "../src/index.js";
 import { testWorkRuntime, legacyHostTopology } from "./helpers/test-fixtures.js";
 
-test("Work Runtime reconciliation adopts matching pull request into Beads state", async () => {
+test("Work Runtime reconciliation adopts matching pull request into Flow ledger state", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
   const ledger = new MemoryWorkflowLedger();
   const workRuntime = testWorkRuntime({

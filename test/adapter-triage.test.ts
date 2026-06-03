@@ -7,7 +7,6 @@ import {
   FlowStore,
   MemoryWorkflowLedger,
   nowIso,
-  beadUpdateArgsForIssue,
   ProviderAdapterError,
   classifyProviderCliError,
   extractAutoReviewFeedback,
@@ -78,16 +77,6 @@ test("Jira adapter backlog query includes default planning statuses", () => {
   assert.equal(
     currentUserBacklogJql(configString(legacyHostConfig.issueTracker, "projectKey")),
     "project = ISSUE AND assignee = currentUser() AND sprint is EMPTY AND status in ('Ready for Dev', 'To Do', 'Selected for Development') ORDER BY updated DESC",
-  );
-});
-
-test("Beads ledger issue update includes title and description", () => {
-  assert.deepEqual(
-    beadUpdateArgsForIssue("issue-1", {
-      title: "Current Jira title",
-      summary: "Current Jira summary",
-    }),
-    ["update", "issue-1", "--title", "Current Jira title", "--description", "Current Jira summary", "--allow-empty-description"],
   );
 });
 

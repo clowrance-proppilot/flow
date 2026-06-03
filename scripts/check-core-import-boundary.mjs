@@ -22,6 +22,9 @@ const coreModules = [
 
 // Experimental orchestration modules that core must not depend on.
 const forbiddenImportPatterns = [
+  /from\s+["']\.\/index(?:\.js)?["']/,
+  /from\s+["']\.\/experimental\//,
+  /from\s+["']\.\.\/experimental\//,
   /from\s+["']\.\/autoflow-runner(?:\.js)?["']/,
   /from\s+["']\.\/autoflow-service(?:\.js)?["']/,
   /from\s+["']\.\/agent-session-driver(?:\.js)?["']/,
@@ -36,6 +39,9 @@ const forbiddenImportPatterns = [
 ];
 
 const forbiddenModuleLabels = [
+  "index barrel",
+  "experimental/",
+  "experimental/",
   "autoflow-runner",
   "autoflow-service",
   "agent-session-driver",

@@ -12,7 +12,7 @@ const cliShim = join(flowRoot, ".tmp", "test", "src", "flow.js");
 const tsxRegister = pathToFileURL(join(flowRoot, "node_modules", "tsx", "dist", "esm", "index.mjs")).href;
 const testFiles = [
   "test/flow.test.ts",
-  "test/autoflow-runner.test.ts",
+  "test/experimental/autoflow-runner.test.ts",
   "test/dashboard-state.test.ts",
   "test/sql-state.test.ts",
   "test/sql-store.test.ts",

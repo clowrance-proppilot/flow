@@ -2,21 +2,24 @@
 
 import {
   bootstrapFlowConfig,
-  GhGitHubAdapter,
-  flowLayout,
   migrateFlowConfig,
-  terminalWorkerStatusValues,
-  type AcceptanceCriterionEvidence,
   validateFlowConfig,
-  verifyJsonlWorkflowLedger,
-  type CreateIssueOptions,
-  type WorkerExecutor,
-  type WorkerStatus,
+} from "./config/config-loader.js";
+import { GhGitHubAdapter } from "./adapters/github.js";
+import { flowLayout } from "./flow-layout.js";
+import { terminalWorkerStatusValues, workerExecutorValues, type WorkerExecutor, type WorkerStatus } from "./contracts/executor.js";
+import {
+  type AcceptanceCriterionEvidence,
   type WorkJobExecutor,
   type WorkJobResult,
   type WorkItem,
-  workerExecutorValues,
-} from "./index.js";
+} from "./contracts.js";
+import {
+  verifyJsonlWorkflowLedger,
+} from "./ledger.js";
+import {
+  type CreateIssueOptions,
+} from "./work-runtime.js";
 import { repoRoot } from "./flow-runtime.js";
 import { JsonCliError, runJsonCli } from "./json-cli.js";
 import { createConfiguredWorkRuntime } from "./runtime-factory.js";
