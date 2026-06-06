@@ -1,4 +1,4 @@
-import type { WorkItem, WorkerRunRecord, WorkerTaskResult } from "./contracts.js";
+import type { WorkItem, WorkerRunRecord } from "./contracts.js";
 import { nowIso } from "./contracts.js";
 import type { GitRepoStatus } from "./adapters/git.js";
 import type { PullRequestStatus } from "./adapters/github.js";
@@ -7,7 +7,6 @@ import type { WorkflowLedger } from "./ledger.js";
 import { isPullRequestConflicted } from "./pr-gate.js";
 import {
   normalizeRepoKey,
-  normalizeRepoKeys,
   existingString,
   metadataBoolean,
   metadataNumber,

@@ -264,15 +264,6 @@ function workerHasCompletionOutput(result: WorkerTaskResult): boolean {
   return result.changedFiles.length > 0 || result.testsRun.length > 0;
 }
 
-function blockedAssessment(issueRef: string, findings: ReadinessFinding[]): ReadinessAssessment {
-  return {
-    issueRef,
-    findings,
-    readyToAdvance: false,
-    reviewReady: false,
-  };
-}
-
 function isExternalProviderEscalation(value: unknown): value is { provider: string; blocker: string } {
   return Boolean(value) &&
     typeof value === "object" &&

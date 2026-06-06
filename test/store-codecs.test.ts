@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { FlowStore, FlowStoreInterface } from "../src/store.js";
-import { SqlFlowStore } from "../src/sql-store.js";
+import type { FlowStoreInterface } from "../src/store.js";
 import { withFileFlowStore, withSqlFlowStore } from "./helpers/fixtures.js";
 
 /**
