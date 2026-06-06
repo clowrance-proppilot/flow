@@ -15,7 +15,6 @@ import {
   MemoryWorkflowLedger,
   MirroredWorkflowLedger,
   assessIssue,
-  extractAutoReviewFeedback,
   nowIso,
   workJobResultSchema,
   workJobSchema,
@@ -62,10 +61,7 @@ import {
   LocalThreadExecutor,
   LocalIssueTrackerAdapter,
   NoopCodeCollaborationAdapter,
-  ProviderAdapterError,
-  classifyProviderCliError,
   GitAdapter,
-  triageIssues as triageIssuesEngine,
   type CreateIssueOptions,
   type ProjectedWorkSubject,
   type WorkItem,
@@ -78,10 +74,8 @@ import {
   requireWorkJobExecutor,
   requireWorkJobResult,
 } from "../src/dispatch-validators.js";
-import type { ProjectTopology } from "../src/project-topology.js";
-import { githubIssueCreateBody, normalizePullRequest, parseGitHubIssues, parsePullRequests } from "../src/adapters/github.js";
-import { currentUserBacklogJql, currentUserOpenSprintJql, parseJiraCommentUrl, parseJiraIssue, parseJiraSearch } from "../src/adapters/jira.js";
-import { testWorkRuntime, configString, legacyHostConfig, legacyHostTopology, execFileAsync } from "./helpers/test-fixtures.js";
+import { githubIssueCreateBody } from "../src/adapters/github.js";
+import { testWorkRuntime, configString, legacyHostTopology, execFileAsync } from "./helpers/test-fixtures.js";
 import { DesktopActionRouter, isDesktopAction } from "../desktop/action-router.js";
 import { desktopActionValues } from "../desktop/action-types.js";
 import { LruMap } from "../desktop/lru-map.js";
@@ -1942,7 +1936,7 @@ test("reviewCodeReview runtime method posts provider-neutral review comment when
       async findCodeReviews() {
         return [];
       },
-      async getCodeReviewDiff(repo, id) {
+      async getCodeReviewDiff(_repo, _id) {
         return { files: ["src/review.ts"], patch: `diff --git a/src/review.ts b/src/review.ts` };
       },
       async postReviewComment(repo, id, body) {

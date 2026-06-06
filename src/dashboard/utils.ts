@@ -1,5 +1,4 @@
 import {
-  isExceptionalWorkStatusLabel,
   normalizeRecordStatusLabel,
   normalizeWorkStatusLabel,
 } from "../dashboard-labels.js";

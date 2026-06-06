@@ -26,7 +26,6 @@ import {
   WorkerExecutorValue,
   WorkerStatusValue,
   WorkJobExecutorValue,
-  WorkJobStatusValue,
   createId,
   nowIso,
   workerTaskRequestSchema,
@@ -35,7 +34,6 @@ import {
   workJobSchema,
 } from "./contracts.js";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
 import { join, resolve } from "pathe";
 import { GitAdapter, type GitRepoStatus, type WorktreePlan } from "./adapters/git.js";
 import { type PullRequestMergeResult, type PullRequestStatus } from "./adapters/github.js";
@@ -45,6 +43,7 @@ import type {
   IssueTrackerProvider,
   SourceControlProvider,
   UnifiedCodeReview,
+  UnifiedDiff,
   UnifiedIssue,
   UnifiedWorkspaceStatus,
   TriageOptions,
@@ -65,12 +64,7 @@ import {
   selectPullRequestForGate,
   repoFromPullRequestUrl,
   inferredRepoKeys,
-  findPullRequestForIssue,
   pullRequestMetadata,
-  globalPullRequestMetadata,
-  pullRequestStatusSnapshot,
-  isPullRequestConflicted,
-  type PullRequestMetadataSnapshot,
 } from "./reconciliation.js";
 import {
   type PullRequestGateInput,
@@ -82,10 +76,8 @@ import {
   normalizeRepoKey,
   normalizeRepoKeys,
   existingString,
-  metadataBoolean,
   metadataNumber,
   metadataStringArray,
-  metadataValueEquals,
   mapWithConcurrency,
   workRuntimeQueueConcurrency,
 } from "./runtime-utils.js";
@@ -103,7 +95,6 @@ export interface WorkRuntimeOptions {
   executors?: ExecutorAdapter[];
   projectRoot?: string;
   defaultJiraProjectKey?: string;
-  autoflowBlockedThreshold?: number;
   staleWorkerRunTimeoutMs?: number;
   debugEnabled?: boolean;
   readiness?: ReadinessEvaluator;
@@ -262,7 +253,7 @@ export interface AdoptBranchOptions {
   select?: boolean;
 }
 
-export interface CreateJiraIssueOptions {
+export interface CreateIssueOptions {
   projectKey?: string;
   issueType?: "Bug" | "Task" | "Story";
   branchKind?: BranchKind;
@@ -273,7 +264,8 @@ export interface CreateJiraIssueOptions {
   select?: boolean;
 }
 
-export type CreateIssueOptions = CreateJiraIssueOptions;
+/** @deprecated Use CreateIssueOptions for provider-neutral issue creation. */
+export type CreateJiraIssueOptions = CreateIssueOptions;
 
 export interface IssueIntakeOptions extends CreateIssueOptions {
   apply?: boolean;
@@ -454,6 +446,12 @@ export interface FlowReviewDiffSummary {
   files: string[];
   stat?: string;
 }
+
+type LocalReviewDiff = UnifiedDiff & {
+  repoKey: string;
+  repoPath: string;
+};
+
 export class FlowWorkRuntime {
   private readonly store: FlowStoreInterface;
   private readonly ledger: WorkflowLedger;
@@ -464,7 +462,6 @@ export class FlowWorkRuntime {
   private readonly workTypes: WorkTypeRegistry;
   private readonly projectRoot: string;
   private readonly defaultJiraProjectKey?: string;
-  private readonly autoflowBlockedThreshold: number;
   private readonly debugEnabled: boolean;
   private readonly readiness: ReadinessEvaluator;
   private readonly reconciliation: ReconciliationEngine;
@@ -480,7 +477,6 @@ export class FlowWorkRuntime {
     this.workTypes = options.workTypes ?? createDefaultFlowWorkTypeRegistry();
     this.projectRoot = options.projectRoot ?? process.cwd();
     this.defaultJiraProjectKey = options.defaultJiraProjectKey;
-    this.autoflowBlockedThreshold = positiveNumber(options.autoflowBlockedThreshold, 3);
     this.debugEnabled = options.debugEnabled ?? false;
     this.readiness = options.readiness ?? { assess: assessIssue };
     this.reconciliation = new ReconciliationEngine({
@@ -1569,7 +1565,7 @@ export class FlowWorkRuntime {
     return this.reconcileIssue(sessionId, issueRef);
   }
 
-  async reviewLocal(sessionId: string, issueRef: string): Promise<any> {
+  async reviewLocal(sessionId: string, issueRef: string): Promise<FlowReviewLocalResult> {
     const issue = await this.reconcileIssue(sessionId, issueRef);
     const workerResults = await this.ledger.listWorkerResults(issue.ref);
     const diffs = await this.localReviewDiffs(issue);
@@ -1598,7 +1594,7 @@ export class FlowWorkRuntime {
     };
   }
 
-  async reviewCodeReview(sessionId: string, issueRef: string, options?: { repo?: string; post?: boolean }): Promise<any> {
+  async reviewCodeReview(sessionId: string, issueRef: string, options?: { repo?: string; post?: boolean }): Promise<FlowReviewCodeReviewResult> {
     const issue = await this.reconcileIssue(sessionId, issueRef);
     const review = reviewMetadata(issue);
     const codeReviewRequired = this.codeReviewRequired();
@@ -1627,16 +1623,16 @@ export class FlowWorkRuntime {
     };
   }
 
-  private async localReviewDiffs(issue: WorkItem): Promise<any[]> {
-    if (!(this.sourceControl as any).diffWorkspace) return [];
+  private async localReviewDiffs(issue: WorkItem): Promise<LocalReviewDiff[]> {
+    if (!this.sourceControl.diffWorkspace) return [];
     const repoKeys = issue.repoKeys.length ? issue.repoKeys : [...this.topology.validRepoKeys];
-    const diffs: any[] = [];
+    const diffs: LocalReviewDiff[] = [];
     for (const repoKey of repoKeys) {
       const metadataPath = existingString(issue.metadata[`workflow.repos.${repoKey}.worktree_path`]) ?? existingString(issue.metadata.work_dir);
       const repoPath = metadataPath ?? this.topology.repoPath(this.projectRoot, repoKey);
       const baseBranch = existingString(issue.metadata[`workflow.repos.${repoKey}.base_branch`]) ?? "main";
       const baseRef = baseBranch.startsWith("origin/") ? baseBranch : `origin/${baseBranch}`;
-      const diff = await (this.sourceControl as any).diffWorkspace({ repoPath, baseRef, headRef: "HEAD" });
+      const diff = await this.sourceControl.diffWorkspace({ repoPath, baseRef, headRef: "HEAD" });
       diffs.push({ repoKey, repoPath, ...diff });
     }
     return diffs;
@@ -3076,12 +3072,6 @@ export class FlowWorkRuntime {
     return this.reconciliation.preloadPullRequests(issues);
   }
 
-  private isValidRepoKey(repoKey: string): boolean {
-    if (!this.topology.isValidRepoKey(repoKey)) return false;
-    const repoPath = this.topology.repoPath(this.projectRoot, repoKey);
-    return existsSync(repoPath);
-  }
-
   private repoKeyFromName(repoName: string): string {
     for (const key of this.topology.validRepoKeys) {
       if (this.topology.repoName(key) === repoName) return key;
@@ -3836,15 +3826,15 @@ function codeReviewTargetFromMetadata(
   if (!repo || typeof number !== "number" || !Number.isFinite(number)) return undefined;
   return { repo, number, url: review.prUrl };
 }
-function reviewFindingsFromDiffs(diffs: any[]): any[] {
+function reviewFindingsFromDiffs(diffs: LocalReviewDiff[]): FlowReviewFinding[] {
   if (diffs.length === 0) return missingReviewFindings("Local diff reader is not configured.");
   const changedFiles = diffs.flatMap((diff) => Array.isArray(diff.files) ? diff.files : []);
   if (changedFiles.length === 0) return missingReviewFindings("No local diff was available to review.");
   return [{ severity: "info", message: `Reviewed ${changedFiles.length} changed file${changedFiles.length === 1 ? "" : "s"} in local diff.`, blocking: false }];
 }
 
-function reviewFindingsFromCodeReview(review: NonNullable<ReturnType<typeof reviewMetadata>>, diff: any): any[] {
-  const findings: any[] = [];
+function reviewFindingsFromCodeReview(review: NonNullable<ReturnType<typeof reviewMetadata>>, diff: UnifiedDiff | undefined): FlowReviewFinding[] {
+  const findings: FlowReviewFinding[] = [];
   if (!diff) findings.push(...missingReviewFindings("Code review diff reader is not configured."));
   else if (!Array.isArray(diff.files) || diff.files.length === 0) findings.push(...missingReviewFindings("Code review diff is empty."));
   else findings.push({ severity: "info", message: `Reviewed ${diff.files.length} changed file${diff.files.length === 1 ? "" : "s"} in code review diff.`, blocking: false });
@@ -3853,7 +3843,7 @@ function reviewFindingsFromCodeReview(review: NonNullable<ReturnType<typeof revi
   return findings;
 }
 
-function missingReviewFindings(message: string): any[] {
+function missingReviewFindings(message: string): FlowReviewFinding[] {
   return [{ severity: "error", message, blocking: true }];
 }
 
@@ -3884,22 +3874,18 @@ function pullRequestBlockersFromMetadata(review: NonNullable<ReturnType<typeof r
     });
 }
 
-function reviewSummary(target: string, findings: any[], diffs: any[]): string {
+function reviewSummary(target: string, findings: FlowReviewFinding[], diffs: Array<Pick<UnifiedDiff, "files">>): string {
   const fileCount = diffs.reduce((sum, diff) => sum + (Array.isArray(diff.files) ? diff.files.length : 0), 0);
   const blockingCount = findings.filter((finding) => finding.blocking).length;
   if (blockingCount > 0) return `${target} review found ${blockingCount} blocking finding${blockingCount === 1 ? "" : "s"}.`;
   return `${target} review completed for ${fileCount} changed file${fileCount === 1 ? "" : "s"}.`;
 }
 
-function flowReviewComment(findings: any[]): string {
+function flowReviewComment(findings: FlowReviewFinding[]): string {
   const blocking = findings.filter((finding) => finding.blocking);
   const mustFix = blocking.length ? blocking.map((finding) => `- ${finding.message}`).join("\n") : "- None identified.";
   const notes = findings.filter((finding) => !finding.blocking).map((finding) => `- ${finding.message}`).join("\n") || "- None identified.";
   return ["<!-- flow-pr-review -->", "## Must-fix", mustFix, "", "## Needs Confirmation", "- None identified.", "", "## Notes", notes].join("\n");
-}
-
-function collaborationCanPostReviewComments(provider: CodeCollaborationIntegration | undefined): provider is CodeCollaborationIntegration & Required<Pick<GitHubInspector, "postPullRequestComment">> {
-  return collaborationCanPostComments(provider);
 }
 
 interface RetryableWorkJobFailure {
@@ -4783,18 +4769,6 @@ function buildLiveWorkerHandoffPrompt(
   ].join("\n");
 }
 
-function threadTitleForHandoff(request: Pick<WorkerTaskRequest, "issueRef" | "prompt">): string {
-  const title = request.prompt.match(/^Title:\s*(.+)$/m)?.[1] ?? request.issueRef;
-  const shortDescription = title
-    .replace(/\b[A-Z]+-\d+\b/g, "")
-    .replace(/[^a-zA-Z0-9]+/g, " ")
-    .trim()
-    .split(/\s+/)
-    .slice(0, 6)
-    .join(" ");
-  return `${shortDescription || "Flow work"} ${request.issueRef}`.trim();
-}
-
 function worktreePathForRepo(issue: WorkItem, repoKey: string): string | undefined {
   const normalized = normalizeRepoKey(repoKey);
   return existingString(issue.metadata[`workflow.repos.${normalized}.worktree_path`]) ??
@@ -4837,8 +4811,4 @@ function stringFromRecord(record: unknown, key: string): string | undefined {
   if (!record || typeof record !== "object" || Array.isArray(record)) return undefined;
   const value = (record as Record<string, unknown>)[key];
   return typeof value === "string" && value.trim() ? value : undefined;
-}
-
-function positiveNumber(value: number | undefined, fallback: number): number {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
 }

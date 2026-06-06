@@ -125,7 +125,7 @@ export class StandaloneAutoflowRunner {
 
     const issues = { ...status.issues };
     let changed = false;
-    for (const [ref, issueStatus] of Object.entries(issues)) {
+    for (const ref of Object.keys(issues)) {
       const issue = await inspectIssue(ref).catch(() => undefined);
       if (!issue || !isTerminalWorkflowIssue(issue)) continue;
       delete issues[ref];

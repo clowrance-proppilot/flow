@@ -10,13 +10,8 @@ import { flowLayout } from "./flow-layout.js";
 import { terminalWorkerStatusValues, workerExecutorValues, type WorkerExecutor, type WorkerStatus } from "./contracts/executor.js";
 import {
   type AcceptanceCriterionEvidence,
-  type WorkJobExecutor,
-  type WorkJobResult,
   type WorkItem,
 } from "./contracts.js";
-import {
-  type CreateIssueOptions,
-} from "./work-runtime.js";
 import { repoRoot } from "./flow-runtime.js";
 import { JsonCliError, runJsonCli } from "./json-cli.js";
 import { createConfiguredWorkRuntime } from "./runtime-factory.js";
@@ -906,16 +901,7 @@ function parseBranchKind(value: string | undefined): "bug" | "feature" | undefin
   throw new Error(`Expected branch kind bug or feature, got ${value}.`);
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 function configString(config: Record<string, unknown> | undefined, key: string): string | undefined {
   const value = config?.[key];
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function configRecord(config: Record<string, unknown> | undefined, key: string): Record<string, unknown> | undefined {
-  const value = config?.[key];
-  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }

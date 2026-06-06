@@ -160,7 +160,6 @@ runtime:
     slots: 4
     dashboardUrl: "http://127.0.0.1:8080"
   defaultSessionId: "cli"
-  autoflowBlockedThreshold: 5
   staleWorkerRunTimeoutMs: 600000
   debug: false
   dashboard:
@@ -172,8 +171,6 @@ runtime:
 - `store.type`: `file` or `sqlite`. Defaults to SQLite in configured runtime.
 - `agentSession.provider`: `pi` or `claude`.
 - `executionPlane.type`: `flow-standalone` or `hatchet`.
-- `autoflowBlockedThreshold`: number of blocked Autoflow attempts before
-  stopping.
 - `staleWorkerRunTimeoutMs`: timeout before stale worker runs are expired.
 - `dashboard`: host, port, and public URL for dashboard serving.
 

@@ -319,13 +319,3 @@ function upsertByJobId<T extends { jobId: string }>(items: T[], item: T): T[] {
   if (index === -1) return [...items, item];
   return items.map((existing, itemIndex) => (itemIndex === index ? { ...existing, ...item } : existing));
 }
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function disabledMetadata(value: unknown): boolean {
-  if (value === false || value === 0) return true;
-  if (typeof value !== "string") return false;
-  return ["0", "false", "no", "off", "disabled"].includes(value.trim().toLowerCase());
-}

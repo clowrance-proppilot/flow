@@ -11,12 +11,11 @@ import {
   classifyProviderCliError,
   extractAutoReviewFeedback,
   triageIssues as triageIssuesEngine,
-  configToProjectTopology,
 } from "../src/index.js";
-import { parsePullRequests, parseGitHubIssues, githubIssueCreateBody, normalizePullRequest } from "../src/adapters/github.js";
+import { parsePullRequests, parseGitHubIssues, normalizePullRequest } from "../src/adapters/github.js";
 import { parseJiraIssue, parseJiraCommentUrl, parseJiraSearch, currentUserOpenSprintJql, currentUserBacklogJql } from "../src/adapters/jira.js";
 import type { ProjectTopology } from "../src/project-topology.js";
-import { testWorkRuntime, configString, legacyHostConfig, legacyHostTopology, execFileAsync } from "./helpers/test-fixtures.js";
+import { testWorkRuntime, configString, legacyHostConfig, execFileAsync } from "./helpers/test-fixtures.js";
 
 test("Jira adapter parses issue JSON", () => {
   const issue = parseJiraIssue({

@@ -249,8 +249,7 @@ export class AgentSessionDriver {
     const session = await this.getSession(sessionId);
     const text = prompt.trim();
     if (!text) throw new Error("Prompt is required.");
-    const issue = await this.resolveIssue(session.issueRef);
-    const contextualPrompt = issuePrompt(issue, {
+    const contextualPrompt = issuePrompt({
       prompt: text,
       workspacePath: session.workspacePath,
     });
@@ -529,7 +528,7 @@ export class AgentSessionDriver {
   }
 }
 
-export function workspacePathFromIssue(issue: WorkItem): string | undefined {
+function workspacePathFromIssue(issue: WorkItem): string | undefined {
   for (const repoKey of issue.repoKeys ?? []) {
     const key = `workflow.repos.${repoKey}.worktree_path`;
     const value = issue.metadata[key];
@@ -538,7 +537,7 @@ export function workspacePathFromIssue(issue: WorkItem): string | undefined {
   return undefined;
 }
 
-export function issuePrompt(issue: WorkItem, input: { prompt: string; workspacePath?: string }): string {
+function issuePrompt(input: { prompt: string; workspacePath?: string }): string {
   return [
     "You are working in Flow Desktop on the selected issue below.",
     "Use this issue context as the source of truth for the current turn.",

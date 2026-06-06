@@ -344,7 +344,6 @@ test("StandaloneAutoflowRunner times out stuck agent prompts and frees the slot"
 
 test("StandaloneAutoflowRunner recovers from postPrompt timeout when workspace becomes clean", async () => {
   let recordedResult: { issueRef: string; status: string; workJobId?: string; blockers?: string[] } | undefined;
-  let gitInspections = 0;
   const runner = new StandaloneAutoflowRunner({
     projectId: "flow",
     state: new MemoryRunnerState(),
