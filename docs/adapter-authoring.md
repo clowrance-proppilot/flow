@@ -38,6 +38,58 @@ runtime:
 Do not make environment variables the primary selector for topology or provider
 choice. Use them for secrets only.
 
+## Built-in Issue Tracker Adapters
+
+Flow ships with first-class support for several issue trackers:
+
+### GitHub Issues
+
+```yaml
+issueTracker:
+  type: "github"
+  owner: "my-org"
+  repo: "my-repo"
+  activeLabels: ["in-progress"]
+  backlogLabels: ["backlog"]
+```
+
+### Jira
+
+```yaml
+issueTracker:
+  type: "jira"
+  siteUrl: "https://myteam.atlassian.net"
+  projectKey: "PROJ"
+```
+
+### Linear
+
+```yaml
+issueTracker:
+  type: "linear"
+  apiKey: "${LINEAR_API_KEY}"
+  teamId: "team-uuid"
+  workspaceUrl: "https://api.linear.app"  # optional, defaults to api.linear.app
+```
+
+The Linear adapter maps Linear issue states to Flow's normalized status
+categories:
+
+| Linear state type | Flow status      | Flow statusCategory |
+|-------------------|------------------|---------------------|
+| `completed`       | Done             | Complete            |
+| `canceled`        | Canceled         | Complete            |
+| `started`         | In Progress      | In Progress         |
+| `backlog`         | Backlog          | To Do               |
+| `unstarted`       | To Do            | To Do               |
+
+### Local
+
+```yaml
+issueTracker:
+  type: "local"
+```
+
 ## Custom Adapter Pattern
 
 A custom issue tracker should implement the provider interface used by
