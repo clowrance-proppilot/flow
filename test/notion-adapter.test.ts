@@ -37,8 +37,10 @@ function makePage(overrides: Partial<NotionPage> = {}): NotionPage {
   };
 }
 
+type FetchInit = { method?: string; body?: string; headers?: Record<string, string> };
+
 function mockFetch(response: unknown, status = 200, headers?: Record<string, string>) {
-  const fetchMock = mock.fn(async () => ({
+  const fetchMock = mock.fn(async (_url: string, _init?: FetchInit) => ({
     ok: status >= 200 && status < 300,
     status,
     headers: new Map(Object.entries(headers ?? {})),
@@ -300,7 +302,7 @@ test("NotionAdapter.fetchActiveQueue queries with active statuses", async () => 
 
   // Verify the request body had active status filter
   const call = fetchMock.mock.calls[0];
-  const body = JSON.parse(call.arguments[1].body as string);
+  const body = JSON.parse(call.arguments[1]?.body as string);
   assert.ok(body.filter.or.length > 0);
 
   mock.restoreAll();
@@ -316,7 +318,7 @@ test("NotionAdapter.fetchBacklogQueue queries with backlog statuses", async () =
   assert.equal(issues.length, 1);
 
   const call = fetchMock.mock.calls[0];
-  const body = JSON.parse(call.arguments[1].body as string);
+  const body = JSON.parse(call.arguments[1]?.body as string);
   assert.ok(body.filter.or.some((f: { status: { equals: string } }) => f.status.equals === "To Do"));
 
   mock.restoreAll();
@@ -361,7 +363,7 @@ test("NotionAdapter.createIssue creates page with properties", async () => {
 
   // Verify the request body
   const call = fetchMock.mock.calls[0];
-  const body = JSON.parse(call.arguments[1].body as string);
+  const body = JSON.parse(call.arguments[1]?.body as string);
   assert.equal(body.parent.database_id, "db-id");
   assert.ok(body.children?.length > 0);
 
@@ -372,7 +374,7 @@ test("NotionAdapter.transitionIssue updates status property", async () => {
   const updatedPage = makePage({
     properties: { ...makePage().properties, Status: { status: { name: "Done" } } },
   });
-  const fetchMock = mock.fn(async (url: string) => {
+  const fetchMock = mock.fn(async (url: string, _init?: FetchInit) => {
     if (url.includes("/pages/") && !url.includes("/query")) {
       return {
         ok: true,
@@ -397,7 +399,7 @@ test("NotionAdapter.transitionIssue updates status property", async () => {
   assert.equal((result as { status: string }).status, "Done");
 
   // Verify PATCH request was made
-  const patchCall = fetchMock.mock.calls.find((c: { arguments: { 1?: { method?: string } } }) => c.arguments[1]?.method === "PATCH");
+  const patchCall = fetchMock.mock.calls.find((c) => c.arguments[1]?.method === "PATCH");
   assert.ok(patchCall);
 
   mock.restoreAll();
@@ -413,7 +415,7 @@ test("NotionAdapter.postComment appends paragraph block", async () => {
   assert.ok(result.url);
 
   const call = fetchMock.mock.calls[0];
-  const body = JSON.parse(call.arguments[1].body as string);
+  const body = JSON.parse(call.arguments[1]?.body as string);
   assert.equal(body.children[0].type, "paragraph");
   assert.equal(body.children[0].paragraph.rich_text[0].text.content, "A comment");
 
