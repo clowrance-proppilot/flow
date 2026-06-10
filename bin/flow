@@ -3,6 +3,20 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { existsSync, readdirSync, statSync } from "node:fs";
 
+const requiredNodeMajor = 24;
+const nodeMajor = Number(process.versions.node.split(".")[0]);
+if (nodeMajor < requiredNodeMajor) {
+  process.stdout.write(`${JSON.stringify({
+    ok: false,
+    error: {
+      code: "UNSUPPORTED_NODE_VERSION",
+      message: `Flow requires Node ${requiredNodeMajor}+ (node:sqlite); running ${process.versions.node}.`,
+      hint: `Switch to Node ${requiredNodeMajor} (for example: nvm use ${requiredNodeMajor}) and rerun.`,
+    },
+  })}\n`);
+  process.exit(1);
+}
+
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(scriptDir, "..");
 const runtimeSourceDir = join(rootDir, "src");
