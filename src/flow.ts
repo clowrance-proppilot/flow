@@ -486,7 +486,7 @@ function flowManifest(target?: string) {
     error: {
       code: "UNKNOWN_MANIFEST_TARGET",
       message: `Unknown manifest target: ${target}`,
-      targets: ["workflow", "issue", "runtime", "config", "layout"],
+      targets: ["workflow", "issue", "review", "runtime", "config", "layout"],
     },
   };
 }

@@ -10,7 +10,7 @@ and writes one JSON object to stdout. There is no human-output mode and no
 flow '{"op":"manifest"}'
 flow '{"op":"manifest","target":"workflow"}'
 flow '{"op":"manifest","target":"issue"}'
-flow '{"op":"manifest","target":"autoflow"}'
+flow '{"op":"manifest","target":"review"}'
 flow '{"op":"manifest","target":"config"}'
 ```
 
@@ -27,7 +27,6 @@ Use manifests as the authoritative command shape for agents.
 - `ledger`: verify the active SQL workflow ledger.
 - `issue`: issue view, create, route, and workspace adoption.
 - `workflow`: readiness, handoff, evidence, docs, result, and closeout.
-- `autoflow`: experimental app-layer Autoflow control.
 - `review`: local or code review status.
 - `runtime`: raw Work Runtime method bridge.
 
@@ -79,12 +78,10 @@ Autoflow is experimental app-layer behavior. Core CLI agent work should use the
 issue and workflow commands above; see [Agent handoff](agent-handoff.md) for the
 CLI-first local-worker pattern.
 
+Autoflow is not a `flow` op. It runs through its own app-layer entry point:
+
 ```bash
-flow '{"op":"autoflow","mode":"status"}'
-flow '{"op":"autoflow","mode":"enable"}'
-flow '{"op":"autoflow","mode":"disable"}'
-flow '{"op":"autoflow","mode":"tick"}'
-flow '{"op":"autoflow","mode":"run","id":"GH-123"}'
+npm run autoflow -- GH-123
 ```
 
 Autoflow uses configured issue, source-control, collaboration, runtime store,

@@ -15,6 +15,9 @@
   "publishConfig": {
     "access": "public"
   },
+  "engines": {
+    "node": ">=24"
+  },
   "bin": {
     "flow": "bin/flow",
     "flow-dashboard": "bin/flow-dashboard"
