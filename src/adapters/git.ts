@@ -111,7 +111,57 @@ export class GitAdapter implements SourceControlProvider {
     };
   }
 
+  async publishBranch(options: { worktreePath: string; branch?: string; remote?: string; force?: boolean }): Promise<UnifiedWorkspaceStatus> {
+    const status = await this.inspect(options.worktreePath);
+    if (status.dirty) {
+      throw new Error(`Worktree has uncommitted changes; commit them before publishing: ${status.entries.slice(0, 5).join(", ")}`);
+    }
+    if (options.branch && status.branch !== options.branch) {
+      throw new Error(`Branch mismatch: expected ${options.branch}, got ${status.branch || "detached"}.`);
+    }
+    if (!status.branch) throw new Error("Cannot publish a detached HEAD.");
+    const remote = options.remote ?? "origin";
+    await execFileAsync(
+      "git",
+      [
+        "-C", options.worktreePath,
+        "push", "--set-upstream",
+        ...(options.force ? ["--force-with-lease"] : []),
+        remote, status.branch,
+      ],
+      { maxBuffer: 10 * 1024 * 1024 },
+    );
+    return normalizeGitStatus(await this.inspect(options.worktreePath));
+  }
+
+  async syncBranch(options: { worktreePath: string; baseRef: string; remote?: string }): Promise<UnifiedWorkspaceStatus> {
+    const status = await this.inspect(options.worktreePath);
+    if (status.dirty) {
+      throw new Error(`Worktree has uncommitted changes; commit or stash them before syncing: ${status.entries.slice(0, 5).join(", ")}`);
+    }
+    const remote = options.remote ?? "origin";
+    await execFileAsync("git", ["-C", options.worktreePath, "fetch", remote, options.baseRef], { maxBuffer: 10 * 1024 * 1024 });
+    try {
+      await execFileAsync("git", ["-C", options.worktreePath, "rebase", `${remote}/${options.baseRef}`], { maxBuffer: 10 * 1024 * 1024 });
+    } catch (error) {
+      await execFileAsync("git", ["-C", options.worktreePath, "rebase", "--abort"], { maxBuffer: 10 * 1024 * 1024 })
+        .catch(() => undefined);
+      throw new Error(`Rebase onto ${remote}/${options.baseRef} failed and was aborted; resolve conflicts manually: ${errorMessage(error)}`);
+    }
+    return normalizeGitStatus(await this.inspect(options.worktreePath));
+  }
+
   async pruneWorktree(options: { repoPath: string; worktreePath: string; branch?: string; requireClean?: boolean }): Promise<UnifiedWorktreePruneResult> {
+    if (!await pathExists(options.worktreePath)) {
+      await execFileAsync("git", ["-C", options.repoPath, "worktree", "prune"], { maxBuffer: 10 * 1024 * 1024 })
+        .catch(() => undefined);
+      return {
+        removed: true,
+        reason: "worktree directory already absent",
+        worktreePath: options.worktreePath,
+        branch: options.branch,
+      };
+    }
     if (pathContains(options.worktreePath, process.cwd())) {
       return {
         removed: false,

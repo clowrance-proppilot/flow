@@ -126,7 +126,7 @@ export function assessIssue(input: ReadinessAssessmentInput): ReadinessAssessmen
       input.issue.ref,
       "blocker",
       "Executor changes are not pushed.",
-      "Commit and push the prepared worktree changes before reassessing pull request checks.",
+      "Commit the prepared worktree changes, then push them with workflow mode publish before reassessing pull request checks.",
     ));
   }
 

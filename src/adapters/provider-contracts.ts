@@ -197,4 +197,6 @@ export interface SourceControlProvider {
   prepareWorktree?(options: { repoPath: string; worktreePath: string; branch: string; baseRef?: string }): Promise<UnifiedWorkspaceStatus>;
   diffWorkspace?(options: { repoPath: string; baseRef?: string; headRef?: string }): Promise<UnifiedDiff>;
   pruneWorktree?(options: { repoPath: string; worktreePath: string; branch?: string; requireClean?: boolean }): Promise<UnifiedWorktreePruneResult>;
+  publishBranch?(options: { worktreePath: string; branch?: string; remote?: string; force?: boolean }): Promise<UnifiedWorkspaceStatus>;
+  syncBranch?(options: { worktreePath: string; baseRef: string; remote?: string }): Promise<UnifiedWorkspaceStatus>;
 }

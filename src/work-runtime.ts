@@ -1451,6 +1451,89 @@ export class FlowWorkRuntime {
     return await this.transitionJiraWorkStarted(sessionId, updated);
   }
 
+  async publishWorkspace(
+    sessionId: string,
+    options: { issueRef: string; repoKey?: string; force?: boolean },
+  ): Promise<WorkItem> {
+    await this.requireSession(sessionId);
+    const issue = await this.reconcileIssue(sessionId, options.issueRef);
+    const repoKey = normalizeRepoKey(options.repoKey ?? issue.repoKeys[0] ?? "");
+    if (!repoKey) throw new Error("Repo routing is missing.");
+    if (!this.sourceControl.publishBranch) {
+      throw new Error("Branch publishing is not available in this runtime.");
+    }
+    const worktreePath = worktreePathForRepo(issue, repoKey);
+    const branch = branchForRepo(issue, repoKey);
+    if (!worktreePath || !branch) {
+      throw new Error(`No prepared workspace is recorded for ${issue.ref}; run prepareWorkspace or adoptWorkspace first.`);
+    }
+    const status = await this.sourceControl.publishBranch({
+      worktreePath,
+      branch,
+      force: options.force === true,
+    });
+    const publishedAt = nowIso();
+    const updated = await this.ledger.writeIssue({
+      ...issue,
+      metadata: {
+        ...issue.metadata,
+        [`workflow.repos.${repoKey}.head_sha`]: status.headSha,
+        [`workflow.repos.${repoKey}.dirty`]: status.dirty,
+        [`workflow.repos.${repoKey}.published_sha`]: status.headSha,
+        [`workflow.repos.${repoKey}.published_at`]: publishedAt,
+      },
+    });
+    await this.store.appendEvent({
+      sessionId,
+      type: "workspace.published",
+      issueRef: issue.ref,
+      message: `Published ${branch} for ${issue.ref}.`,
+      payload: { repoKey, branch, headSha: status.headSha, publishedAt },
+    });
+    return updated;
+  }
+
+  async syncWorkspaceBranch(
+    sessionId: string,
+    options: { issueRef: string; repoKey?: string; push?: boolean },
+  ): Promise<WorkItem> {
+    await this.requireSession(sessionId);
+    const issue = await this.reconcileIssue(sessionId, options.issueRef);
+    const repoKey = normalizeRepoKey(options.repoKey ?? issue.repoKeys[0] ?? "");
+    if (!repoKey) throw new Error("Repo routing is missing.");
+    if (!this.sourceControl.syncBranch) {
+      throw new Error("Branch syncing is not available in this runtime.");
+    }
+    const worktreePath = worktreePathForRepo(issue, repoKey);
+    const branch = branchForRepo(issue, repoKey);
+    if (!worktreePath || !branch) {
+      throw new Error(`No prepared workspace is recorded for ${issue.ref}; run prepareWorkspace or adoptWorkspace first.`);
+    }
+    const baseRef = existingString(issue.metadata[`workflow.repos.${repoKey}.base_branch`]) ??
+      this.topology.defaultBaseBranch(repoKey);
+    let status = await this.sourceControl.syncBranch({ worktreePath, baseRef });
+    const pushed = options.push !== false && Boolean(this.sourceControl.publishBranch);
+    if (pushed && this.sourceControl.publishBranch) {
+      status = await this.sourceControl.publishBranch({ worktreePath, branch, force: true });
+    }
+    await this.ledger.writeIssue({
+      ...issue,
+      metadata: {
+        ...issue.metadata,
+        [`workflow.repos.${repoKey}.head_sha`]: status.headSha,
+        [`workflow.repos.${repoKey}.dirty`]: status.dirty,
+      },
+    });
+    await this.store.appendEvent({
+      sessionId,
+      type: "workspace.synced",
+      issueRef: issue.ref,
+      message: `Synced ${branch} onto ${baseRef} for ${issue.ref}.`,
+      payload: { repoKey, branch, baseRef, headSha: status.headSha, pushed },
+    });
+    return this.refreshReviewState(sessionId, issue.ref);
+  }
+
   async adoptBranch(sessionId: string, options: AdoptBranchOptions = {}): Promise<WorkItem> {
     const session = await this.requireSession(sessionId);
     const worktreePath = options.worktreePath ?? this.projectRoot;
@@ -2774,6 +2857,53 @@ export class FlowWorkRuntime {
     return results;
   }
 
+  async cleanupIssueWorkspaces(
+    sessionId: string,
+    issueRef: string,
+  ): Promise<{
+    status: string;
+    issue: WorkItem;
+    prunedWorktrees: Array<{ repoKey: string; removed: boolean; reason?: string; worktreePath: string; branch?: string }>;
+    cleanupBlockers: string[];
+  }> {
+    await this.requireSession(sessionId);
+    const issue = await this.reconcileIssue(sessionId, issueRef);
+    const merged = issue.metadata["workflow.closeout.merged"] === true ||
+      issue.metadata.prState === "MERGED" ||
+      issue.repoKeys.some((repoKey) => issue.metadata[`workflow.repos.${normalizeRepoKey(repoKey)}.pr_state`] === "MERGED");
+    if (!merged) {
+      throw new Error(`Cleanup only runs after the pull request for ${issue.ref} is merged.`);
+    }
+    const prunedWorktrees = await this.pruneMergedIssueWorktrees(issue);
+    const cleanupBlockers = worktreeCleanupBlockers(prunedWorktrees);
+    const cleanupNeeded = cleanupBlockers.length > 0;
+    const previousStatus = existingString(issue.metadata["workflow.closeout.status"]);
+    const status = cleanupNeeded
+      ? previousStatus ?? "cleanup_needed"
+      : resolveCleanupCloseoutStatus(issue, previousStatus);
+    const updated = await this.ledger.writeIssue({
+      ...issue,
+      metadata: {
+        ...issue.metadata,
+        "workflow.closeout.status": status,
+        "workflow.closeout.pruned_worktrees": JSON.stringify(prunedWorktrees),
+        "workflow.closeout.cleanup_needed": cleanupNeeded,
+        "workflow.closeout.cleanup_blockers": JSON.stringify(cleanupBlockers),
+        "workflow.closeout.checked_at": nowIso(),
+      },
+    });
+    await this.store.appendEvent({
+      sessionId,
+      type: "closeout.cleanup",
+      issueRef: issue.ref,
+      message: cleanupNeeded
+        ? `Worktree cleanup for ${issue.ref} still needs attention.`
+        : `Cleaned up worktrees for ${issue.ref}.`,
+      payload: { status, prunedWorktrees, cleanupBlockers },
+    });
+    return { status, issue: updated, prunedWorktrees, cleanupBlockers };
+  }
+
   async recordReviewConfirmation(
     sessionId: string,
     record: Omit<ReviewConfirmationRecord, "recordedAt">,
@@ -2905,6 +3035,57 @@ export class FlowWorkRuntime {
       payload: { record },
     });
     return updated;
+  }
+
+  async openPullRequest(
+    sessionId: string,
+    options: {
+      issueRef: string;
+      repoKey?: string;
+      title?: string;
+      body?: string;
+      draft?: boolean;
+      baseBranch?: string;
+    },
+  ): Promise<WorkItem> {
+    await this.requireSession(sessionId);
+    const issue = await this.reconcileIssue(sessionId, options.issueRef);
+    const repoKey = normalizeRepoKey(options.repoKey ?? issue.repoKeys[0] ?? "");
+    if (!repoKey) throw new Error("Repo routing is missing.");
+    if (!this.collaboration?.createPullRequest) {
+      throw new Error("Pull request creation is not configured for this collaboration provider.");
+    }
+    const branch = branchForRepo(issue, repoKey);
+    if (!branch) {
+      throw new Error(`No branch is recorded for ${issue.ref}; run prepareWorkspace or adoptWorkspace first.`);
+    }
+    const existingPrUrl = existingString(issue.metadata[`workflow.repos.${repoKey}.pr_url`]);
+    if (existingPrUrl) {
+      throw new Error(`A pull request is already recorded for ${issue.ref}: ${existingPrUrl}`);
+    }
+    const baseRefName = options.baseBranch ??
+      existingString(issue.metadata[`workflow.repos.${repoKey}.base_branch`]) ??
+      this.topology.defaultBaseBranch(repoKey);
+    const issueUrl = existingString(issue.metadata.issueUrl);
+    const pr = await this.collaboration.createPullRequest({
+      repo: this.topology.repoName(repoKey),
+      title: options.title ?? `${issue.ref}: ${issue.title}`,
+      body: options.body ?? (issueUrl ? `Closes ${issueUrl}` : issue.title),
+      headRefName: branch,
+      baseRefName,
+      isDraft: options.draft === true,
+    });
+    return this.recordPullRequest(sessionId, {
+      issueRef: issue.ref,
+      repo: pr.repo,
+      number: pr.number,
+      url: pr.url,
+      headRefName: pr.headRefName,
+      isDraft: pr.isDraft,
+      checksPassing: pr.checksPassing,
+      checksPending: pr.checksPending,
+      reviewDecision: pr.reviewDecision,
+    });
   }
 
   async recordPullRequest(
@@ -3908,6 +4089,14 @@ function worktreeCleanupBlockers(prunedWorktrees: WorktreePruneRecord[]): string
       const reason = result.reason ? `: ${result.reason}` : "";
       return `Worktree cleanup needed for ${result.repoKey} at ${result.worktreePath}${reason}`;
     });
+}
+
+function resolveCleanupCloseoutStatus(issue: WorkItem, previousStatus: string | undefined): string {
+  if (previousStatus && !previousStatus.endsWith("cleanup_needed")) return previousStatus;
+  const alreadyMerged = previousStatus?.startsWith("already_merged") === true;
+  const jiraVerified = issue.metadata["workflow.closeout.jira_verified"] === true;
+  if (alreadyMerged) return jiraVerified ? "already_merged_jira_verified" : "already_merged_jira_pending";
+  return jiraVerified ? "merged_jira_verified" : "merged_jira_pending";
 }
 
 function hasCloseoutCleanupNeeded(issue: WorkItem): boolean {

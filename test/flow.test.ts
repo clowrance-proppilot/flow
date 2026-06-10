@@ -6567,6 +6567,286 @@ test("Work Runtime records pull request metadata", async () => {
   assert.equal(issue?.metadata["workflow.repos.app_api.dirty"], false);
 });
 
+test("Work Runtime publishes the prepared worktree branch and records the pushed sha", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const ledger = new MemoryWorkflowLedger();
+  const publishCalls: Array<{ worktreePath: string; branch?: string; force?: boolean }> = [];
+  const workRuntime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    sourceControl: {
+      async inspect() {
+        return { branch: "feature/issue-20-publish", headSha: "pushed-sha", dirty: false, entries: [] };
+      },
+      async publishBranch(options: { worktreePath: string; branch?: string; force?: boolean }) {
+        publishCalls.push(options);
+        return { branch: "feature/issue-20-publish", headSha: "pushed-sha", dirty: false, entries: [] };
+      },
+    },
+  });
+  const session = await workRuntime.createSession("session-publish");
+  await workRuntime.selectIssue(session.id, {
+    ref: "ISSUE-20",
+    title: "Publish workspace",
+    repoKeys: ["app_api"],
+    state: "queued",
+    metadata: {
+      "workflow.repos.app_api.worktree_path": "/tmp/app-api-worktree",
+      "workflow.repos.app_api.branch": "feature/issue-20-publish",
+    },
+  });
+
+  const published = await workRuntime.publishWorkspace(session.id, { issueRef: "ISSUE-20" });
+
+  assert.equal(publishCalls.length, 1);
+  assert.equal(publishCalls[0].worktreePath, "/tmp/app-api-worktree");
+  assert.equal(publishCalls[0].branch, "feature/issue-20-publish");
+  assert.equal(publishCalls[0].force, false);
+  assert.equal(published.metadata["workflow.repos.app_api.published_sha"], "pushed-sha");
+  assert.equal(published.metadata["workflow.repos.app_api.head_sha"], "pushed-sha");
+});
+
+test("Work Runtime refuses to publish without a prepared workspace", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const workRuntime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger: new MemoryWorkflowLedger(),
+    sourceControl: {
+      async inspect() {
+        throw new Error("unused");
+      },
+      async publishBranch() {
+        throw new Error("unused");
+      },
+    },
+  });
+  const session = await workRuntime.createSession("session-publish-missing");
+  await workRuntime.selectIssue(session.id, {
+    ref: "ISSUE-21",
+    title: "No workspace",
+    repoKeys: ["app_api"],
+    state: "queued",
+    metadata: {},
+  });
+
+  await assert.rejects(
+    workRuntime.publishWorkspace(session.id, { issueRef: "ISSUE-21" }),
+    /No prepared workspace is recorded/,
+  );
+});
+
+test("Work Runtime opens a pull request through the collaboration provider and records it", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const ledger = new MemoryWorkflowLedger();
+  const createCalls: Array<Record<string, unknown>> = [];
+  const workRuntime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    sourceControl: {
+      async inspect() {
+        return { branch: "feature/issue-22-open-pr", headSha: "head-sha", dirty: false, entries: [] };
+      },
+    },
+    collaboration: {
+      async findPullRequests() {
+        return [];
+      },
+      async createPullRequest(input: Record<string, unknown>) {
+        createCalls.push(input);
+        return {
+          repo: "app-api",
+          number: 2201,
+          title: String(input.title),
+          url: "https://github.com/ExampleOrg/app-api/pull/2201",
+          headRefName: String(input.headRefName),
+          isDraft: input.isDraft === true,
+        };
+      },
+    },
+  });
+  const session = await workRuntime.createSession("session-open-pr");
+  await workRuntime.selectIssue(session.id, {
+    ref: "ISSUE-22",
+    title: "Open pull request",
+    repoKeys: ["app_api"],
+    state: "queued",
+    metadata: {
+      issueUrl: "https://tracker.example/ISSUE-22",
+      "workflow.repos.app_api.worktree_path": "/tmp/app-api-worktree",
+      "workflow.repos.app_api.branch": "feature/issue-22-open-pr",
+      "workflow.repos.app_api.base_branch": "main",
+    },
+  });
+
+  const updated = await workRuntime.openPullRequest(session.id, { issueRef: "ISSUE-22" });
+
+  assert.equal(createCalls.length, 1);
+  assert.equal(createCalls[0].repo, "app-api");
+  assert.equal(createCalls[0].title, "ISSUE-22: Open pull request");
+  assert.equal(createCalls[0].body, "Closes https://tracker.example/ISSUE-22");
+  assert.equal(createCalls[0].headRefName, "feature/issue-22-open-pr");
+  assert.equal(createCalls[0].baseRefName, "main");
+  assert.equal(updated.metadata.prUrl, "https://github.com/ExampleOrg/app-api/pull/2201");
+  assert.equal(updated.metadata["workflow.repos.app_api.pr_number"], 2201);
+});
+
+test("Work Runtime refuses to open a second pull request for the same repo", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const workRuntime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger: new MemoryWorkflowLedger(),
+    sourceControl: {
+      async inspect() {
+        return { branch: "feature/issue-23", headSha: "head-sha", dirty: false, entries: [] };
+      },
+    },
+    collaboration: {
+      async findPullRequests() {
+        return [];
+      },
+      async createPullRequest() {
+        throw new Error("should not be called");
+      },
+    },
+  });
+  const session = await workRuntime.createSession("session-open-pr-dup");
+  await workRuntime.selectIssue(session.id, {
+    ref: "ISSUE-23",
+    title: "Duplicate PR",
+    repoKeys: ["app_api"],
+    state: "queued",
+    metadata: {
+      "workflow.repos.app_api.branch": "feature/issue-23",
+      "workflow.repos.app_api.pr_url": "https://github.com/ExampleOrg/app-api/pull/2300",
+    },
+  });
+
+  await assert.rejects(
+    workRuntime.openPullRequest(session.id, { issueRef: "ISSUE-23" }),
+    /already recorded/,
+  );
+});
+
+test("Work Runtime syncs the worktree branch onto its base and force-publishes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const ledger = new MemoryWorkflowLedger();
+  const syncCalls: Array<{ worktreePath: string; baseRef: string }> = [];
+  const publishCalls: Array<{ worktreePath: string; branch?: string; force?: boolean }> = [];
+  const workRuntime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    sourceControl: {
+      async inspect() {
+        return { branch: "feature/issue-24-sync", headSha: "rebased-sha", dirty: false, entries: [] };
+      },
+      async syncBranch(options: { worktreePath: string; baseRef: string }) {
+        syncCalls.push(options);
+        return { branch: "feature/issue-24-sync", headSha: "rebased-sha", dirty: false, entries: [] };
+      },
+      async publishBranch(options: { worktreePath: string; branch?: string; force?: boolean }) {
+        publishCalls.push(options);
+        return { branch: "feature/issue-24-sync", headSha: "rebased-sha", dirty: false, entries: [] };
+      },
+    },
+  });
+  const session = await workRuntime.createSession("session-sync");
+  await workRuntime.selectIssue(session.id, {
+    ref: "ISSUE-24",
+    title: "Sync branch",
+    repoKeys: ["app_api"],
+    state: "queued",
+    metadata: {
+      "workflow.repos.app_api.worktree_path": "/tmp/app-api-worktree",
+      "workflow.repos.app_api.branch": "feature/issue-24-sync",
+      "workflow.repos.app_api.base_branch": "main",
+    },
+  });
+
+  await workRuntime.syncWorkspaceBranch(session.id, { issueRef: "ISSUE-24" });
+
+  assert.equal(syncCalls.length, 1);
+  assert.equal(syncCalls[0].worktreePath, "/tmp/app-api-worktree");
+  assert.equal(syncCalls[0].baseRef, "main");
+  assert.equal(publishCalls.length, 1);
+  assert.equal(publishCalls[0].force, true);
+  const issue = await ledger.readIssue("ISSUE-24");
+  assert.equal(issue?.metadata["workflow.repos.app_api.head_sha"], "rebased-sha");
+});
+
+test("Work Runtime cleanup prunes merged-issue worktrees and clears cleanup_needed", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const ledger = new MemoryWorkflowLedger();
+  const workRuntime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger,
+    projectRoot: "/repo",
+    sourceControl: {
+      async inspect() {
+        return { branch: "feature/issue-25-cleanup", headSha: "sha", dirty: false, entries: [] };
+      },
+      async pruneWorktree(options: { worktreePath: string; branch?: string }) {
+        return { removed: true, worktreePath: options.worktreePath, branch: options.branch };
+      },
+    },
+  });
+  const session = await workRuntime.createSession("session-cleanup");
+  await workRuntime.selectIssue(session.id, {
+    ref: "ISSUE-25",
+    title: "Cleanup worktrees",
+    repoKeys: ["app_api"],
+    state: "done",
+    metadata: {
+      "workflow.repos.app_api.worktree_path": "/repo/app-api/.worktrees/feature-issue-25-cleanup",
+      "workflow.repos.app_api.branch": "feature/issue-25-cleanup",
+      "workflow.closeout.merged": true,
+      "workflow.closeout.status": "merged_cleanup_needed",
+      "workflow.closeout.cleanup_needed": true,
+      "workflow.closeout.jira_verified": true,
+    },
+  });
+
+  const result = await workRuntime.cleanupIssueWorkspaces(session.id, "ISSUE-25");
+
+  assert.equal(result.status, "merged_jira_verified");
+  assert.equal(result.cleanupBlockers.length, 0);
+  assert.equal(result.prunedWorktrees.length, 1);
+  assert.equal(result.prunedWorktrees[0].removed, true);
+  assert.equal(result.issue.metadata["workflow.closeout.cleanup_needed"], false);
+  assert.equal(result.issue.metadata["workflow.closeout.status"], "merged_jira_verified");
+});
+
+test("Work Runtime cleanup refuses before the pull request is merged", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
+  const workRuntime = testWorkRuntime({
+    store: new FlowStore({ root }),
+    ledger: new MemoryWorkflowLedger(),
+    sourceControl: {
+      async inspect() {
+        return { branch: "feature/issue-26", headSha: "sha", dirty: false, entries: [] };
+      },
+      async pruneWorktree() {
+        throw new Error("should not be called");
+      },
+    },
+  });
+  const session = await workRuntime.createSession("session-cleanup-unmerged");
+  await workRuntime.selectIssue(session.id, {
+    ref: "ISSUE-26",
+    title: "Premature cleanup",
+    repoKeys: ["app_api"],
+    state: "selected",
+    metadata: {
+      "workflow.repos.app_api.worktree_path": "/repo/app-api/.worktrees/feature-issue-26",
+      "workflow.repos.app_api.branch": "feature/issue-26",
+    },
+  });
+
+  await assert.rejects(
+    workRuntime.cleanupIssueWorkspaces(session.id, "ISSUE-26"),
+    /only runs after the pull request/,
+  );
+});
+
 test("pullRequestMetadata writes global and repo-scoped fields from one snapshot", () => {
   const metadata = pullRequestMetadata("app-api", {
     repo: "app-api",

@@ -57,6 +57,10 @@ const rawWorkRuntimeMethods = [
   "recordEvidence",
   "recordDocumentation",
   "recordPullRequest",
+  "publishWorkspace",
+  "openPullRequest",
+  "syncWorkspaceBranch",
+  "cleanupIssueWorkspaces",
   "summarizeHandoff",
   "observeFlowSubject",
 ];
@@ -245,10 +249,10 @@ async function handleWorkflowRequest(request: Record<string, unknown>): Promise<
   const activeSessionId = sessionId(request);
   await ensureSession(activeSessionId);
   const issueRef = optionalString(request, "id");
-  if (["advance", "doctor", "audit", "adoptHandoff", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation", "recordAcceptance", "observe"].includes(mode)) {
+  if (["advance", "doctor", "audit", "adoptHandoff", "publish", "openPullRequest", "syncBranch", "cleanup", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation", "recordAcceptance", "observe"].includes(mode)) {
     requireValue(issueRef, "id");
   }
-  if (issueRef && ["advance", "doctor", "adoptHandoff", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation", "recordAcceptance"].includes(mode)) {
+  if (issueRef && ["advance", "doctor", "adoptHandoff", "publish", "openPullRequest", "syncBranch", "cleanup", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation", "recordAcceptance"].includes(mode)) {
     await runtime.selectIssue(activeSessionId, await queueIssue(issueRef));
   }
   switch (mode) {
@@ -278,6 +282,29 @@ async function handleWorkflowRequest(request: Record<string, unknown>): Promise<
         adopter: optionalString(request, "adopter"),
         summary: optionalString(request, "summary"),
       });
+    case "publish":
+      return runtime.publishWorkspace(activeSessionId, {
+        issueRef: requireValue(issueRef, "issueRef"),
+        repoKey: optionalString(request, "repoKey"),
+        force: request.force === true,
+      });
+    case "openPullRequest":
+      return runtime.openPullRequest(activeSessionId, {
+        issueRef: requireValue(issueRef, "issueRef"),
+        repoKey: optionalString(request, "repoKey"),
+        title: optionalString(request, "title"),
+        body: optionalString(request, "body"),
+        draft: request.draft === true,
+        baseBranch: optionalString(request, "baseBranch"),
+      });
+    case "syncBranch":
+      return runtime.syncWorkspaceBranch(activeSessionId, {
+        issueRef: requireValue(issueRef, "issueRef"),
+        repoKey: optionalString(request, "repoKey"),
+        push: request.push !== false,
+      });
+    case "cleanup":
+      return runtime.cleanupIssueWorkspaces(activeSessionId, requireValue(issueRef, "issueRef"));
     case "recordResult":
       return runtime.recordLocalThreadResult(activeSessionId, {
         issueRef,
@@ -342,7 +369,7 @@ async function handleWorkflowRequest(request: Record<string, unknown>): Promise<
         ref: requireValue(issueRef, "ref"),
       });
     default:
-      throw badMode("workflow", mode, ["advance", "audit", "doctor", "handoff", "adoptHandoff", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation", "recordAcceptance", "observe"]);
+      throw badMode("workflow", mode, ["advance", "audit", "doctor", "handoff", "adoptHandoff", "publish", "openPullRequest", "syncBranch", "cleanup", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation", "recordAcceptance", "observe"]);
   }
 }
 
@@ -401,10 +428,20 @@ function flowManifest(target?: string) {
   if (target === "workflow") {
     return {
       target,
-      modes: ["advance", "audit", "doctor", "handoff", "adoptHandoff", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation", "recordAcceptance", "observe"],
+      modes: ["advance", "audit", "doctor", "handoff", "adoptHandoff", "publish", "openPullRequest", "syncBranch", "cleanup", "recordResult", "recordPullRequest", "recordEvidence", "recordDocumentation", "recordAcceptance", "observe"],
+      remediation: {
+        publish: "Push committed worktree changes when doctor reports executor changes are not pushed.",
+        openPullRequest: "Create the pull request through the configured collaboration provider and record it in one step.",
+        syncBranch: "Rebase the worktree branch onto its base and refresh review state when doctor reports stale PR status.",
+        cleanup: "Prune merged-issue worktrees when closeout reports cleanup_needed.",
+      },
       examples: [
         { op: "workflow", mode: "audit", id: "FLOW-123" },
         { op: "workflow", mode: "adoptHandoff", id: "FLOW-123", adopter: "claude" },
+        { op: "workflow", mode: "publish", id: "FLOW-123" },
+        { op: "workflow", mode: "openPullRequest", id: "FLOW-123" },
+        { op: "workflow", mode: "syncBranch", id: "FLOW-123" },
+        { op: "workflow", mode: "cleanup", id: "FLOW-123" },
         { op: "workflow", mode: "recordResult", id: "FLOW-123", repoKey: "main", status: "succeeded", summary: "Implemented the handoff.", changedFiles: [], testsRun: [] },
         { op: "workflow", mode: "recordEvidence", id: "FLOW-123", summary: "npm test passed", criteria: ["tests"] },
         { op: "workflow", mode: "recordAcceptance", id: "FLOW-123", summary: "npm test passed", criteria: ["tests"], disposition: "not_needed" },
@@ -759,6 +796,32 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
         checksPending: typeof params.checksPending === "boolean" ? params.checksPending : undefined,
         reviewDecision: typeof params.reviewDecision === "string" ? params.reviewDecision : undefined,
       });
+    case "publishWorkspace":
+      return runtime.publishWorkspace(String(params.sessionId ?? defaultSessionId), {
+        issueRef: String(params.issueRef),
+        repoKey: typeof params.repoKey === "string" ? params.repoKey : undefined,
+        force: params.force === true,
+      });
+    case "openPullRequest":
+      return runtime.openPullRequest(String(params.sessionId ?? defaultSessionId), {
+        issueRef: String(params.issueRef),
+        repoKey: typeof params.repoKey === "string" ? params.repoKey : undefined,
+        title: typeof params.title === "string" ? params.title : undefined,
+        body: typeof params.body === "string" ? params.body : undefined,
+        draft: params.draft === true,
+        baseBranch: typeof params.baseBranch === "string" ? params.baseBranch : undefined,
+      });
+    case "syncWorkspaceBranch":
+      return runtime.syncWorkspaceBranch(String(params.sessionId ?? defaultSessionId), {
+        issueRef: String(params.issueRef),
+        repoKey: typeof params.repoKey === "string" ? params.repoKey : undefined,
+        push: params.push !== false,
+      });
+    case "cleanupIssueWorkspaces":
+      return runtime.cleanupIssueWorkspaces(
+        String(params.sessionId ?? defaultSessionId),
+        String(params.issueRef),
+      );
     case "diagnoseIssue":
       return runtime.diagnoseIssue(
         String(params.sessionId ?? defaultSessionId),

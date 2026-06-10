@@ -72,6 +72,23 @@ agent thread and returns the handoff request, including `workspacePath`,
 `prompt`, `workJobId`, and task id. Use `recordResult` afterward to record the
 thread result.
 
+Remediate what `doctor` reports without leaving Flow:
+
+```bash
+flow '{"op":"workflow","mode":"publish","id":"GH-123"}'
+flow '{"op":"workflow","mode":"openPullRequest","id":"GH-123"}'
+flow '{"op":"workflow","mode":"syncBranch","id":"GH-123"}'
+flow '{"op":"workflow","mode":"cleanup","id":"GH-123"}'
+```
+
+`publish` pushes the committed worktree branch (`force:true` for
+force-with-lease). `openPullRequest` creates the pull request through the
+configured collaboration provider and records it in one step; it accepts
+optional `title`, `body`, `draft`, and `baseBranch`. `syncBranch` rebases the
+worktree branch onto its base branch, force-pushes (disable with
+`push:false`), and refreshes review state. `cleanup` prunes merged-issue
+worktrees when closeout reports `cleanup_needed`.
+
 ## Autoflow
 
 Autoflow is experimental app-layer behavior. Core CLI agent work should use the
