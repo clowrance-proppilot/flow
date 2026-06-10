@@ -83,6 +83,39 @@ categories:
 | `backlog`         | Backlog          | To Do               |
 | `unstarted`       | To Do            | To Do               |
 
+### Notion
+
+The Notion adapter uses Notion's REST API to manage issues as database items.
+Issues live in a Notion database, and properties are mapped to Flow's unified
+issue fields.
+
+```yaml
+issueTracker:
+  type: "notion"
+  apiKey: "${NOTION_API_KEY}"
+  databaseId: "abc1234567890abcdef01234567890ab"
+  propertyMapping:
+    title: "Name"
+    status: "Status"
+    labels: "Tags"
+    assignee: "Assignee"
+    type: "Type"
+```
+
+The `propertyMapping` field is optional. Defaults are shown above. Each key maps
+a Flow field to the corresponding Notion database property name.
+
+- `title` maps to a Notion `title` property (required in every Notion database).
+- `status` maps to a Notion `status` property. Status values are normalized to
+  Flow's `statusCategory`: `To Do`, `In Progress`, or `Complete`.
+- `labels` maps to a Notion `multi_select` property.
+- `assignee` maps to a Notion `people`, `rich_text`, or `select` property.
+- `type` maps to a Notion `select` property.
+
+The adapter handles rate limiting (Notion allows ~3 requests/second) with
+automatic backoff. If `apiKey` is not set in config, the adapter falls back to
+the `NOTION_API_KEY` environment variable.
+
 ### Local
 
 ```yaml

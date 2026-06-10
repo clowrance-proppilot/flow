@@ -193,6 +193,41 @@ export const flowConfigSchema = z.object({
       });
     }
     addOptionalStringFieldIssue(config.issueTracker, "workspaceUrl", ["issueTracker", "workspaceUrl"], ctx);
+    return;
+  }
+  if (trackerType === "notion") {
+    const apiKey = config.issueTracker?.apiKey;
+    const databaseId = config.issueTracker?.databaseId;
+    // apiKey can come from NOTION_API_KEY env var, so only validate when provided in config
+    if (apiKey !== undefined && (typeof apiKey !== "string" || !apiKey.trim())) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["issueTracker", "apiKey"],
+        message: "issueTracker.apiKey must be a non-empty string when provided.",
+      });
+    }
+    if (typeof databaseId !== "string" || !databaseId.trim()) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["issueTracker", "databaseId"],
+        message: "issueTracker.databaseId is required when issueTracker.type is notion.",
+      });
+    }
+    const propertyMapping = config.issueTracker?.propertyMapping;
+    if (propertyMapping !== undefined) {
+      if (typeof propertyMapping !== "object" || Array.isArray(propertyMapping)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["issueTracker", "propertyMapping"],
+          message: "issueTracker.propertyMapping must be an object when provided.",
+        });
+      } else {
+        const pm = propertyMapping as Record<string, unknown>;
+        for (const key of ["title", "status", "labels", "assignee", "type"]) {
+          addOptionalStringFieldIssue(pm, key, ["issueTracker", "propertyMapping", key], ctx);
+        }
+      }
+    }
   }
 });
 
