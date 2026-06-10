@@ -1,5 +1,6 @@
 import { AcliJiraAdapter } from "./adapters/jira.js";
 import { GhGitHubAdapter, GhGitHubIssueTrackerAdapter } from "./adapters/github.js";
+import { LinearIssueTrackerAdapter } from "./adapters/linear.js";
 import { LocalIssueTrackerAdapter, NoopCodeCollaborationAdapter } from "./adapters/local.js";
 import type { CodeCollaborationProvider, IssueTrackerProvider } from "./adapters/provider-contracts.js";
 import type { FlowConfig } from "./config/config-schema.js";
@@ -143,6 +144,17 @@ function createIssueTracker(projectRoot: string, flowConfig: FlowConfig | undefi
       assignee: configString(issueTracker, "assignee"),
       activeLabels: configStringArray(issueTracker, "activeLabels"),
       backlogLabels: configStringArray(issueTracker, "backlogLabels"),
+    });
+  }
+  if (type === "linear") {
+    const apiKey = configString(issueTracker, "apiKey");
+    const teamId = configString(issueTracker, "teamId");
+    if (!apiKey) throw new Error("issueTracker.apiKey is required when issueTracker.type is linear.");
+    if (!teamId) throw new Error("issueTracker.teamId is required when issueTracker.type is linear.");
+    return new LinearIssueTrackerAdapter({
+      apiKey,
+      teamId,
+      workspaceUrl: configString(issueTracker, "workspaceUrl"),
     });
   }
   return new AcliJiraAdapter({
