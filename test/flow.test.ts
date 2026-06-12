@@ -1146,6 +1146,23 @@ test("JSON CLI returns INVALID_JSON for malformed argv input", async () => {
   assert.equal(result.routeCalls, 0);
 });
 
+test("JSON CLI accepts PowerShell-mangled JSON argv input", async () => {
+  const result = await captureJsonCli(["{op:state,target:issue,dryRun:true,limit:5}"], {
+    route: (request) => ({ request }),
+  });
+
+  assert.equal(result.exitCode, undefined);
+  assert.equal(result.payload.ok, true);
+  assert.equal(result.payload.op, "state");
+  assert.equal(result.routeCalls, 1);
+  assert.deepEqual(result.payload.result.request, {
+    op: "state",
+    target: "issue",
+    dryRun: true,
+    limit: 5,
+  });
+});
+
 test("JSON CLI returns BAD_REQUEST when op is missing", async () => {
   const result = await captureJsonCli([JSON.stringify({ mode: "state" })]);
 

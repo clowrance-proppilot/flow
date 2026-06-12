@@ -71,11 +71,23 @@ function parseJsonRequest(body: string):
   try {
     parsed = JSON.parse(body);
   } catch (error) {
-    return {
-      ok: false,
-      code: "INVALID_JSON",
-      message: errorMessage(error),
-    };
+    const repaired = repairPowerShellJsonArgument(body);
+    if (!repaired) {
+      return {
+        ok: false,
+        code: "INVALID_JSON",
+        message: errorMessage(error),
+      };
+    }
+    try {
+      parsed = JSON.parse(repaired);
+    } catch {
+      return {
+        ok: false,
+        code: "INVALID_JSON",
+        message: errorMessage(error),
+      };
+    }
   }
   if (!isRecord(parsed)) {
     return {
@@ -94,6 +106,29 @@ function parseJsonRequest(body: string):
     };
   }
   return { ok: true, value: parsed };
+}
+
+function repairPowerShellJsonArgument(body: string): string | undefined {
+  const trimmed = body.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return undefined;
+  if (trimmed.includes('"')) return undefined;
+
+  const repaired = trimmed
+    .replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_.-]*)(\s*:)/g, '$1"$2"$3')
+    .replace(/:\s*([^,{}\[\]\s][^,{}\[\]]*?)(\s*[,}])/g, (_match, rawValue: string, suffix: string) => {
+      const value = rawValue.trim();
+      if (
+        value === "true"
+        || value === "false"
+        || value === "null"
+        || /^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(value)
+      ) {
+        return `:${value}${suffix}`;
+      }
+      return `:${JSON.stringify(value)}${suffix}`;
+    });
+
+  return repaired === trimmed ? undefined : repaired;
 }
 
 async function resolveInput(argv: string[]): Promise<
