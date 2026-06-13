@@ -4,6 +4,7 @@ import { dirname, join, relative, resolve, toNamespacedPath } from "node:path";
 import { promisify } from "node:util";
 
 import type {
+  UnifiedBranchCleanupResult,
   SourceControlProvider,
   UnifiedDiff,
   UnifiedWorktreePruneResult,
@@ -229,6 +230,109 @@ export class GitAdapter implements SourceControlProvider {
       branch: status.branch,
     };
   }
+
+  async cleanupMergedBranch(options: {
+    repoPath: string;
+    branch: string;
+    baseRef: string;
+    mergeCommitSha?: string;
+    remote?: string;
+  }): Promise<UnifiedBranchCleanupResult> {
+    const remote = options.remote ?? "origin";
+    const result: UnifiedBranchCleanupResult = {
+      branch: options.branch,
+      baseRef: options.baseRef,
+      mergeCommitSha: options.mergeCommitSha,
+      localDeleted: false,
+      remoteDeleted: false,
+    };
+    const branchError = await validateBranchCleanupInput(options.branch, options.baseRef);
+    if (branchError) {
+      return {
+        ...result,
+        localReason: branchError,
+        remoteReason: branchError,
+      };
+    }
+
+    let localExists = false;
+    let remoteExists = false;
+    try {
+      localExists = await localBranchExists(options.repoPath, options.branch);
+      remoteExists = await remoteBranchExists(options.repoPath, remote, options.branch);
+    } catch (error) {
+      const reason = `branch lookup failed: ${errorMessage(error)}`;
+      return {
+        ...result,
+        localDeleted: !localExists,
+        localReason: localExists ? reason : "local branch already absent",
+        remoteReason: reason,
+      };
+    }
+
+    if (!localExists && !remoteExists) {
+      return {
+        ...result,
+        localDeleted: true,
+        localReason: "local branch already absent",
+        remoteDeleted: true,
+        remoteReason: "remote branch already absent",
+      };
+    }
+
+    if (!options.mergeCommitSha) {
+      const reason = "merge commit sha is required to confirm branch cleanup is safe";
+      return {
+        ...result,
+        localDeleted: !localExists,
+        localReason: localExists ? reason : "local branch already absent",
+        remoteDeleted: !remoteExists,
+        remoteReason: remoteExists ? reason : "remote branch already absent",
+      };
+    }
+
+    const confirmation = await mergeCommitOnBase(options.repoPath, remote, options.baseRef, options.mergeCommitSha);
+    if (confirmation !== true) {
+      const reason = confirmation;
+      return {
+        ...result,
+        localDeleted: !localExists,
+        localReason: localExists ? reason : "local branch already absent",
+        remoteDeleted: !remoteExists,
+        remoteReason: remoteExists ? reason : "remote branch already absent",
+      };
+    }
+
+    if (localExists) {
+      try {
+        await execFileAsync("git", ["-C", options.repoPath, "branch", "-D", options.branch], {
+          maxBuffer: 10 * 1024 * 1024,
+        });
+        result.localDeleted = true;
+      } catch (error) {
+        result.localReason = errorMessage(error);
+      }
+    } else {
+      result.localDeleted = true;
+      result.localReason = "local branch already absent";
+    }
+
+    if (remoteExists) {
+      try {
+        await execFileAsync("git", ["-C", options.repoPath, "push", remote, "--delete", options.branch], {
+          maxBuffer: 10 * 1024 * 1024,
+        });
+        result.remoteDeleted = true;
+      } catch (error) {
+        result.remoteReason = errorMessage(error);
+      }
+    } else {
+      result.remoteDeleted = true;
+      result.remoteReason = "remote branch already absent";
+    }
+
+    return result;
+  }
 }
 
 function pathContains(parent: string, child: string): boolean {
@@ -258,6 +362,62 @@ async function removePathWithoutFollowingLinks(path: string): Promise<void> {
 
 function fsPath(path: string): string {
   return process.platform === "win32" ? toNamespacedPath(path) : path;
+}
+
+async function validateBranchCleanupInput(branch: string, baseRef: string): Promise<string | undefined> {
+  const protectedBranches = new Set(["main", "master", "develop", "trunk"]);
+  if (!branch) return "branch is required";
+  if (!baseRef) return "base ref is required";
+  if (branch === baseRef || protectedBranches.has(branch)) return `refusing to delete protected branch ${branch}`;
+  if (branch.startsWith("-") || branch.includes("..") || branch.includes(":")) return `invalid branch name ${branch}`;
+  if (baseRef.startsWith("-") || baseRef.includes("..") || baseRef.includes(":")) return `invalid base ref ${baseRef}`;
+  try {
+    await execFileAsync("git", ["check-ref-format", "--branch", branch], { maxBuffer: 1024 * 1024 });
+    await execFileAsync("git", ["check-ref-format", "--branch", baseRef], { maxBuffer: 1024 * 1024 });
+  } catch {
+    return `invalid branch or base ref ${branch}`;
+  }
+  return undefined;
+}
+
+async function localBranchExists(repoPath: string, branch: string): Promise<boolean> {
+  try {
+    await execFileAsync("git", ["-C", repoPath, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`], {
+      maxBuffer: 1024 * 1024,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function remoteBranchExists(repoPath: string, remote: string, branch: string): Promise<boolean> {
+  try {
+    await execFileAsync("git", ["-C", repoPath, "ls-remote", "--exit-code", "--heads", remote, branch], {
+      maxBuffer: 1024 * 1024,
+    });
+    return true;
+  } catch (error) {
+    if (typeof error === "object" && error && (error as { code?: unknown }).code === 2) return false;
+    throw error;
+  }
+}
+
+async function mergeCommitOnBase(repoPath: string, remote: string, baseRef: string, mergeCommitSha: string): Promise<true | string> {
+  const baseRemoteRef = `refs/remotes/${remote}/${baseRef}`;
+  try {
+    await execFileAsync("git", ["-C", repoPath, "fetch", remote, `+refs/heads/${baseRef}:${baseRemoteRef}`], { maxBuffer: 10 * 1024 * 1024 });
+  } catch (error) {
+    return `could not fetch ${remote}/${baseRef} to confirm merge commit: ${errorMessage(error)}`;
+  }
+  try {
+    await execFileAsync("git", ["-C", repoPath, "merge-base", "--is-ancestor", mergeCommitSha, baseRemoteRef], {
+      maxBuffer: 1024 * 1024,
+    });
+    return true;
+  } catch {
+    return `merge commit ${mergeCommitSha} is not confirmed on ${baseRemoteRef}`;
+  }
 }
 
 function errorMessage(error: unknown): string {

@@ -87,7 +87,8 @@ configured collaboration provider and records it in one step; it accepts
 optional `title`, `body`, `draft`, and `baseBranch`. `syncBranch` rebases the
 worktree branch onto its base branch, force-pushes (disable with
 `push:false`), and refreshes review state. `cleanup` prunes merged-issue
-worktrees when closeout reports `cleanup_needed`.
+worktrees and deletes confirmed-merged local/remote branches when closeout
+reports `cleanup_needed`.
 
 ## Autoflow
 

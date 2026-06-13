@@ -6012,6 +6012,7 @@ test("Work Runtime closeout records evidence, merges approved PR, and verifies J
   const comments: Array<{ key: string; body: string }> = [];
   let merged: { repo: string; number: number; method?: string } | undefined;
   let pruned: { repoPath: string; worktreePath: string; branch?: string; requireClean?: boolean } | undefined;
+  let cleanedBranch: { repoPath: string; branch: string; baseRef: string; mergeCommitSha?: string; remote?: string } | undefined;
   let prMerged = false;
   let jiraReads = 0;
   const workRuntime = testWorkRuntime({
@@ -6025,6 +6026,16 @@ test("Work Runtime closeout records evidence, merges approved PR, and verifies J
       async pruneWorktree(input) {
         pruned = input;
         return { removed: true, worktreePath: input.worktreePath, branch: input.branch };
+      },
+      async cleanupMergedBranch(input) {
+        cleanedBranch = input;
+        return {
+          branch: input.branch,
+          baseRef: input.baseRef,
+          mergeCommitSha: input.mergeCommitSha,
+          localDeleted: true,
+          remoteDeleted: true,
+        };
       },
     },
     collaboration: {
@@ -6121,6 +6132,21 @@ test("Work Runtime closeout records evidence, merges approved PR, and verifies J
     worktreePath: "/repo/app-api/.worktrees/feature-ISSUE-19-closeout",
     branch: "feature/ISSUE-19-closeout",
   }]);
+  assert.deepEqual(cleanedBranch, {
+    repoPath: join(root, "app-api").replaceAll("\\", "/"),
+    branch: "feature/ISSUE-19-closeout",
+    baseRef: "main",
+    mergeCommitSha: "abc123",
+    remote: "origin",
+  });
+  assert.deepEqual(result.cleanedBranches, [{
+    repoKey: "app_api",
+    branch: "feature/ISSUE-19-closeout",
+    baseRef: "main",
+    mergeCommitSha: "abc123",
+    localDeleted: true,
+    remoteDeleted: true,
+  }]);
   assert.equal(comments.length, 1);
   assert.match(comments[0]?.body ?? "", /Acceptance evidence recorded for PR closeout/);
   assert.equal(result.acceptanceCommentUrl, "https://example.atlassian.net/browse/ISSUE-19?focusedCommentId=20002");
@@ -6131,6 +6157,7 @@ test("Work Runtime closeout records evidence, merges approved PR, and verifies J
   assert.equal(issue?.metadata["workflow.closeout.status"], "merged_jira_verified");
   assert.equal(issue?.metadata["workflow.closeout.jira_verified"], true);
   assert.equal(issue?.metadata["workflow.closeout.merge_commit_sha"], "abc123");
+  assert.match(String(issue?.metadata["workflow.closeout.cleaned_branches"]), /feature\/ISSUE-19-closeout/);
 });
 
 test("Work Runtime advance closes out review-ready PRs without requesting execution", async () => {
@@ -6469,6 +6496,89 @@ test("GitAdapter pruneWorktree removes only the intended worktree and does not f
   await access(join(sharedTarget, "keep.txt"));
 });
 
+test("GitAdapter cleanupMergedBranch deletes local and remote branches after squash merge reaches base", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-git-branch-cleanup-"));
+  const remotePath = join(root, "remote.git");
+  const repoPath = join(root, "repo");
+  const branch = "feature/branch-cleanup";
+  await execFileAsync("git", ["init", "--bare", remotePath]);
+  await execFileAsync("git", ["init", repoPath]);
+  await execFileAsync("git", ["-C", repoPath, "config", "user.email", "flow@example.test"]);
+  await execFileAsync("git", ["-C", repoPath, "config", "user.name", "Flow Test"]);
+  await writeFile(join(repoPath, "README.md"), "root\n");
+  await execFileAsync("git", ["-C", repoPath, "add", "README.md"]);
+  await execFileAsync("git", ["-C", repoPath, "commit", "-m", "init"]);
+  await execFileAsync("git", ["-C", repoPath, "branch", "-M", "main"]);
+  await execFileAsync("git", ["-C", repoPath, "remote", "add", "origin", remotePath]);
+  await execFileAsync("git", ["-C", repoPath, "push", "-u", "origin", "main"]);
+  await execFileAsync("git", ["-C", repoPath, "checkout", "-b", branch]);
+  await writeFile(join(repoPath, "feature.txt"), "feature\n");
+  await execFileAsync("git", ["-C", repoPath, "add", "feature.txt"]);
+  await execFileAsync("git", ["-C", repoPath, "commit", "-m", "feature"]);
+  await execFileAsync("git", ["-C", repoPath, "push", "-u", "origin", branch]);
+  await execFileAsync("git", ["-C", repoPath, "checkout", "main"]);
+  await execFileAsync("git", ["-C", repoPath, "merge", "--squash", branch]);
+  await execFileAsync("git", ["-C", repoPath, "commit", "-m", "squash feature"]);
+  const { stdout } = await execFileAsync("git", ["-C", repoPath, "rev-parse", "HEAD"]);
+  const mergeCommitSha = stdout.trim();
+  await execFileAsync("git", ["-C", repoPath, "push", "origin", "main"]);
+
+  const result = await new GitAdapter().cleanupMergedBranch({
+    repoPath,
+    branch,
+    baseRef: "main",
+    mergeCommitSha,
+  });
+
+  assert.equal(result.localDeleted, true);
+  assert.equal(result.remoteDeleted, true);
+  const localExists = await execFileAsync("git", ["-C", repoPath, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`])
+    .then(() => true, () => false);
+  const remoteExists = await execFileAsync("git", ["-C", repoPath, "ls-remote", "--exit-code", "--heads", "origin", branch])
+    .then(() => true, () => false);
+  assert.equal(localExists, false);
+  assert.equal(remoteExists, false);
+});
+
+test("GitAdapter cleanupMergedBranch refuses when merge commit is not on base", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-git-branch-refuse-"));
+  const remotePath = join(root, "remote.git");
+  const repoPath = join(root, "repo");
+  const branch = "feature/not-merged";
+  await execFileAsync("git", ["init", "--bare", remotePath]);
+  await execFileAsync("git", ["init", repoPath]);
+  await execFileAsync("git", ["-C", repoPath, "config", "user.email", "flow@example.test"]);
+  await execFileAsync("git", ["-C", repoPath, "config", "user.name", "Flow Test"]);
+  await writeFile(join(repoPath, "README.md"), "root\n");
+  await execFileAsync("git", ["-C", repoPath, "add", "README.md"]);
+  await execFileAsync("git", ["-C", repoPath, "commit", "-m", "init"]);
+  await execFileAsync("git", ["-C", repoPath, "branch", "-M", "main"]);
+  await execFileAsync("git", ["-C", repoPath, "remote", "add", "origin", remotePath]);
+  await execFileAsync("git", ["-C", repoPath, "push", "-u", "origin", "main"]);
+  await execFileAsync("git", ["-C", repoPath, "checkout", "-b", branch]);
+  await writeFile(join(repoPath, "feature.txt"), "feature\n");
+  await execFileAsync("git", ["-C", repoPath, "add", "feature.txt"]);
+  await execFileAsync("git", ["-C", repoPath, "commit", "-m", "feature"]);
+  const { stdout } = await execFileAsync("git", ["-C", repoPath, "rev-parse", "HEAD"]);
+  const featureSha = stdout.trim();
+  await execFileAsync("git", ["-C", repoPath, "push", "-u", "origin", branch]);
+  await execFileAsync("git", ["-C", repoPath, "checkout", "main"]);
+
+  const result = await new GitAdapter().cleanupMergedBranch({
+    repoPath,
+    branch,
+    baseRef: "main",
+    mergeCommitSha: featureSha,
+  });
+
+  assert.equal(result.localDeleted, false);
+  assert.equal(result.remoteDeleted, false);
+  assert.match(result.localReason ?? "", /not confirmed/);
+  assert.match(result.remoteReason ?? "", /not confirmed/);
+  await execFileAsync("git", ["-C", repoPath, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`]);
+  await execFileAsync("git", ["-C", repoPath, "ls-remote", "--exit-code", "--heads", "origin", branch]);
+});
+
 test("Work Runtime records provider escalation as blocked workflow metadata", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
   const ledger = new MemoryWorkflowLedger();
@@ -6793,6 +6903,7 @@ test("Work Runtime syncs the worktree branch onto its base and force-publishes",
 test("Work Runtime cleanup prunes merged-issue worktrees and clears cleanup_needed", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
   const ledger = new MemoryWorkflowLedger();
+  let cleanedBranch: { repoPath: string; branch: string; baseRef: string; mergeCommitSha?: string; remote?: string } | undefined;
   const workRuntime = testWorkRuntime({
     store: new FlowStore({ root }),
     ledger,
@@ -6803,6 +6914,16 @@ test("Work Runtime cleanup prunes merged-issue worktrees and clears cleanup_need
       },
       async pruneWorktree(options: { worktreePath: string; branch?: string }) {
         return { removed: true, worktreePath: options.worktreePath, branch: options.branch };
+      },
+      async cleanupMergedBranch(input) {
+        cleanedBranch = input;
+        return {
+          branch: input.branch,
+          baseRef: input.baseRef,
+          mergeCommitSha: input.mergeCommitSha,
+          localDeleted: true,
+          remoteDeleted: true,
+        };
       },
     },
   });
@@ -6815,7 +6936,9 @@ test("Work Runtime cleanup prunes merged-issue worktrees and clears cleanup_need
     metadata: {
       "workflow.repos.app_api.worktree_path": "/repo/app-api/.worktrees/feature-issue-25-cleanup",
       "workflow.repos.app_api.branch": "feature/issue-25-cleanup",
+      "workflow.repos.app_api.base_branch": "main",
       "workflow.closeout.merged": true,
+      "workflow.closeout.merge_commit_sha": "abc123",
       "workflow.closeout.status": "merged_cleanup_needed",
       "workflow.closeout.cleanup_needed": true,
       "workflow.closeout.jira_verified": true,
@@ -6828,8 +6951,19 @@ test("Work Runtime cleanup prunes merged-issue worktrees and clears cleanup_need
   assert.equal(result.cleanupBlockers.length, 0);
   assert.equal(result.prunedWorktrees.length, 1);
   assert.equal(result.prunedWorktrees[0].removed, true);
+  assert.deepEqual(cleanedBranch, {
+    repoPath: "/repo/app-api",
+    branch: "feature/issue-25-cleanup",
+    baseRef: "main",
+    mergeCommitSha: "abc123",
+    remote: "origin",
+  });
+  assert.equal(result.cleanedBranches.length, 1);
+  assert.equal(result.cleanedBranches[0].localDeleted, true);
+  assert.equal(result.cleanedBranches[0].remoteDeleted, true);
   assert.equal(result.issue.metadata["workflow.closeout.cleanup_needed"], false);
   assert.equal(result.issue.metadata["workflow.closeout.status"], "merged_jira_verified");
+  assert.match(String(result.issue.metadata["workflow.closeout.cleaned_branches"]), /feature\/issue-25-cleanup/);
 });
 
 test("Work Runtime cleanup refuses before the pull request is merged", async () => {

@@ -42,6 +42,7 @@ import type {
   CodeCollaborationProvider,
   IssueTrackerProvider,
   SourceControlProvider,
+  UnifiedBranchCleanupResult,
   UnifiedCodeReview,
   UnifiedDiff,
   UnifiedIssue,
@@ -322,6 +323,7 @@ export interface CloseoutAfterApprovalResult {
   acceptanceCommentUrl?: string;
   merge?: PullRequestMergeResult;
   prunedWorktrees?: Array<{ repoKey: string; removed: boolean; reason?: string; worktreePath: string; branch?: string }>;
+  cleanedBranches?: Array<{ repoKey: string } & UnifiedBranchCleanupResult>;
   jiraStatusBefore?: string;
   jiraStatusAfter?: string;
 }
@@ -2762,7 +2764,11 @@ export class FlowWorkRuntime {
     const jiraAfter = await this.waitForJiraCloseout(issue.ref, options);
     const jiraVerified = isJiraCloseoutStatus(jiraAfter);
     const prunedWorktrees = await this.pruneMergedIssueWorktrees(evidenceIssue);
-    const cleanupBlockers = worktreeCleanupBlockers(prunedWorktrees);
+    const cleanedBranches = await this.cleanupMergedIssueBranches(evidenceIssue, pr);
+    const cleanupBlockers = [
+      ...worktreeCleanupBlockers(prunedWorktrees),
+      ...branchCleanupBlockers(cleanedBranches),
+    ];
     const cleanupNeeded = cleanupBlockers.length > 0;
     const baseStatus = alreadyMerged
       ? jiraVerified ? "already_merged_jira_verified" : "already_merged_jira_pending"
@@ -2790,6 +2796,7 @@ export class FlowWorkRuntime {
         "workflow.closeout.jira_status_after": jiraAfter.status ?? "",
         "workflow.closeout.jira_verified": jiraVerified,
         "workflow.closeout.pruned_worktrees": JSON.stringify(prunedWorktrees),
+        "workflow.closeout.cleaned_branches": JSON.stringify(cleanedBranches),
         "workflow.closeout.cleanup_needed": cleanupNeeded,
         "workflow.closeout.cleanup_blockers": JSON.stringify(cleanupBlockers),
         "workflow.closeout.checked_at": writtenAt,
@@ -2800,11 +2807,11 @@ export class FlowWorkRuntime {
       type: "closeout.completed",
       issueRef: issue.ref,
       message: cleanupNeeded
-        ? `Merged ${pr.url}; worktree cleanup still needs attention.`
+        ? `Merged ${pr.url}; workspace cleanup still needs attention.`
         : jiraVerified
         ? `Merged ${pr.url} and verified Jira moved to ${jiraAfter.status ?? "a closeout status"}.`
         : `Merged ${pr.url}; Jira has not moved from ${jiraAfter.status ?? "current status"} yet.`,
-      payload: { status, pr, merge, jiraBefore, jiraAfter, acceptanceCommentUrl, prunedWorktrees, writtenAt },
+      payload: { status, pr, merge, jiraBefore, jiraAfter, acceptanceCommentUrl, prunedWorktrees, cleanedBranches, writtenAt },
     });
     return {
       status,
@@ -2817,6 +2824,7 @@ export class FlowWorkRuntime {
       acceptanceCommentUrl,
       merge,
       prunedWorktrees,
+      cleanedBranches,
       jiraStatusBefore: jiraBefore.status,
       jiraStatusAfter: jiraAfter.status,
     };
@@ -2857,6 +2865,48 @@ export class FlowWorkRuntime {
     return results;
   }
 
+  private async cleanupMergedIssueBranches(issue: WorkItem, pr?: PullRequestStatus): Promise<Array<{ repoKey: string } & UnifiedBranchCleanupResult>> {
+    if (!this.sourceControl.cleanupMergedBranch) return [];
+    const results: Array<{ repoKey: string } & UnifiedBranchCleanupResult> = [];
+    const prRepoKey = pr ? this.repoKeyFromName(pr.repo) : undefined;
+    for (const rawRepoKey of issue.repoKeys) {
+      const repoKey = normalizeRepoKey(rawRepoKey);
+      const branch = existingString(issue.metadata[`workflow.repos.${repoKey}.branch`]) ?? existingString(issue.metadata.branch);
+      if (!branch) continue;
+      const baseRef = existingString(issue.metadata[`workflow.repos.${repoKey}.base_branch`]) ??
+        (repoKey === prRepoKey ? pr?.baseRefName : undefined) ??
+        "main";
+      const mergeCommitSha = existingString(issue.metadata[`workflow.repos.${repoKey}.pr_merge_commit_sha`]) ??
+        (repoKey === prRepoKey ? pr?.mergeCommitSha : undefined) ??
+        existingString(issue.metadata.prMergeCommitSha) ??
+        existingString(issue.metadata["workflow.closeout.merge_commit_sha"]);
+      const repoPath = this.topology.repoPath(this.projectRoot, repoKey);
+      let result: UnifiedBranchCleanupResult;
+      try {
+        result = await this.sourceControl.cleanupMergedBranch({
+          repoPath,
+          branch,
+          baseRef,
+          mergeCommitSha,
+          remote: "origin",
+        });
+      } catch (error) {
+        const reason = runtimeErrorMessage(error);
+        result = {
+          branch,
+          baseRef,
+          mergeCommitSha,
+          localDeleted: false,
+          localReason: reason,
+          remoteDeleted: false,
+          remoteReason: reason,
+        };
+      }
+      results.push({ repoKey, ...result });
+    }
+    return results;
+  }
+
   async cleanupIssueWorkspaces(
     sessionId: string,
     issueRef: string,
@@ -2864,6 +2914,7 @@ export class FlowWorkRuntime {
     status: string;
     issue: WorkItem;
     prunedWorktrees: Array<{ repoKey: string; removed: boolean; reason?: string; worktreePath: string; branch?: string }>;
+    cleanedBranches: Array<{ repoKey: string } & UnifiedBranchCleanupResult>;
     cleanupBlockers: string[];
   }> {
     await this.requireSession(sessionId);
@@ -2875,7 +2926,11 @@ export class FlowWorkRuntime {
       throw new Error(`Cleanup only runs after the pull request for ${issue.ref} is merged.`);
     }
     const prunedWorktrees = await this.pruneMergedIssueWorktrees(issue);
-    const cleanupBlockers = worktreeCleanupBlockers(prunedWorktrees);
+    const cleanedBranches = await this.cleanupMergedIssueBranches(issue);
+    const cleanupBlockers = [
+      ...worktreeCleanupBlockers(prunedWorktrees),
+      ...branchCleanupBlockers(cleanedBranches),
+    ];
     const cleanupNeeded = cleanupBlockers.length > 0;
     const previousStatus = existingString(issue.metadata["workflow.closeout.status"]);
     const status = cleanupNeeded
@@ -2887,6 +2942,7 @@ export class FlowWorkRuntime {
         ...issue.metadata,
         "workflow.closeout.status": status,
         "workflow.closeout.pruned_worktrees": JSON.stringify(prunedWorktrees),
+        "workflow.closeout.cleaned_branches": JSON.stringify(cleanedBranches),
         "workflow.closeout.cleanup_needed": cleanupNeeded,
         "workflow.closeout.cleanup_blockers": JSON.stringify(cleanupBlockers),
         "workflow.closeout.checked_at": nowIso(),
@@ -2897,11 +2953,11 @@ export class FlowWorkRuntime {
       type: "closeout.cleanup",
       issueRef: issue.ref,
       message: cleanupNeeded
-        ? `Worktree cleanup for ${issue.ref} still needs attention.`
-        : `Cleaned up worktrees for ${issue.ref}.`,
-      payload: { status, prunedWorktrees, cleanupBlockers },
+        ? `Workspace cleanup for ${issue.ref} still needs attention.`
+        : `Cleaned up workspaces for ${issue.ref}.`,
+      payload: { status, prunedWorktrees, cleanedBranches, cleanupBlockers },
     });
-    return { status, issue: updated, prunedWorktrees, cleanupBlockers };
+    return { status, issue: updated, prunedWorktrees, cleanedBranches, cleanupBlockers };
   }
 
   async recordReviewConfirmation(
@@ -4082,6 +4138,8 @@ type WorktreePruneRecord = {
   branch?: string;
 };
 
+type BranchCleanupRecord = { repoKey: string } & UnifiedBranchCleanupResult;
+
 function worktreeCleanupBlockers(prunedWorktrees: WorktreePruneRecord[]): string[] {
   return prunedWorktrees
     .filter((result) => !result.removed)
@@ -4089,6 +4147,21 @@ function worktreeCleanupBlockers(prunedWorktrees: WorktreePruneRecord[]): string
       const reason = result.reason ? `: ${result.reason}` : "";
       return `Worktree cleanup needed for ${result.repoKey} at ${result.worktreePath}${reason}`;
     });
+}
+
+function branchCleanupBlockers(cleanedBranches: BranchCleanupRecord[]): string[] {
+  const blockers: string[] = [];
+  for (const result of cleanedBranches) {
+    if (!result.localDeleted) {
+      const reason = result.localReason ? `: ${result.localReason}` : "";
+      blockers.push(`Local branch cleanup needed for ${result.repoKey} ${result.branch}${reason}`);
+    }
+    if (!result.remoteDeleted) {
+      const reason = result.remoteReason ? `: ${result.remoteReason}` : "";
+      blockers.push(`Remote branch cleanup needed for ${result.repoKey} ${result.branch}${reason}`);
+    }
+  }
+  return blockers;
 }
 
 function resolveCleanupCloseoutStatus(issue: WorkItem, previousStatus: string | undefined): string {
@@ -4104,11 +4177,25 @@ function hasCloseoutCleanupNeeded(issue: WorkItem): boolean {
   const status = existingString(issue.metadata["workflow.closeout.status"]);
   if (status === "merged_cleanup_needed" || status === "already_merged_cleanup_needed") return true;
   const rawPrunedWorktrees = existingString(issue.metadata["workflow.closeout.pruned_worktrees"]);
-  if (!rawPrunedWorktrees) return false;
+  const rawCleanedBranches = existingString(issue.metadata["workflow.closeout.cleaned_branches"]);
+  if (!rawPrunedWorktrees && !rawCleanedBranches) return false;
   try {
-    const parsed = JSON.parse(rawPrunedWorktrees);
+    const parsed = rawPrunedWorktrees ? JSON.parse(rawPrunedWorktrees) : [];
+    if (Array.isArray(parsed) &&
+      parsed.some((item) => item && typeof item === "object" && (item as { removed?: unknown }).removed === false)
+    ) return true;
+  } catch {
+    // Fall through and try branch cleanup records.
+  }
+  try {
+    const parsed = rawCleanedBranches ? JSON.parse(rawCleanedBranches) : [];
     return Array.isArray(parsed) &&
-      parsed.some((item) => item && typeof item === "object" && (item as { removed?: unknown }).removed === false);
+      parsed.some((item) =>
+        item &&
+        typeof item === "object" &&
+        ((item as { localDeleted?: unknown }).localDeleted === false ||
+          (item as { remoteDeleted?: unknown }).remoteDeleted === false)
+      );
   } catch {
     return false;
   }
