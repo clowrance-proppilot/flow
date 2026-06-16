@@ -22,18 +22,24 @@ Default URL:
 http://127.0.0.1:8767/dashboard
 ```
 
-Configure host and port in `.flow/config.yaml`:
+Configure host and port with `flow_config_update`:
 
-```yaml
-runtime:
-  dashboard:
-    host: "127.0.0.1"
-    port: 8767
+```json
+{
+  "patch": {
+    "runtime": {
+      "dashboard": {
+        "host": "127.0.0.1",
+        "port": 8767
+      }
+    }
+  }
+}
 ```
 
 ## Project Model
 
-Desktop reads Flow project records and each project's `.flow/config.yaml`.
+Desktop reads Flow project records and each project's Flow-managed config.
 Durable project behavior comes from config. Local UI state, runtime sessions,
 and refresh state stay in runtime storage.
 

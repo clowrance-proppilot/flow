@@ -271,7 +271,7 @@ export class AcliJiraAdapter implements IssueTrackerProvider {
 
   async createIssue(input: JiraIssueCreateInput): Promise<JiraIssue & UnifiedIssue> {
     if (!input.projectKey?.trim()) {
-      throw new Error("Jira project key is required. Configure issueTracker.projectKey in .flow/config.yaml or pass projectKey.");
+      throw new Error("Jira project key is required. Configure issueTracker.projectKey in Flow-managed config or pass projectKey.");
     }
     const jiraSummary = input.title?.trim() || input.summary;
     const jiraDescription = input.title?.trim()
@@ -359,12 +359,12 @@ export class AcliJiraAdapter implements IssueTrackerProvider {
 
   private requireProjectKey(): string {
     if (this.projectKey) return this.projectKey;
-    throw new Error("Jira project key is required. Configure issueTracker.projectKey in .flow/config.yaml or pass projectKey.");
+    throw new Error("Jira project key is required. Configure issueTracker.projectKey in Flow-managed config or pass projectKey.");
   }
 
   private async jiraSoftwareRequest(path: string, init: RequestInit = {}): Promise<unknown> {
     if (!this.email || !this.apiToken) {
-      throw new Error("Jira REST auth is not configured. Configure issueTracker.email and issueTracker.apiToken in .flow/config.yaml.");
+      throw new Error("Jira REST auth is not configured. Configure issueTracker.email and issueTracker.apiToken in Flow-managed config.");
     }
     const response = await withPerfLog(`jira rest ${init.method ?? "GET"} ${path}`, () =>
       fetch(`${this.siteUrl}${path}`, {

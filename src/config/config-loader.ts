@@ -1,9 +1,8 @@
 import { execFile } from "node:child_process";
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import { promisify } from "node:util";
-import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import type { ProjectTopology } from "../project-topology.js";
 import {
   createDefaultFlowWorkTypeRegistry,
@@ -12,7 +11,7 @@ import {
   WorkTypeRegistry,
 } from "../work-registry.js";
 import type { WorkJobExecutor } from "../contracts.js";
-import { flowConfigPath, flowUserConfigPath, flowUserRuntimePath, flowUserWorkflowLedgerPath } from "../flow-layout.js";
+import { flowConfigPath, flowUserRuntimePath, flowUserWorkflowLedgerPath } from "../flow-layout.js";
 import { ConfigDrivenTopology } from "./config-topology.js";
 import { flowConfigSchema, type FlowConfig } from "./config-schema.js";
 
@@ -26,7 +25,6 @@ export interface LoadFlowConfigOptions {
 export interface BootstrapFlowConfigOptions {
   projectRoot?: string;
   force?: boolean;
-  storage?: FlowConfigStorage;
 }
 
 export interface BootstrapFlowConfigResult {
@@ -38,10 +36,9 @@ export interface BootstrapFlowConfigResult {
   repoName: string;
   baseBranch: string;
   owner?: string;
-  localExcludeUpdated?: boolean;
 }
 
-export type FlowConfigStorage = "user" | "repo-untracked" | "repo-tracked";
+export type FlowConfigStorage = "flow-managed";
 
 export interface ValidateFlowConfigResult {
   ok: boolean;
@@ -59,6 +56,16 @@ export interface ValidateFlowConfigResult {
 
 export interface MigrateFlowConfigOptions extends LoadFlowConfigOptions {
   write?: boolean;
+}
+
+export interface SaveFlowConfigOptions {
+  projectRoot?: string;
+  config: FlowConfig;
+}
+
+export interface UpdateFlowConfigOptions {
+  projectRoot?: string;
+  patch: Record<string, unknown>;
 }
 
 export interface MigrateFlowConfigResult {
@@ -84,9 +91,7 @@ export async function loadFlowConfig(options: LoadFlowConfigOptions = {}): Promi
   const configPath = findFlowConfigPath(options);
   if (!configPath) return undefined;
   const raw = await readFile(configPath, "utf8");
-  const parsed = configPath.endsWith(".json")
-    ? JSON.parse(raw)
-    : parseYaml(raw);
+  const parsed = JSON.parse(raw);
   return flowConfigSchema.parse(parsed);
 }
 
@@ -101,9 +106,7 @@ export async function validateFlowConfig(options: LoadFlowConfigOptions = {}): P
 
   try {
     const raw = await readFile(configPath, "utf8");
-    const parsed = configPath.endsWith(".json")
-      ? JSON.parse(raw)
-      : parseYaml(raw);
+    const parsed = JSON.parse(raw);
     const result = flowConfigSchema.safeParse(parsed);
     if (!result.success) {
       return {
@@ -160,9 +163,7 @@ export async function migrateFlowConfig(options: MigrateFlowConfigOptions = {}):
 
   try {
     const raw = await readFile(configPath, "utf8");
-    const parsed = configPath.endsWith(".json")
-      ? JSON.parse(raw)
-      : parseYaml(raw);
+    const parsed = JSON.parse(raw);
     const migrated = migrateParsedFlowConfig(parsed);
     if (!migrated.ok) {
       return {
@@ -180,11 +181,7 @@ export async function migrateFlowConfig(options: MigrateFlowConfigOptions = {}):
     const changed = stableJson(parsed) !== stableJson(migrated.config);
     let wrote = false;
     if (options.write && changed) {
-      if (configPath.endsWith(".json")) {
-        await writeFile(configPath, `${JSON.stringify(migrated.config, null, 2)}\n`, "utf8");
-      } else {
-        await writeFile(configPath, stringifyYaml(migrated.config), "utf8");
-      }
+      await writeFlowConfig(configPath, migrated.config);
       wrote = true;
     }
 
@@ -218,26 +215,40 @@ export function findFlowConfigPath(options: LoadFlowConfigOptions = {}): string 
   }
   const projectRoot = resolve(options.projectRoot ?? process.cwd());
   const candidate = flowConfigPath(projectRoot);
-  if (existsSync(candidate)) return candidate;
-  const userCandidate = flowUserConfigPath(projectRoot);
-  return existsSync(userCandidate) ? userCandidate : undefined;
+  return existsSync(candidate) ? candidate : undefined;
+}
+
+export async function saveFlowConfig(options: SaveFlowConfigOptions): Promise<ValidateFlowConfigResult> {
+  const projectRoot = resolve(options.projectRoot ?? process.cwd());
+  const parsed = flowConfigSchema.parse(options.config);
+  const configPath = flowConfigPath(projectRoot);
+  await mkdir(dirname(configPath), { recursive: true });
+  await writeFlowConfig(configPath, parsed);
+  return validateFlowConfig({ projectRoot });
+}
+
+export async function updateFlowConfig(options: UpdateFlowConfigOptions): Promise<ValidateFlowConfigResult> {
+  const projectRoot = resolve(options.projectRoot ?? process.cwd());
+  const existing = await loadFlowConfig({ projectRoot });
+  if (!existing) throw new Error("Flow managed config not found. Run flow_bootstrap first.");
+  return saveFlowConfig({
+    projectRoot,
+    config: flowConfigSchema.parse(deepMerge(existing, options.patch)),
+  });
 }
 
 export async function bootstrapFlowConfig(options: BootstrapFlowConfigOptions = {}): Promise<BootstrapFlowConfigResult> {
   const projectRoot = resolve(options.projectRoot ?? process.cwd());
-  const storage = options.storage ?? "user";
-  const configPath = storage === "user" ? flowUserConfigPath(projectRoot) : flowConfigPath(projectRoot);
+  const storage: FlowConfigStorage = "flow-managed";
+  const configPath = flowConfigPath(projectRoot);
   if (existsSync(configPath) && !options.force) {
-    throw new Error(`Flow config already exists at ${configPath}. Pass --force to overwrite it.`);
+    throw new Error(`Flow managed config already exists at ${configPath}. Pass force to overwrite it.`);
   }
 
-  const draft = await inferBootstrapFlowConfig(projectRoot, storage);
+  const draft = await inferBootstrapFlowConfig(projectRoot);
 
   await mkdir(dirname(configPath), { recursive: true });
-  await writeFile(configPath, stringifyYaml(draft.config), "utf8");
-  const localExcludeUpdated = storage === "repo-untracked"
-    ? await ensureLocalGitExclude(projectRoot, ".flow/")
-    : undefined;
+  await writeFlowConfig(configPath, draft.config);
   return {
     ok: true,
     created: true,
@@ -247,7 +258,6 @@ export async function bootstrapFlowConfig(options: BootstrapFlowConfigOptions = 
     repoName: draft.repoName,
     baseBranch: draft.baseBranch,
     owner: draft.owner,
-    localExcludeUpdated,
   };
 }
 
@@ -283,7 +293,7 @@ export function configToWorkTypeRegistry(config: FlowConfig): WorkTypeRegistry {
   return new WorkTypeRegistry(definitions, executors);
 }
 
-async function inferBootstrapFlowConfig(projectRoot: string, storage: FlowConfigStorage): Promise<BootstrapFlowConfigDraft> {
+async function inferBootstrapFlowConfig(projectRoot: string): Promise<BootstrapFlowConfigDraft> {
   const remote = await gitOutput(projectRoot, ["config", "--get", "remote.origin.url"]);
   const github = parseGithubRemote(remote);
   const repoName = github?.repo ?? basename(projectRoot);
@@ -322,12 +332,8 @@ async function inferBootstrapFlowConfig(projectRoot: string, storage: FlowConfig
       store: {
         type: "sqlite",
       },
-      ...(storage === "user"
-        ? {
-          stateDir: flowUserRuntimePath(projectRoot),
-          workflowLedgerPath: flowUserWorkflowLedgerPath(projectRoot),
-        }
-        : {}),
+      stateDir: flowUserRuntimePath(projectRoot),
+      workflowLedgerPath: flowUserWorkflowLedgerPath(projectRoot),
       dashboard: {
         host: "127.0.0.1",
         port: 8867,
@@ -342,6 +348,10 @@ async function inferBootstrapFlowConfig(projectRoot: string, storage: FlowConfig
     repoName,
     baseBranch,
   };
+}
+
+async function writeFlowConfig(path: string, config: FlowConfig): Promise<void> {
+  await writeFile(path, `${JSON.stringify(config, null, 2)}\n`, "utf8");
 }
 
 function migrateParsedFlowConfig(raw: unknown):
@@ -407,6 +417,16 @@ function stableJson(value: unknown): string {
   return JSON.stringify(normalizeForStableJson(value));
 }
 
+function deepMerge(base: unknown, patch: unknown): unknown {
+  if (!isRecord(base) || !isRecord(patch)) return patch;
+  const merged: Record<string, unknown> = { ...base };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined) continue;
+    merged[key] = key in merged ? deepMerge(merged[key], value) : value;
+  }
+  return merged;
+}
+
 function normalizeForStableJson(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(normalizeForStableJson);
   if (isRecord(value)) {
@@ -443,22 +463,6 @@ async function gitOutput(cwd: string, args: string[]): Promise<string | undefine
   } catch {
     return undefined;
   }
-}
-
-async function ensureLocalGitExclude(projectRoot: string, pattern: string): Promise<boolean> {
-  const excludePath = await gitOutput(projectRoot, ["rev-parse", "--git-path", "info/exclude"]);
-  if (!excludePath) return false;
-  const absoluteExcludePath = resolve(projectRoot, excludePath);
-  let current = "";
-  try {
-    current = await readFile(absoluteExcludePath, "utf8");
-  } catch {
-    // Missing exclude files are created below.
-  }
-  if (current.split(/\r?\n/).includes(pattern)) return false;
-  await mkdir(dirname(absoluteExcludePath), { recursive: true });
-  await appendFile(absoluteExcludePath, `${current.endsWith("\n") || current.length === 0 ? "" : "\n"}${pattern}\n`, "utf8");
-  return true;
 }
 
 function parseGithubRemote(remote: string | undefined): { owner: string; repo: string } | undefined {

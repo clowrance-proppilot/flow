@@ -3,7 +3,7 @@ import { validateFlowConfig } from "../src/config/config-loader.js";
 import { createConfiguredWorkRuntime } from "../src/runtime-factory.js";
 import { GitAdapter } from "../src/adapters/git.js";
 import { createDefaultAutoflowRunnerState, StandaloneAutoflowRunner } from "../src/experimental/autoflow-runner.js";
-import { PiSessionDriver } from "../src/experimental/pi-session-driver.js";
+import { ClaudeSessionDriver } from "../src/experimental/claude-session-driver.js";
 import type { DesktopProjectRecord } from "./project-registry.js";
 import type { DesktopProjectSurface } from "./route-types.js";
 import { LruMap } from "./lru-map.js";
@@ -31,7 +31,7 @@ export class DesktopSurfaceFactory {
       flowConfig: configValidation.config,
     });
     const dashboardState = new DashboardState({ runtime: configured.runtime });
-    const piSessionDriver = new PiSessionDriver({
+    const agentSessionDriver = new ClaudeSessionDriver({
       runtime: configured.runtime,
       repoRoot: project.root,
       flowSessionId: `desktop-${project.id}`,
@@ -43,12 +43,12 @@ export class DesktopSurfaceFactory {
       project,
       configured,
       dashboardState,
-      piSessionDriver,
+      agentSessionDriver,
       autoflowRunner: new StandaloneAutoflowRunner({
         projectId: project.id,
         runtime: configured.runtime,
         state: createDefaultAutoflowRunnerState(project.root),
-        agentSessionDriver: piSessionDriver,
+        agentSessionDriver,
         gitInspect: async (path: string) => {
           const status = await git.inspect(path);
           return { dirty: status.dirty, entries: status.entries };

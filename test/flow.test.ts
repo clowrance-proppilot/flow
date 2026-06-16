@@ -4,10 +4,11 @@ import { access, mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/pr
 import type { Server } from "node:http";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { Readable } from "node:stream";
 import assert from "node:assert/strict";
 import test from "node:test";
 import express, { type Express } from "express";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 import {
   FlowWorkRuntime,
@@ -38,7 +39,7 @@ import {
   flowUserWorkflowLedgerPath,
   flowWorkflowLedgerPath,
   resolveFlowPath,
-  resolveCliIssue,
+  resolveFlowIssue,
   canClaimWork,
   canCompleteWork,
   canResolveBlocker,
@@ -55,6 +56,7 @@ import {
   normalizeRepoKeys,
   pullRequestMetadata,
   repoScopedPullRequestMetadata,
+  saveFlowConfig,
   validateFlowConfig,
   createConfiguredWorkRuntime,
   createId,
@@ -67,7 +69,7 @@ import {
   type WorkItem,
 } from "../src/index.js";
 import { AutoflowService, StandaloneAutoflowRunner } from "../src/experimental/index.js";
-import { JsonCliError, runJsonCli, type JsonCliOptions } from "../src/json-cli.js";
+import { FlowInputError } from "../src/flow-errors.js";
 import {
   requireWorkItem,
   requireCreateIssueOptions,
@@ -209,62 +211,81 @@ async function commandPath(command: string): Promise<string> {
   return first;
 }
 
-async function captureJsonCli(
-  argv: string[],
-  options: {
-    stdin?: NodeJS.ReadableStream;
-    route?: JsonCliOptions["route"];
-  } = {},
-): Promise<{ exitCode: string | number | undefined; payload: any; routeCalls: number }> {
-  const originalArgv = process.argv;
-  const originalExitCode = process.exitCode;
-  const originalWrite = process.stdout.write;
-  const stdinDescriptor = Object.getOwnPropertyDescriptor(process, "stdin");
-  let output = "";
-  let routeCalls = 0;
-
-  process.argv = ["node", "flow", ...argv];
-  process.exitCode = undefined;
-  process.stdout.write = ((chunk: string | Uint8Array, encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void), callback?: (error?: Error | null) => void) => {
-    output += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
-    const done = typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
-    done?.();
-    return true;
-  }) as typeof process.stdout.write;
-  if (options.stdin) {
-    Object.defineProperty(process, "stdin", { value: options.stdin, configurable: true });
-  }
-
+async function withFlowMcp<T>(
+  cwd: string,
+  runClient: (client: Client) => Promise<T>,
+  options: { env?: Record<string, string> } = {},
+): Promise<T> {
+  const env = { ...(options.env ?? mcpEnv()) };
+  env.FLOW_MCP_PROJECTS_PATH ??= join(cwd, ".flow-test", "mcp-projects.json");
+  const client = new Client({ name: "flow-test-client", version: "1.0.0" });
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [join(process.cwd(), ".tmp", "test", "src", "flow.js")],
+    cwd,
+    env,
+    stderr: "pipe",
+  });
+  await client.connect(transport);
   try {
-    await runJsonCli({
-      manifest: () => ({ targets: [] }),
-      route: async (request, context) => {
-        routeCalls += 1;
-        if (options.route) return options.route(request, context);
-        return { ok: true };
-      },
-    });
-    return {
-      exitCode: process.exitCode,
-      payload: parseCapturedJsonCliOutput(output),
-      routeCalls,
-    };
+    return await runClient(client);
   } finally {
-    process.argv = originalArgv;
-    process.exitCode = originalExitCode;
-    process.stdout.write = originalWrite;
-    if (stdinDescriptor) Object.defineProperty(process, "stdin", stdinDescriptor);
+    await transport.close();
   }
 }
 
-function parseCapturedJsonCliOutput(output: string): any {
-  const start = output.indexOf('{"ok"');
-  if (start === -1) {
-    throw new Error(`JSON CLI did not write a response envelope: ${JSON.stringify(output)}`);
+async function callFlowTool(client: Client, name: string, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+  const response = await client.callTool({ name, arguments: args }) as {
+    isError?: boolean;
+    content?: Array<{ type: string; text?: string }>;
+    structuredContent?: unknown;
+  };
+  if (response.isError) {
+    const text = response.content?.find((item) => item.type === "text")?.text ?? "Flow MCP tool failed.";
+    throw new Error(text);
   }
-  const end = output.indexOf("\n", start);
-  const json = end === -1 ? output.slice(start) : output.slice(start, end);
-  return JSON.parse(json);
+  const structured = response.structuredContent;
+  assert.ok(structured && typeof structured === "object" && !Array.isArray(structured));
+  return structured as Record<string, unknown>;
+}
+
+async function createReviewedLocalIssue(
+  client: Client,
+  summary: string,
+  scope: { projectId?: string; projectRoot?: string } = {},
+): Promise<{ ref: string; title?: string }> {
+  const intake = await callFlowTool(client, "flow_issue_intake", {
+    ...scope,
+    summary,
+    issueType: "Task",
+    dryRun: true,
+    review: true,
+  });
+  const reviewJob = intake.reviewJob as { id: string; issueRef: string; repoKey: string; workType: string } | undefined;
+  assert.ok(reviewJob);
+  await callFlowTool(client, "flow_record_work_job_result", {
+    ...scope,
+    jobId: reviewJob.id,
+    issueRef: reviewJob.issueRef,
+    repoKey: reviewJob.repoKey,
+    workType: reviewJob.workType,
+    status: "succeeded",
+    summary: "Executor approved issue intake.",
+    evidence: ["MCP test executor review."],
+    completedAt: nowIso(),
+  });
+  return await callFlowTool(client, "flow_issue_create", {
+    ...scope,
+    summary,
+    issueType: "Task",
+  }) as { ref: string; title?: string };
+}
+
+function mcpEnv(overrides: Record<string, string> = {}): Record<string, string> {
+  const inherited = Object.fromEntries(
+    Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
+  return { ...inherited, ...overrides };
 }
 
 function projectedWorkSubject(overrides: Partial<ProjectedWorkSubject> = {}): ProjectedWorkSubject {
@@ -291,7 +312,7 @@ async function waitForCondition(condition: () => boolean): Promise<void> {
 test("Flow layout paths resolve under the project root", () => {
   const root = join(tmpdir(), "Flow Root With Spaces");
 
-  assert.equal(flowConfigPath(root), join(resolve(root), ".flow", "config.yaml"));
+  assert.equal(flowConfigPath(root), join(flowUserStateRoot(root), "config.json"));
   assert.equal(flowWorkflowLedgerPath(root), join(resolve(root), ".flow", "ledger", "workflow.jsonl"));
   assert.equal(flowContextProjectionPath(root), join(resolve(root), ".flow", "ledger", "context.json"));
   assert.equal(flowIssueProjectionPath(root, "GH-267"), join(resolve(root), ".flow", "ledger", "issues", "GH-267.json"));
@@ -322,7 +343,7 @@ test("Flow user state root includes the project basename and truncated SHA-256 d
 
   assert.equal(basename(userStateRoot), `${basename(root)}-${digest}`);
   assert.equal(digest.length, 16);
-  assert.equal(flowUserConfigPath(root), join(userStateRoot, "config.yaml"));
+  assert.equal(flowUserConfigPath(root), join(userStateRoot, "config.json"));
   assert.equal(flowUserRuntimePath(root), join(userStateRoot, "runtime"));
   assert.equal(flowUserWorkflowLedgerPath(root), join(userStateRoot, "ledger", "workflow.jsonl"));
   assert.equal(flowUserWorkflowLedgerDatabasePath(root), join(userStateRoot, "ledger", "workflow.db"));
@@ -331,11 +352,11 @@ test("Flow user state root includes the project basename and truncated SHA-256 d
 
 test("Flow path resolver keeps absolute paths and resolves relative paths from the project root", () => {
   const root = resolve(join(tmpdir(), "flow-layout-resolve"));
-  const absolute = join(root, "outside", "config.yaml");
+  const absolute = join(root, "outside", "config.json");
 
   assert.equal(resolveFlowPath(root, absolute), absolute);
-  assert.equal(resolveFlowPath(root, join(".flow", "config.yaml")), flowConfigPath(root));
-  assert.equal(resolveFlowPath(root, "config.yaml"), join(root, "config.yaml"));
+  assert.equal(resolveFlowPath(root, join(".flow", "config.yaml")), join(root, ".flow", "config.yaml"));
+  assert.equal(resolveFlowPath(root, "config.json"), join(root, "config.json"));
 });
 
 test("Work state policy allows completion when blockers and readiness are clear", () => {
@@ -697,33 +718,25 @@ test("Flow config schema validates topology and adapter declarations", () => {
   );
 });
 
-test("Flow config loader reads YAML and builds topology", async () => {
+test("Flow config loader reads managed JSON and builds topology", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-config-"));
-  await mkdir(dirname(flowConfigPath(root)), { recursive: true });
-  await writeFile(flowConfigPath(root), [
-    'version: "1"',
-    "project:",
-    '  name: "Example"',
-    "topology:",
-    "  repos:",
-    "    main:",
-    '      name: "example"',
-    '      baseBranch: "main"',
-    "    api:",
-    '      name: "example-api"',
-    '      baseBranch: "develop"',
-    '      pathFromRoot: "services/api"',
-    '  branchPattern: "{kind}/{issueRef}-{slug}"',
-    '  pullRequestUrlPattern: "https://github.com/example/{repoName}/pull/{number}"',
-    "  issueInference:",
-    "    - repo: api",
-    '      keywords: ["api", "backend"]',
-    "issueTracker:",
-    '  type: "github"',
-    '  owner: "example"',
-    '  repo: "example"',
-    "",
-  ].join("\n"));
+  await saveFlowConfig({
+    projectRoot: root,
+    config: flowConfigSchema.parse({
+      version: "1",
+      project: { name: "Example" },
+      topology: {
+        repos: {
+          main: { name: "example", baseBranch: "main" },
+          api: { name: "example-api", baseBranch: "develop", pathFromRoot: "services/api" },
+        },
+        branchPattern: "{kind}/{issueRef}-{slug}",
+        pullRequestUrlPattern: "https://github.com/example/{repoName}/pull/{number}",
+        issueInference: [{ repo: "api", keywords: ["api", "backend"] }],
+      },
+      issueTracker: { type: "github", owner: "example", repo: "example" },
+    }),
+  });
 
   const config = await loadFlowConfig({ projectRoot: root });
   assert.ok(config);
@@ -745,16 +758,14 @@ test("Flow config loader reads YAML and builds topology", async () => {
 test("Flow config validator returns machine-readable diagnostics", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-config-"));
   await mkdir(dirname(flowConfigPath(root)), { recursive: true });
-  await writeFile(flowConfigPath(root), [
-    'version: "1"',
-    "project:",
-    '  name: "Broken"',
-    "topology:",
-    "  repos:",
-    "    main:",
-    '      name: "example"',
-    '  branchPattern: "feature/{slug}"',
-  ].join("\n"), "utf8");
+  await writeFile(flowConfigPath(root), `${JSON.stringify({
+    version: "1",
+    project: { name: "Broken" },
+    topology: {
+      repos: { main: { name: "example" } },
+      branchPattern: "feature/{slug}",
+    },
+  }, null, 2)}\n`, "utf8");
 
   const result = await validateFlowConfig({ projectRoot: root });
 
@@ -766,18 +777,16 @@ test("Flow config validator returns machine-readable diagnostics", async () => {
 
 test("Flow config migrate reports current version as no-op", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-config-migrate-current-"));
-  await mkdir(dirname(flowConfigPath(root)), { recursive: true });
-  await writeFile(flowConfigPath(root), [
-    'version: "1"',
-    "project:",
-    '  name: "Example"',
-    "topology:",
-    "  repos:",
-    "    main:",
-    '      name: "example"',
-    '      baseBranch: "main"',
-    "",
-  ].join("\n"), "utf8");
+  await saveFlowConfig({
+    projectRoot: root,
+    config: flowConfigSchema.parse({
+      version: "1",
+      project: { name: "Example" },
+      topology: {
+        repos: { main: { name: "example", baseBranch: "main" } },
+      },
+    }),
+  });
 
   const result = await migrateFlowConfig({ projectRoot: root });
 
@@ -792,16 +801,12 @@ test("Flow config migrate reports current version as no-op", async () => {
 test("Flow config migrate can add missing version metadata", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-config-migrate-versionless-"));
   await mkdir(dirname(flowConfigPath(root)), { recursive: true });
-  await writeFile(flowConfigPath(root), [
-    "project:",
-    '  name: "Example"',
-    "topology:",
-    "  repos:",
-    "    main:",
-    '      name: "example"',
-    '      baseBranch: "main"',
-    "",
-  ].join("\n"), "utf8");
+  await writeFile(flowConfigPath(root), `${JSON.stringify({
+    project: { name: "Example" },
+    topology: {
+      repos: { main: { name: "example", baseBranch: "main" } },
+    },
+  }, null, 2)}\n`, "utf8");
 
   const preview = await migrateFlowConfig({ projectRoot: root });
   assert.equal(preview.ok, true);
@@ -811,7 +816,7 @@ test("Flow config migrate can add missing version metadata", async () => {
   assert.equal(preview.toVersion, "1");
 
   const beforeWrite = await readFile(flowConfigPath(root), "utf8");
-  assert.equal(beforeWrite.includes('version: "1"'), false);
+  assert.equal(beforeWrite.includes('"version": "1"'), false);
 
   const written = await migrateFlowConfig({ projectRoot: root, write: true });
   assert.equal(written.ok, true);
@@ -819,57 +824,40 @@ test("Flow config migrate can add missing version metadata", async () => {
   assert.equal(written.wrote, true);
 
   const afterWrite = await readFile(flowConfigPath(root), "utf8");
-  assert.match(afterWrite, /version:\s*"1"/);
+  assert.match(afterWrite, /"version":\s*"1"/);
 
   const validation = await validateFlowConfig({ projectRoot: root });
   assert.equal(validation.ok, true);
 });
 
-test("Flow config bootstrap creates hidden user-state config by default", async () => {
+test("Flow config bootstrap creates managed config in user state", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-bootstrap-"));
-  const home = await mkdtemp(join(tmpdir(), "flow-home-"));
-  const originalHome = process.env.HOME;
-  process.env.HOME = home;
-  try {
-    const result = await bootstrapFlowConfig({ projectRoot: root });
-
-    assert.equal(result.ok, true);
-    assert.equal(result.created, true);
-    assert.equal(result.storage, "user");
-    assert.equal(result.path, flowUserConfigPath(root));
-    assert.equal(result.repoName, result.projectName);
-
-    const config = await loadFlowConfig({ projectRoot: root });
-    assert.ok(config);
-    assert.equal(config.project.name, result.projectName);
-    assert.equal(config.topology.repos.main.name, result.repoName);
-    assert.equal(config.topology.repos.main.baseBranch, "main");
-    assert.equal(config.issueTracker?.type, "local");
-    assert.equal(config.collaboration?.type, "none");
-    assert.equal(config.sourceControl?.type, "git");
-    assert.equal(config.ledger?.type, "sql");
-    assert.equal(configString(config.ledger, "dialect"), "sqlite");
-    assert.equal(config.runtime?.store?.type, "sqlite");
-    assert.equal(config.runtime?.stateDir, flowUserRuntimePath(root));
-
-    await assert.rejects(
-      () => bootstrapFlowConfig({ projectRoot: root }),
-      /Flow config already exists/,
-    );
-  } finally {
-    if (originalHome === undefined) delete process.env.HOME;
-    else process.env.HOME = originalHome;
-  }
-});
-
-test("Flow config bootstrap can create tracked repo config", async () => {
-  const root = await mkdtemp(join(tmpdir(), "flow-bootstrap-tracked-"));
-  const result = await bootstrapFlowConfig({ projectRoot: root, storage: "repo-tracked" });
+  const result = await bootstrapFlowConfig({ projectRoot: root });
 
   assert.equal(result.ok, true);
   assert.equal(result.created, true);
-  assert.equal(result.storage, "repo-tracked");
-  assert.equal(result.path, flowConfigPath(root));
+  assert.equal(result.storage, "flow-managed");
+  assert.equal(result.path, flowUserConfigPath(root));
+  assert.equal(existsSync(join(root, ".flow", "config.yaml")), false);
+  assert.equal(result.repoName, result.projectName);
+
+  const config = await loadFlowConfig({ projectRoot: root });
+  assert.ok(config);
+  assert.equal(config.project.name, result.projectName);
+  assert.equal(config.topology.repos.main.name, result.repoName);
+  assert.equal(config.topology.repos.main.baseBranch, "main");
+  assert.equal(config.issueTracker?.type, "local");
+  assert.equal(config.collaboration?.type, "none");
+  assert.equal(config.sourceControl?.type, "git");
+  assert.equal(config.ledger?.type, "sql");
+  assert.equal(configString(config.ledger, "dialect"), "sqlite");
+  assert.equal(config.runtime?.store?.type, "sqlite");
+  assert.equal(config.runtime?.stateDir, flowUserRuntimePath(root));
+
+  await assert.rejects(
+    () => bootstrapFlowConfig({ projectRoot: root }),
+    /Flow managed config already exists/,
+  );
 });
 
 test("Flow config bootstrap keeps providers local when a GitHub remote exists", async () => {
@@ -877,7 +865,7 @@ test("Flow config bootstrap keeps providers local when a GitHub remote exists", 
   await execFileAsync("git", ["init"], { cwd: root });
   await execFileAsync("git", ["remote", "add", "origin", "git@github.com:example-org/example.git"], { cwd: root });
 
-  const result = await bootstrapFlowConfig({ projectRoot: root, storage: "repo-tracked" });
+  const result = await bootstrapFlowConfig({ projectRoot: root });
   const config = await loadFlowConfig({ projectRoot: root });
 
   assert.ok(config);
@@ -1010,7 +998,7 @@ test("Configured runtime can select Postgres SQL workflow ledger from urlSecret"
   else process.env.FLOW_TEST_DATABASE_URL = original;
 });
 
-test("CLI issue resolver hydrates provider issue refs before workflow commands", async () => {
+test("Flow issue resolver hydrates provider issue refs before workflow commands", async () => {
   const hydrated: WorkItem = {
     ref: "GH-165",
     title: "Harden Autoflow into a real project runner",
@@ -1019,7 +1007,7 @@ test("CLI issue resolver hydrates provider issue refs before workflow commands",
     metadata: { issueType: "story", branchKind: "feature" },
   };
 
-  const resolved = await resolveCliIssue({
+  const resolved = await resolveFlowIssue({
     inspectQueue: async () => [],
     inspectIssue: async () => hydrated,
   }, "GH-165");
@@ -1029,774 +1017,333 @@ test("CLI issue resolver hydrates provider issue refs before workflow commands",
   assert.equal(resolved.metadata.branchKind, "feature");
 });
 
-test("Flow CLI core works with only git available on PATH", async () => {
+test("Flow MCP server works with only git available on PATH", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-git-only-"));
   await execFileAsync("git", ["init"], { cwd: root });
   const gitPath = await commandPath("git");
   const gitOnlyPath = dirname(gitPath);
-  const env = {
-    ...process.env,
+  const env = mcpEnv({
     PATH: gitOnlyPath,
     Path: gitOnlyPath,
-  };
-  const flowBin = join(process.cwd(), "bin", "flow");
-  const callFlow = async (body: Record<string, unknown>) => {
-    const { stdout } = await execFileAsync(process.execPath, [flowBin, JSON.stringify(body)], {
-      cwd: root,
-      env,
-      maxBuffer: 20 * 1024 * 1024,
+  });
+
+  await withFlowMcp(root, async (client) => {
+    const tools = await client.listTools();
+    const toolNames = tools.tools.map((tool) => tool.name);
+    assert.ok(toolNames.includes("flow_issue_create"));
+    assert.ok(toolNames.includes("flow_record_result"));
+    assert.ok(!toolNames.includes("flow_runtime"));
+
+    await callFlowTool(client, "flow_bootstrap", {});
+    const config = await loadFlowConfig({ projectRoot: root });
+    assert.equal(config?.issueTracker?.type, "local");
+    assert.equal(config?.collaboration?.type, "none");
+    assert.equal(config?.sourceControl?.type, "git");
+    assert.equal(config?.runtime && "worker" in config.runtime, false);
+
+    const intake = await callFlowTool(client, "flow_issue_intake", {
+      summary: "Git-only Flow core",
+      issueType: "Task",
+      dryRun: true,
+      review: true,
     });
-    const parsed = JSON.parse(stdout) as { ok?: boolean; result?: unknown; error?: unknown };
-    if (parsed.ok === false) throw new Error(`Flow CLI failed: ${JSON.stringify(parsed.error)}`);
-    return parsed.result as Record<string, unknown>;
-  };
+    const reviewJob = intake.reviewJob as { id: string; issueRef: string; repoKey: string; workType: string };
+    await callFlowTool(client, "flow_record_work_job_result", {
+      jobId: reviewJob.id,
+      issueRef: reviewJob.issueRef,
+      repoKey: reviewJob.repoKey,
+      workType: reviewJob.workType,
+      status: "succeeded",
+      summary: "Executor approved issue intake.",
+      evidence: ["MCP test executor review."],
+      completedAt: nowIso(),
+    });
+    const issue = await callFlowTool(client, "flow_issue_create", {
+      summary: "Git-only Flow core",
+      issueType: "Task",
+    });
+    assert.equal(issue.title, "Git-only Flow core");
 
-  await callFlow({ op: "bootstrap", storage: "repo-tracked" });
-  const config = await loadFlowConfig({ projectRoot: root });
-  assert.equal(config?.issueTracker?.type, "local");
-  assert.equal(config?.collaboration?.type, "none");
-  assert.equal(config?.sourceControl?.type, "git");
-  assert.equal(config?.runtime && "worker" in config.runtime, false);
-
-  const issueRequest = {
-    op: "issue",
-    mode: "create",
-    summary: "Git-only Flow core",
-    issueType: "Task",
-  };
-  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true, review: true });
-  const reviewJob = intake.reviewJob as { id: string; issueRef: string; repoKey: string; workType: string };
-  await callFlow({
-    op: "runtime",
-    method: "recordWorkJobResult",
-    params: {
-      result: {
-        jobId: reviewJob.id,
-        issueRef: reviewJob.issueRef,
-        repoKey: reviewJob.repoKey,
-        workType: reviewJob.workType,
-        status: "succeeded",
-        summary: "Executor approved issue intake.",
-        evidence: ["CLI test executor review."],
-        completedAt: nowIso(),
-      },
-    },
-  });
-  const issue = await callFlow(issueRequest);
-  assert.equal(issue.title, "Git-only Flow core");
-
-  const manifest = await callFlow({ op: "manifest", target: "issue" });
-  const issueTrackerManifest = manifest.issueTracker as Record<string, unknown>;
-  assert.deepEqual(manifest.modes, ["view", "select", "intake", "create", "route", "adoptBranch", "adoptWorkspace", "triage"]);
-  assert.equal(issueTrackerManifest.type, "local");
-  assert.match(String(issueTrackerManifest.refHint), /^FLOW-GIT-ONLY-[A-Z0-9]+-123$/);
-  assert.equal(issueTrackerManifest.sourceOfTruth, ".flow/config.yaml");
-  assert.deepEqual(issueTrackerManifest.capabilities, {
-    view: true,
-    queue: true,
-    backlog: true,
-    create: true,
-    transition: true,
-    comments: true,
-    search: true,
-    tagging: true,
-    planningLane: false,
-    triage: true,
-  });
-  const workflowManifest = await callFlow({ op: "manifest", target: "workflow" });
-  assert.ok((workflowManifest.modes as string[]).includes("adoptHandoff"));
-  assert.ok((workflowManifest.examples as Array<{ mode?: string }>).some((example) => example.mode === "adoptHandoff"));
-  assert.ok((workflowManifest.examples as Array<{ mode?: string }>).some((example) => example.mode === "recordResult"));
-
-  const viewed = await callFlow({ op: "issue", mode: "view", id: issue.ref });
-  assert.equal(viewed.ref, issue.ref);
-  assert.equal(viewed.title, "Git-only Flow core");
+    const viewed = await callFlowTool(client, "flow_issue_view", { id: issue.ref });
+    assert.equal(viewed.ref, issue.ref);
+    assert.equal(viewed.title, "Git-only Flow core");
+  }, { env });
 });
 
-test("Flow CLI honors FLOW_ROOT when invoked from another directory", async () => {
+test("Flow MCP server honors FLOW_ROOT when invoked from another directory", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-root-env-"));
   const otherCwd = await mkdtemp(join(tmpdir(), "flow-root-env-cwd-"));
   await execFileAsync("git", ["init"], { cwd: root });
-  const flowBin = join(process.cwd(), "bin", "flow");
 
-  const callFlow = async (body: Record<string, unknown>) => {
-    const { stdout } = await execFileAsync(process.execPath, [flowBin, JSON.stringify(body)], {
-      cwd: otherCwd,
-      env: { ...process.env, FLOW_ROOT: root },
-      maxBuffer: 20 * 1024 * 1024,
-    });
-    const parsed = JSON.parse(stdout) as { ok?: boolean; result?: unknown; error?: unknown };
-    if (parsed.ok === false) throw new Error(`Flow CLI failed: ${JSON.stringify(parsed.error)}`);
-    return parsed.result as Record<string, unknown>;
-  };
+  await withFlowMcp(otherCwd, async (client) => {
+    await callFlowTool(client, "flow_bootstrap", {});
+    const explained = await callFlowTool(client, "flow_config_explain");
 
-  await callFlow({ op: "bootstrap", storage: "repo-tracked" });
-  const explained = await callFlow({ op: "config", mode: "explain" });
-
-  assert.equal(explained.path, flowConfigPath(root));
+    assert.equal(explained.path, flowConfigPath(root));
+  }, { env: mcpEnv({ FLOW_ROOT: root }) });
 });
 
-test("JSON CLI returns INVALID_JSON for malformed argv input", async () => {
-  const result = await captureJsonCli(["not-json"]);
+test("Flow MCP can manage multiple registered projects in one server", async () => {
+  const firstRoot = await mkdtemp(join(tmpdir(), "flow-mcp-project-a-"));
+  const secondRoot = await mkdtemp(join(tmpdir(), "flow-mcp-project-b-"));
+  const registryRoot = await mkdtemp(join(tmpdir(), "flow-mcp-project-registry-"));
+  await execFileAsync("git", ["init"], { cwd: firstRoot });
+  await execFileAsync("git", ["init"], { cwd: secondRoot });
 
-  assert.equal(result.exitCode, 1);
-  assert.equal(result.payload.ok, false);
-  assert.equal(result.payload.error.code, "INVALID_JSON");
-  assert.equal(result.payload.error.details.body, "not-json");
-  assert.equal(result.routeCalls, 0);
-});
+  await withFlowMcp(firstRoot, async (client) => {
+    const tools = await client.listTools();
+    const names = tools.tools.map((tool) => tool.name);
+    assert.ok(names.includes("flow_projects"));
+    assert.equal(names.includes("flow_project_select"), false);
+    assert.equal(names.includes("flow_project_current"), false);
 
-test("JSON CLI accepts PowerShell-mangled JSON argv input", async () => {
-  const result = await captureJsonCli(["{op:state,target:issue,dryRun:true,limit:5}"], {
-    route: (request) => ({ request }),
+    const initialProjects = await callFlowTool(client, "flow_projects") as {
+      defaultProject: { root: string };
+      projects: Array<{ root: string }>;
+    };
+    assert.equal(initialProjects.defaultProject.root, firstRoot);
+    assert.equal(initialProjects.projects.some((project) => project.root === firstRoot), true);
+
+    const firstBootstrap = await callFlowTool(client, "flow_bootstrap", {}) as {
+      project: { valid: boolean; root: string };
+    };
+    assert.equal(firstBootstrap.project.root, firstRoot);
+    assert.equal(firstBootstrap.project.valid, true);
+    const firstIssue = await createReviewedLocalIssue(client, "First project issue");
+
+    const added = await callFlowTool(client, "flow_project_add", { root: secondRoot }) as {
+      project: { id: string; root: string };
+      defaultProjectId: string;
+    };
+    assert.equal(added.project.root, secondRoot);
+    assert.notEqual(added.defaultProjectId, added.project.id);
+
+    const secondScope = { projectId: added.project.id };
+    const secondBootstrap = await callFlowTool(client, "flow_bootstrap", { ...secondScope }) as {
+      project: { valid: boolean; root: string };
+    };
+    assert.equal(secondBootstrap.project.root, secondRoot);
+    assert.equal(secondBootstrap.project.valid, true);
+    await createReviewedLocalIssue(client, "Second project issue", secondScope);
+
+    const secondQueue = await callFlowTool(client, "flow_queue", { ...secondScope, limit: 10 }) as { value: Array<{ ref: string; title: string }> };
+    assert.equal(secondQueue.value.some((issue) => issue.title === "Second project issue"), true);
+    assert.equal(secondQueue.value.some((issue) => issue.title === "First project issue"), false);
+
+    const firstQueue = await callFlowTool(client, "flow_queue", { projectRoot: firstRoot, limit: 10 }) as { value: Array<{ ref: string; title: string }> };
+    assert.equal(firstQueue.value.some((issue) => issue.ref === firstIssue.ref), true);
+    assert.equal(firstQueue.value.some((issue) => issue.title === "Second project issue"), false);
+
+    const allQueue = await callFlowTool(client, "flow_queue", { allProjects: true, limit: 10 }) as {
+      projects: Array<{ project: { id: string; root: string }; value: Array<{ title: string }> }>;
+      value: Array<{ title: string; projectId: string; projectRoot: string }>;
+    };
+    assert.equal(allQueue.projects.length, 2);
+    assert.equal(allQueue.value.some((issue) => issue.title === "First project issue" && issue.projectRoot === firstRoot), true);
+    assert.equal(allQueue.value.some((issue) => issue.title === "Second project issue" && issue.projectId === added.project.id), true);
+  }, {
+    env: mcpEnv({ FLOW_MCP_PROJECTS_PATH: join(registryRoot, "projects.json") }),
   });
-
-  assert.equal(result.exitCode, undefined);
-  assert.equal(result.payload.ok, true);
-  assert.equal(result.payload.op, "state");
-  assert.equal(result.routeCalls, 1);
-  assert.deepEqual(result.payload.result.request, {
-    op: "state",
-    target: "issue",
-    dryRun: true,
-    limit: 5,
-  });
 });
 
-test("JSON CLI returns BAD_REQUEST when op is missing", async () => {
-  const result = await captureJsonCli([JSON.stringify({ mode: "state" })]);
-
-  assert.equal(result.exitCode, 1);
-  assert.equal(result.payload.ok, false);
-  assert.equal(result.payload.error.code, "BAD_REQUEST");
-  assert.equal(result.payload.error.message, "JSON body must include a non-empty string op.");
-  assert.deepEqual(result.payload.error.details.expected, { op: "string" });
-  assert.equal(result.routeCalls, 0);
-});
-
-test("JSON CLI returns BAD_ARGS for multiple body arguments", async () => {
-  const result = await captureJsonCli(["{}", "{}"]);
-
-  assert.equal(result.exitCode, 1);
-  assert.equal(result.payload.ok, false);
-  assert.equal(result.payload.error.code, "BAD_ARGS");
-  assert.equal(result.payload.error.details.expected, "flow, flow manifest, or flow '<json-body>'");
-  assert.equal(result.routeCalls, 0);
-});
-
-test("JSON CLI returns RUNTIME_ERROR for route exceptions", async () => {
-  const result = await captureJsonCli([JSON.stringify({ op: "state" })], {
-    route: () => {
-      throw new Error("route exploded");
-    },
-  });
-
-  assert.equal(result.exitCode, 1);
-  assert.equal(result.payload.ok, false);
-  assert.equal(result.payload.error.code, "RUNTIME_ERROR");
-  assert.equal(result.payload.error.message, "route exploded");
-  assert.deepEqual(result.payload.error.details, { op: "state" });
-  assert.equal(result.routeCalls, 1);
-});
-
-test("JSON CLI preserves JsonCliError details and manifest target", async () => {
-  const result = await captureJsonCli([JSON.stringify({ op: "review", target: "invalid" })], {
-    route: () => {
-      throw new JsonCliError("BAD_TARGET", "Unknown review target.", {
-        manifestTarget: "review",
-        details: { target: "invalid" },
-      });
-    },
-  });
-
-  assert.equal(result.exitCode, 1);
-  assert.equal(result.payload.ok, false);
-  assert.equal(result.payload.error.code, "BAD_TARGET");
-  assert.equal(result.payload.error.manifest.body.target, "review");
-  assert.equal(result.payload.error.details.op, "review");
-  assert.equal(result.payload.error.details.target, "invalid");
-  assert.deepEqual(result.payload.error.details.manifest, { op: "manifest", target: "review" });
-  assert.equal(result.routeCalls, 1);
-});
-
-test("JSON CLI returns UNHANDLED_ERROR when stdin cannot be read", async () => {
-  const stdin = new Readable({
-    read() {
-      this.destroy(new Error("stdin exploded"));
-    },
-  });
-  const result = await captureJsonCli([], { stdin });
-
-  assert.equal(result.exitCode, 1);
-  assert.equal(result.payload.ok, false);
-  assert.equal(result.payload.error.code, "UNHANDLED_ERROR");
-  assert.equal(result.payload.error.message, "stdin exploded");
-  assert.equal(result.routeCalls, 0);
-});
-
-test("JSON CLI routes valid stdin bodies with stdin source context", async () => {
-  const stdin = Readable.from([JSON.stringify({ op: "state" })]);
-  const result = await captureJsonCli([], {
-    stdin,
-    route: (_request, context) => ({ source: context.source }),
-  });
-
-  assert.equal(result.exitCode, undefined);
-  assert.deepEqual(result.payload, {
-    ok: true,
-    op: "state",
-    result: { source: "stdin" },
-  });
-  assert.equal(result.routeCalls, 1);
-});
-
-test("Flow CLI can record evidence and documentation in one workflow call", async () => {
+test("Flow MCP can record evidence and documentation in one workflow call", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-record-acceptance-"));
   await execFileAsync("git", ["init"], { cwd: root });
-  const flowCli = join(process.cwd(), ".tmp", "test", "src", "flow.js");
 
-  const callFlow = async (body: Record<string, unknown>) => {
-    const { stdout } = await execFileAsync(process.execPath, [flowCli, JSON.stringify(body)], {
-      cwd: root,
-      maxBuffer: 20 * 1024 * 1024,
-    });
-    const parsed = JSON.parse(stdout) as { ok?: boolean; result?: unknown; error?: unknown };
-    if (parsed.ok === false) throw new Error(`Flow CLI failed: ${JSON.stringify(parsed.error)}`);
-    return parsed.result as Record<string, unknown>;
-  };
+  await withFlowMcp(root, async (client) => {
+    await callFlowTool(client, "flow_bootstrap", {});
+    const issue = await createReviewedLocalIssue(client, "Record acceptance");
 
-  await callFlow({ op: "bootstrap", storage: "repo-tracked" });
-  const issueRequest = {
-    op: "issue",
-    mode: "create",
-    summary: "Record acceptance",
-    issueType: "Task",
-  };
-  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true, review: true });
-  const reviewJob = intake.reviewJob as { id: string; issueRef: string; repoKey: string; workType: string };
-  await callFlow({
-    op: "runtime",
-    method: "recordWorkJobResult",
-    params: {
-      result: {
-        jobId: reviewJob.id,
-        issueRef: reviewJob.issueRef,
-        repoKey: reviewJob.repoKey,
-        workType: reviewJob.workType,
-        status: "succeeded",
-        summary: "Executor approved issue intake.",
-        evidence: ["CLI test executor review."],
-        completedAt: nowIso(),
-      },
-    },
+    const result = await callFlowTool(client, "flow_record_acceptance", {
+      id: issue.ref,
+      evidenceSummary: "npm test passed",
+      documentationSummary: "No docs needed for MCP acceptance metadata.",
+      disposition: "not_needed",
+      criteria: ["tests"],
+    }) as unknown as { evidence: WorkItem; documentation: WorkItem };
+
+    assert.equal(result.evidence.metadata.evidenceSummary, "npm test passed");
+    assert.equal(result.documentation.metadata.documentationDisposition, "not_needed");
   });
-  const issue = await callFlow(issueRequest) as { ref: string };
-
-  const result = await callFlow({
-    op: "workflow",
-    mode: "recordAcceptance",
-    id: issue.ref,
-    evidenceSummary: "npm test passed",
-    documentationSummary: "No docs needed for CLI acceptance metadata.",
-    disposition: "not_needed",
-    criteria: ["tests"],
-  }) as { evidence: WorkItem; documentation: WorkItem };
-
-  assert.equal(result.evidence.metadata.evidenceSummary, "npm test passed");
-  assert.equal(result.documentation.metadata.documentationDisposition, "not_needed");
 });
 
-test("Flow CLI workflow recordResult and observe return next JSON commands", async () => {
-  const root = await mkdtemp(join(tmpdir(), "flow-cli-next-json-commands-"));
+test("Flow MCP recordResult and observe return next MCP tool suggestions", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-mcp-next-tools-"));
   await execFileAsync("git", ["init"], { cwd: root });
-  const flowCli = join(process.cwd(), ".tmp", "test", "src", "flow.js");
 
-  const callFlow = async (body: Record<string, unknown>) => {
-    const { stdout } = await execFileAsync(process.execPath, [flowCli, JSON.stringify(body)], {
-      cwd: root,
-      maxBuffer: 20 * 1024 * 1024,
-    });
-    const parsed = JSON.parse(stdout) as { ok?: boolean; result?: unknown; error?: unknown };
-    if (parsed.ok === false) throw new Error(`Flow CLI failed: ${JSON.stringify(parsed.error)}`);
-    return parsed.result as Record<string, unknown>;
-  };
+  await withFlowMcp(root, async (client) => {
+    await callFlowTool(client, "flow_bootstrap", {});
+    const issue = await createReviewedLocalIssue(client, "Observe MCP tool suggestions");
 
-  await callFlow({ op: "bootstrap", storage: "repo-tracked" });
-  const issueRequest = {
-    op: "issue",
-    mode: "create",
-    summary: "Observe JSON commands",
-    issueType: "Task",
-  };
-  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true, review: true });
-  const reviewJob = intake.reviewJob as { id: string; issueRef: string; repoKey: string; workType: string };
-  await callFlow({
-    op: "runtime",
-    method: "recordWorkJobResult",
-    params: {
-      result: {
-        jobId: reviewJob.id,
-        issueRef: reviewJob.issueRef,
-        repoKey: reviewJob.repoKey,
-        workType: reviewJob.workType,
-        status: "succeeded",
-        summary: "Executor approved issue intake.",
-        evidence: ["CLI test executor review."],
-        completedAt: nowIso(),
-      },
-    },
+    const result = await callFlowTool(client, "flow_record_result", {
+      id: issue.ref,
+      repoKey: "main",
+      status: "succeeded",
+      summary: "Thread completed the change.",
+      changedFiles: ["src/work-runtime.ts"],
+      testsRun: ["npm run check"],
+    }) as { nextMcpTools: Array<{ label: string; toolName: string; arguments: Record<string, unknown> }> };
+    const observed = await callFlowTool(client, "flow_observe", { id: issue.ref }) as {
+      nextMcpTools: Array<{ label: string; toolName: string; arguments: Record<string, unknown> }>;
+    };
+
+    assert.deepEqual(result.nextMcpTools.map((tool) => tool.toolName), [
+      "flow_record_evidence",
+      "flow_record_pull_request",
+      "flow_observe",
+      "flow_workflow_advance",
+    ]);
+    assert.equal(observed.nextMcpTools[0].toolName, "flow_record_evidence");
+    assert.equal(observed.nextMcpTools[0].arguments.id, issue.ref);
   });
-  const issue = await callFlow(issueRequest) as { ref: string };
-
-  const result = await callFlow({
-    op: "workflow",
-    mode: "recordResult",
-    id: issue.ref,
-    repoKey: "main",
-    status: "succeeded",
-    summary: "Thread completed the change.",
-    changedFiles: ["src/work-runtime.ts"],
-    testsRun: ["npm run check"],
-  }) as { nextJsonCommands: Array<{ label: string; request: Record<string, unknown> }> };
-  const observed = await callFlow({
-    op: "workflow",
-    mode: "observe",
-    id: issue.ref,
-  }) as { nextJsonCommands: Array<{ label: string; request: Record<string, unknown> }> };
-
-  assert.deepEqual(result.nextJsonCommands.map((command) => command.request.mode), [
-    "recordEvidence",
-    "recordPullRequest",
-    "observe",
-    "advance",
-  ]);
-  assert.equal(observed.nextJsonCommands[0].request.mode, "recordEvidence");
-  assert.equal(observed.nextJsonCommands[0].request.id, issue.ref);
 });
 
-test("Flow CLI workflow adoptHandoff claims pending live-thread handoff", async () => {
-  const root = await mkdtemp(join(tmpdir(), "flow-cli-adopt-handoff-"));
+test("Flow MCP adoptHandoff claims pending live-thread handoff", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-mcp-adopt-handoff-"));
   await execFileAsync("git", ["init"], { cwd: root });
   await writeFile(join(root, "README.md"), "# test\n");
   await execFileAsync("git", ["add", "README.md"], { cwd: root });
   await execFileAsync("git", ["-c", "user.name=Flow Test", "-c", "user.email=flow-test@example.com", "commit", "-m", "init"], { cwd: root });
-  const flowCli = join(process.cwd(), ".tmp", "test", "src", "flow.js");
 
-  const callFlow = async (body: Record<string, unknown>) => {
-    const { stdout } = await execFileAsync(process.execPath, [flowCli, JSON.stringify(body)], {
-      cwd: root,
-      maxBuffer: 20 * 1024 * 1024,
+  await withFlowMcp(root, async (client) => {
+    await callFlowTool(client, "flow_bootstrap", {});
+    const issue = await createReviewedLocalIssue(client, "Adopt handoff");
+    const workspace = root.replace(/\\/g, "/");
+
+    await callFlowTool(client, "flow_issue_route", { id: issue.ref, repoKeys: ["main"] });
+    await callFlowTool(client, "flow_adopt_workspace", {
+      id: issue.ref,
+      repoKey: "main",
+      worktreePath: workspace,
     });
-    const parsed = JSON.parse(stdout) as { ok?: boolean; result?: unknown; error?: unknown };
-    if (parsed.ok === false) throw new Error(`Flow CLI failed: ${JSON.stringify(parsed.error)}`);
-    return parsed.result as Record<string, unknown>;
-  };
+    const handoff = await callFlowTool(client, "flow_workflow_adopt_handoff", {
+      id: issue.ref,
+      adopter: "claude",
+    }) as { id: string; issueRef: string; repoKey: string; workJobId: string; prompt: string; workspacePath: string };
 
-  await callFlow({ op: "bootstrap", storage: "repo-tracked" });
-  const issueRequest = {
-    op: "issue",
-    mode: "create",
-    summary: "Adopt handoff",
-    issueType: "Task",
-  };
-  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true, review: true });
-  const reviewJob = intake.reviewJob as { id: string; issueRef: string; repoKey: string; workType: string };
-  await callFlow({
-    op: "runtime",
-    method: "recordWorkJobResult",
-    params: {
-      result: {
-        jobId: reviewJob.id,
-        issueRef: reviewJob.issueRef,
-        repoKey: reviewJob.repoKey,
-        workType: reviewJob.workType,
-        status: "succeeded",
-        summary: "Executor approved issue intake.",
-        evidence: ["CLI test executor review."],
-        completedAt: nowIso(),
-      },
-    },
+    assert.equal(handoff.issueRef, issue.ref);
+    assert.equal(handoff.repoKey, "main");
+    assert.equal(handoff.workspacePath, workspace);
+    assert.match(handoff.prompt, /Use Flow to work this prompt/);
+    assert.ok(handoff.workJobId);
+
+    const result = await callFlowTool(client, "flow_record_result", {
+      id: issue.ref,
+      repoKey: "main",
+      taskId: handoff.id,
+      workJobId: handoff.workJobId,
+      status: "succeeded",
+      summary: "Live thread completed the handoff.",
+      changedFiles: ["src/flow.ts"],
+      testsRun: ["npm run check"],
+    }) as {
+      result: { taskId: string; workJobId: string };
+      nextMcpTools: Array<{ toolName: string }>;
+    };
+
+    assert.equal(result.result.taskId, handoff.id);
+    assert.equal(result.result.workJobId, handoff.workJobId);
+    assert.deepEqual(result.nextMcpTools.map((tool) => tool.toolName), [
+      "flow_record_evidence",
+      "flow_record_pull_request",
+      "flow_observe",
+      "flow_workflow_advance",
+    ]);
   });
-  const issue = await callFlow(issueRequest) as { ref: string };
-  const workspace = root.replace(/\\/g, "/");
-
-  await callFlow({
-    op: "issue",
-    mode: "route",
-    id: issue.ref,
-    repoKeys: ["main"],
-  });
-  await callFlow({
-    op: "issue",
-    mode: "adoptWorkspace",
-    id: issue.ref,
-    repoKey: "main",
-    worktreePath: workspace,
-  });
-  const handoff = await callFlow({
-    op: "workflow",
-    mode: "adoptHandoff",
-    id: issue.ref,
-    adopter: "claude",
-  }) as { id: string; issueRef: string; repoKey: string; workJobId: string; prompt: string; workspacePath: string };
-
-  assert.equal(handoff.issueRef, issue.ref);
-  assert.equal(handoff.repoKey, "main");
-  assert.equal(handoff.workspacePath, workspace);
-  assert.match(handoff.prompt, /Use Flow to work this prompt/);
-  assert.ok(handoff.workJobId);
-
-  const result = await callFlow({
-    op: "workflow",
-    mode: "recordResult",
-    id: issue.ref,
-    repoKey: "main",
-    taskId: handoff.id,
-    workJobId: handoff.workJobId,
-    status: "succeeded",
-    summary: "Live thread completed the handoff.",
-    changedFiles: ["src/flow.ts"],
-    testsRun: ["npm run check"],
-  }) as { result: { taskId: string; workJobId: string }; nextJsonCommands: Array<{ request: { mode?: string } }> };
-
-  assert.equal(result.result.taskId, handoff.id);
-  assert.equal(result.result.workJobId, handoff.workJobId);
-  assert.deepEqual(result.nextJsonCommands.map((command) => command.request.mode), [
-    "recordEvidence",
-    "recordPullRequest",
-    "observe",
-    "advance",
-  ]);
 });
 
-test("Flow workflow doctor strict mode exits nonzero when readiness is not ok", async () => {
+test("Flow MCP workflow doctor strict mode returns a tool error when readiness is not ok", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-doctor-strict-"));
   await execFileAsync("git", ["init"], { cwd: root });
-  const flowCli = join(process.cwd(), ".tmp", "test", "src", "flow.js");
 
-  const callFlow = async (body: Record<string, unknown>) => {
-    const encoded = JSON.stringify(body);
-    try {
-      const { stdout } = await execFileAsync(process.execPath, [flowCli, encoded], {
-        cwd: root,
-        maxBuffer: 20 * 1024 * 1024,
-      });
-      return { exitCode: 0, payload: JSON.parse(stdout) as Record<string, unknown> };
-    } catch (error) {
-      const failed = error as { code?: number; stdout?: string };
-      return {
-        exitCode: failed.code ?? 1,
-        payload: failed.stdout ? JSON.parse(failed.stdout) as Record<string, unknown> : {},
-      };
-    }
-  };
+  await withFlowMcp(root, async (client) => {
+    await callFlowTool(client, "flow_bootstrap", {});
+    const issue = await createReviewedLocalIssue(client, "Strict doctor check");
 
-  const bootstrap = await callFlow({ op: "bootstrap", storage: "repo-tracked" });
-  assert.equal(bootstrap.exitCode, 0);
-  assert.equal(bootstrap.payload.ok, true);
+    const doctor = await callFlowTool(client, "flow_workflow_audit", { id: issue.ref });
+    assert.equal(doctor.status, "blocked");
 
-  const issueRequest = {
-    op: "issue",
-    mode: "create",
-    summary: "Strict doctor check",
-    issueType: "Task",
-  };
-  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true, review: true });
-  const reviewJob = (intake.payload.result as { reviewJob?: { id: string; issueRef: string; repoKey: string; workType: string } }).reviewJob;
-  assert.ok(reviewJob);
-  await callFlow({
-    op: "runtime",
-    method: "recordWorkJobResult",
-    params: {
-      result: {
-        jobId: reviewJob.id,
-        issueRef: reviewJob.issueRef,
-        repoKey: reviewJob.repoKey,
-        workType: reviewJob.workType,
-        status: "succeeded",
-        summary: "Executor approved issue intake.",
-        evidence: ["CLI test executor review."],
-        completedAt: nowIso(),
-      },
-    },
+    const strict = await client.callTool({
+      name: "flow_workflow_audit",
+      arguments: { id: issue.ref, strict: true },
+    });
+    const strictResponse = strict as {
+      isError?: boolean;
+      content?: Array<{ type: string; text?: string }>;
+    };
+    assert.equal(strictResponse.isError === true, true);
+    const text = strictResponse.content?.find((item) => item.type === "text")?.text ?? "";
+    assert.match(text, /Flow doctor reported blocked status/);
   });
-  const created = await callFlow(issueRequest);
-  assert.equal(created.exitCode, 0);
-  assert.equal(created.payload.ok, true);
-  const issue = created.payload.result as { ref: string };
-  assert.ok(issue.ref);
-
-  const doctor = await callFlow({
-    op: "workflow",
-    mode: "doctor",
-    id: issue.ref,
-  });
-  assert.equal(doctor.exitCode, 0);
-  assert.equal(doctor.payload.ok, true);
-
-  const strict = await callFlow({
-    op: "workflow",
-    mode: "doctor",
-    id: issue.ref,
-    strict: true,
-  });
-  assert.notEqual(strict.exitCode, 0);
-  assert.equal(strict.payload.ok, false);
-  const error = strict.payload.error as { code: string; details?: Record<string, unknown> };
-  assert.equal(error.code, "DOCTOR_STRICT_FAILED");
-  assert.equal(error.details?.status, "blocked");
 });
 
-test("Flow CLI review command returns local readiness state", async () => {
+test("Flow MCP review local tool returns readiness state", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-review-local-"));
   await execFileAsync("git", ["init"], { cwd: root });
-  const flowCli = join(process.cwd(), ".tmp", "test", "src", "flow.js");
 
-  const callFlow = async (body: Record<string, unknown>) => {
-    const { stdout } = await execFileAsync(process.execPath, [flowCli, JSON.stringify(body)], {
-      cwd: root,
-      maxBuffer: 20 * 1024 * 1024,
-    });
-    const parsed = JSON.parse(stdout) as { ok?: boolean; result?: unknown; error?: unknown };
-    if (parsed.ok === false) throw new Error(`Flow CLI failed: ${JSON.stringify(parsed.error)}`);
-    return parsed.result as Record<string, unknown>;
-  };
+  await withFlowMcp(root, async (client) => {
+    await callFlowTool(client, "flow_bootstrap", {});
+    const issue = await createReviewedLocalIssue(client, "Review local test");
 
-  await callFlow({ op: "bootstrap", storage: "repo-tracked" });
-  const issueRequest = {
-    op: "issue",
-    mode: "create",
-    summary: "Review local test",
-    issueType: "Task",
-  };
-  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true, review: true });
-  const reviewJob = intake.reviewJob as { id: string; issueRef: string; repoKey: string; workType: string };
-  await callFlow({
-    op: "runtime",
-    method: "recordWorkJobResult",
-    params: {
-      result: {
-        jobId: reviewJob.id,
-        issueRef: reviewJob.issueRef,
-        repoKey: reviewJob.repoKey,
-        workType: reviewJob.workType,
-        status: "succeeded",
-        summary: "Executor approved issue intake.",
-        evidence: ["CLI test executor review."],
-        completedAt: nowIso(),
-      },
-    },
+    const review = await callFlowTool(client, "flow_review_local", { id: issue.ref }) as {
+      issueRef: string;
+      state: string;
+      repoKeys: string[];
+      readiness: { readyToAdvance: boolean; reviewReady: boolean; findings: unknown[] };
+      evidenceRecorded: boolean;
+      documentationRecorded: boolean;
+    };
+
+    assert.equal(review.issueRef, issue.ref);
+    assert.ok(review.state);
+    assert.ok(Array.isArray(review.repoKeys));
+    assert.ok(typeof review.readiness === "object");
+    assert.ok(typeof review.readiness.readyToAdvance === "boolean");
+    assert.ok(typeof review.readiness.reviewReady === "boolean");
+    assert.ok(Array.isArray(review.readiness.findings));
+    assert.equal(review.evidenceRecorded, false);
+    assert.equal(review.documentationRecorded, false);
   });
-  const issue = await callFlow(issueRequest) as { ref: string };
-
-  const review = await callFlow({
-    op: "review",
-    id: issue.ref,
-  }) as { issueRef: string; state: string; repoKeys: string[]; readiness: { readyToAdvance: boolean; reviewReady: boolean; findings: unknown[] }; evidenceRecorded: boolean; documentationRecorded: boolean };
-
-  assert.equal(review.issueRef, issue.ref);
-  assert.ok(review.state);
-  assert.ok(Array.isArray(review.repoKeys));
-  assert.ok(typeof review.readiness === "object");
-  assert.ok(typeof review.readiness.readyToAdvance === "boolean");
-  assert.ok(typeof review.readiness.reviewReady === "boolean");
-  assert.ok(Array.isArray(review.readiness.findings));
-  assert.equal(review.evidenceRecorded, false);
-  assert.equal(review.documentationRecorded, false);
 });
 
-test("Flow CLI review command accepts explicit local target", async () => {
-  const root = await mkdtemp(join(tmpdir(), "flow-review-local-explicit-"));
-  await execFileAsync("git", ["init"], { cwd: root });
-  const flowCli = join(process.cwd(), ".tmp", "test", "src", "flow.js");
-
-  const callFlow = async (body: Record<string, unknown>) => {
-    const { stdout } = await execFileAsync(process.execPath, [flowCli, JSON.stringify(body)], {
-      cwd: root,
-      maxBuffer: 20 * 1024 * 1024,
-    });
-    const parsed = JSON.parse(stdout) as { ok?: boolean; result?: unknown; error?: unknown };
-    if (parsed.ok === false) throw new Error(`Flow CLI failed: ${JSON.stringify(parsed.error)}`);
-    return parsed.result as Record<string, unknown>;
-  };
-
-  await callFlow({ op: "bootstrap", storage: "repo-tracked" });
-  const issueRequest = {
-    op: "issue",
-    mode: "create",
-    summary: "Review local explicit target",
-    issueType: "Task",
-  };
-  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true, review: true });
-  const reviewJob = intake.reviewJob as { id: string; issueRef: string; repoKey: string; workType: string };
-  await callFlow({
-    op: "runtime",
-    method: "recordWorkJobResult",
-    params: {
-      result: {
-        jobId: reviewJob.id,
-        issueRef: reviewJob.issueRef,
-        repoKey: reviewJob.repoKey,
-        workType: reviewJob.workType,
-        status: "succeeded",
-        summary: "Executor approved issue intake.",
-        evidence: ["CLI test executor review."],
-        completedAt: nowIso(),
-      },
-    },
-  });
-  const issue = await callFlow(issueRequest) as { ref: string };
-
-  const review = await callFlow({
-    op: "review",
-    id: issue.ref,
-    target: "local",
-  }) as { issueRef: string; readiness: { readyToAdvance: boolean } };
-
-  assert.equal(review.issueRef, issue.ref);
-  assert.ok(typeof review.readiness.readyToAdvance === "boolean");
-});
-
-test("Flow CLI review command returns code_review state", async () => {
+test("Flow MCP review code review tool returns code review state", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-review-code-review-"));
   await execFileAsync("git", ["init"], { cwd: root });
-  const flowCli = join(process.cwd(), ".tmp", "test", "src", "flow.js");
 
-  const callFlow = async (body: Record<string, unknown>) => {
-    const { stdout } = await execFileAsync(process.execPath, [flowCli, JSON.stringify(body)], {
-      cwd: root,
-      maxBuffer: 20 * 1024 * 1024,
-    });
-    const parsed = JSON.parse(stdout) as { ok?: boolean; result?: unknown; error?: unknown };
-    if (parsed.ok === false) throw new Error(`Flow CLI failed: ${JSON.stringify(parsed.error)}`);
-    return parsed.result as Record<string, unknown>;
-  };
+  await withFlowMcp(root, async (client) => {
+    await callFlowTool(client, "flow_bootstrap", {});
+    const issue = await createReviewedLocalIssue(client, "Review code review test");
 
-  await callFlow({ op: "bootstrap", storage: "repo-tracked" });
-  const issueRequest = {
-    op: "issue",
-    mode: "create",
-    summary: "Review code review test",
-    issueType: "Task",
-  };
-  const intake = await callFlow({ ...issueRequest, mode: "intake", dryRun: true, review: true });
-  const reviewJob = intake.reviewJob as { id: string; issueRef: string; repoKey: string; workType: string };
-  await callFlow({
-    op: "runtime",
-    method: "recordWorkJobResult",
-    params: {
-      result: {
-        jobId: reviewJob.id,
-        issueRef: reviewJob.issueRef,
-        repoKey: reviewJob.repoKey,
-        workType: reviewJob.workType,
-        status: "succeeded",
-        summary: "Executor approved issue intake.",
-        evidence: ["CLI test executor review."],
-        completedAt: nowIso(),
-      },
-    },
+    const review = await callFlowTool(client, "flow_review_code_review", { id: issue.ref }) as {
+      issueRef: string;
+      codeReviewRequired: boolean;
+      collaboration: string;
+      pullRequest: unknown;
+      blockers: string[];
+    };
+
+    assert.equal(review.issueRef, issue.ref);
+    assert.equal(review.codeReviewRequired, false);
+    assert.equal(review.collaboration, "none");
+    assert.equal(review.pullRequest, undefined);
+    assert.ok(Array.isArray(review.blockers));
   });
-  const issue = await callFlow(issueRequest) as { ref: string };
-
-  const review = await callFlow({
-    op: "review",
-    id: issue.ref,
-    target: "code_review",
-  }) as { issueRef: string; codeReviewRequired: boolean; collaboration: string; pullRequest: unknown; blockers: string[] };
-
-  assert.equal(review.issueRef, issue.ref);
-  assert.equal(review.codeReviewRequired, false);
-  assert.equal(review.collaboration, "none");
-  assert.equal(review.pullRequest, undefined);
-  assert.ok(Array.isArray(review.blockers));
 });
 
-test("Flow CLI review manifest includes review target", async () => {
-  const root = await mkdtemp(join(tmpdir(), "flow-review-manifest-"));
+test("Flow MCP tool discovery exposes core workflow tools only", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-mcp-tool-discovery-"));
   await execFileAsync("git", ["init"], { cwd: root });
-  const flowCli = join(process.cwd(), ".tmp", "test", "src", "flow.js");
 
-  const callFlow = async (body: Record<string, unknown>) => {
-    const { stdout } = await execFileAsync(process.execPath, [flowCli, JSON.stringify(body)], {
-      cwd: root,
-      maxBuffer: 20 * 1024 * 1024,
-    });
-    const parsed = JSON.parse(stdout) as { ok?: boolean; result?: unknown; error?: unknown };
-    if (parsed.ok === false) throw new Error(`Flow CLI failed: ${JSON.stringify(parsed.error)}`);
-    return parsed.result as Record<string, unknown>;
-  };
-
-  const manifest = await callFlow({ op: "manifest" }) as { targets: string[]; ops: Record<string, string> };
-  assert.ok(manifest.targets.includes("review"));
-  assert.ok(typeof manifest.ops.review === "string");
-
-  const reviewManifest = await callFlow({ op: "manifest", target: "review" }) as { target: string; targets: string[]; id: string };
-  assert.equal(reviewManifest.target, "review");
-  assert.deepEqual(reviewManifest.targets, ["local", "code_review"]);
-  assert.ok(typeof reviewManifest.id === "string");
-});
-
-test("Flow CLI review command rejects invalid target", async () => {
-  const root = await mkdtemp(join(tmpdir(), "flow-review-bad-target-"));
-  await execFileAsync("git", ["init"], { cwd: root });
-  const flowCli = join(process.cwd(), ".tmp", "test", "src", "flow.js");
-
-  try {
-    const { stdout } = await execFileAsync(process.execPath, [flowCli, JSON.stringify({
-      op: "review",
-      id: "FLOW-1",
-      target: "invalid",
-    })], {
-      cwd: root,
-      maxBuffer: 20 * 1024 * 1024,
-    });
-    const parsed = JSON.parse(stdout) as { ok?: boolean; error?: { code?: string } };
-    assert.equal(parsed.ok, false);
-    assert.equal(parsed.error?.code, "BAD_MODE");
-  } catch (error) {
-    const failed = error as { stdout?: string };
-    if (failed.stdout) {
-      const parsed = JSON.parse(failed.stdout) as { ok?: boolean; error?: { code?: string } };
-      assert.equal(parsed.ok, false);
-      assert.equal(parsed.error?.code, "BAD_MODE");
-    } else {
-      throw error;
-    }
-  }
-});
-
-test("Flow CLI workflow command rejects autoflow mode", async () => {
-  const root = await mkdtemp(join(tmpdir(), "flow-workflow-autoflow-reject-"));
-  await execFileAsync("git", ["init"], { cwd: root });
-  const flowCli = join(process.cwd(), ".tmp", "test", "src", "flow.js");
-
-  try {
-    const { stdout } = await execFileAsync(process.execPath, [flowCli, JSON.stringify({
-      op: "workflow",
-      mode: "autoflow",
-      id: "FLOW-1",
-    })], {
-      cwd: root,
-      maxBuffer: 20 * 1024 * 1024,
-    });
-    const parsed = JSON.parse(stdout) as { ok?: boolean; error?: { code?: string; details?: { supportedModes?: string[] } } };
-    assert.equal(parsed.ok, false);
-    assert.equal(parsed.error?.code, "BAD_MODE");
-    assert.ok(parsed.error?.details?.supportedModes?.includes("advance"));
-    assert.ok(parsed.error?.details?.supportedModes?.includes("doctor"));
-    assert.ok(!parsed.error?.details?.supportedModes?.includes("autoflow"));
-  } catch (error) {
-    const failed = error as { stdout?: string };
-    if (failed.stdout) {
-      const parsed = JSON.parse(failed.stdout) as { ok?: boolean; error?: { code?: string; details?: { supportedModes?: string[] } } };
-      assert.equal(parsed.ok, false);
-      assert.equal(parsed.error?.code, "BAD_MODE");
-      assert.ok(!parsed.error?.details?.supportedModes?.includes("autoflow"));
-    } else {
-      throw error;
-    }
-  }
+  await withFlowMcp(root, async (client) => {
+    const tools = await client.listTools();
+    const names = tools.tools.map((tool) => tool.name);
+    assert.ok(names.includes("flow_review_local"));
+    assert.ok(names.includes("flow_review_code_review"));
+    assert.ok(names.includes("flow_workflow_advance"));
+    assert.ok(names.includes("flow_workflow_audit"));
+    assert.ok(!names.includes("flow_autoflow"));
+    assert.ok(!names.includes("flow_runtime"));
+  });
 });
 
 test("reviewLocal runtime method returns complete readiness state", async () => {
@@ -1987,26 +1534,13 @@ test("reviewCodeReview runtime method posts provider-neutral review comment when
   assert.equal(result.postedComment?.url, "https://github.com/example/repo/pull/42#issuecomment-1");
 });
 
-test("Flow config bootstrap can keep repo-local config in local git exclude", async () => {
-  const root = await mkdtemp(join(tmpdir(), "flow-bootstrap-untracked-"));
-  await execFileAsync("git", ["init"], { cwd: root });
-
-  const result = await bootstrapFlowConfig({ projectRoot: root, storage: "repo-untracked" });
-  const exclude = await readFile(join(root, ".git", "info", "exclude"), "utf8");
-
-  assert.equal(result.storage, "repo-untracked");
-  assert.equal(result.path, flowConfigPath(root));
-  assert.equal(result.localExcludeUpdated, true);
-  assert.match(exclude, /^\.flow\/$/m);
-});
-
 test("Desktop project registry tracks active Flow projects from config roots", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-desktop-project-"));
   const secondRoot = await mkdtemp(join(tmpdir(), "flow-desktop-project-two-"));
   await execFileAsync("git", ["init"], { cwd: root });
   await execFileAsync("git", ["init"], { cwd: secondRoot });
-  await bootstrapFlowConfig({ projectRoot: root, storage: "repo-tracked" });
-  await bootstrapFlowConfig({ projectRoot: secondRoot, storage: "repo-tracked" });
+  await bootstrapFlowConfig({ projectRoot: root });
+  await bootstrapFlowConfig({ projectRoot: secondRoot });
   const stateRoot = await mkdtemp(join(tmpdir(), "flow-desktop-state-"));
   const registry = new DesktopProjectRegistry({ statePath: join(stateRoot, "projects.json") });
 
@@ -2028,7 +1562,7 @@ test("Desktop project registry tracks active Flow projects from config roots", a
 test("Desktop project registry can store active project state in SQLite", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-desktop-project-db-"));
   await execFileAsync("git", ["init"], { cwd: root });
-  await bootstrapFlowConfig({ projectRoot: root, storage: "repo-tracked" });
+  await bootstrapFlowConfig({ projectRoot: root });
   const stateRoot = await mkdtemp(join(tmpdir(), "flow-desktop-db-state-"));
   const dbPath = join(stateRoot, "desktop-state.db");
   const registry = new DesktopProjectRegistry({ dbPath });
@@ -2055,7 +1589,7 @@ test("Project theme generates stable colors and initials", () => {
 test("Desktop project registry hides stale project records without config files", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-desktop-project-live-"));
   await execFileAsync("git", ["init"], { cwd: root });
-  await bootstrapFlowConfig({ projectRoot: root, storage: "repo-tracked" });
+  await bootstrapFlowConfig({ projectRoot: root });
   const stateRoot = await mkdtemp(join(tmpdir(), "flow-desktop-state-stale-"));
   const statePath = join(stateRoot, "projects.json");
   const registry = new DesktopProjectRegistry({ statePath });
@@ -2088,7 +1622,7 @@ test("Desktop project registry hides stale project records without config files"
 test("Desktop prompt router records ledger context and agent artifacts", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-desktop-prompt-"));
   await execFileAsync("git", ["init"], { cwd: root });
-  await bootstrapFlowConfig({ projectRoot: root, storage: "repo-tracked" });
+  await bootstrapFlowConfig({ projectRoot: root });
   const stateRoot = await mkdtemp(join(tmpdir(), "flow-desktop-state-"));
   const registry = new DesktopProjectRegistry({ statePath: join(stateRoot, "projects.json") });
   const project = await registry.addProject(root);
@@ -2150,7 +1684,7 @@ test("Workflow ledger factory rejects removed Beads adapter", async () => {
 test("Desktop prompt router preserves prompt context when agent routing fails", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-desktop-prompt-error-"));
   await execFileAsync("git", ["init"], { cwd: root });
-  await bootstrapFlowConfig({ projectRoot: root, storage: "repo-tracked" });
+  await bootstrapFlowConfig({ projectRoot: root });
   const stateRoot = await mkdtemp(join(tmpdir(), "flow-desktop-state-error-"));
   const registry = new DesktopProjectRegistry({ statePath: join(stateRoot, "projects.json") });
   const project = await registry.addProject(root);
@@ -2181,7 +1715,7 @@ test("Desktop prompt router preserves prompt context when agent routing fails", 
 test("Desktop action router records evidence, result, docs, and doctor output", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-desktop-actions-"));
   await execFileAsync("git", ["init"], { cwd: root });
-  await bootstrapFlowConfig({ projectRoot: root, storage: "repo-tracked" });
+  await bootstrapFlowConfig({ projectRoot: root });
   const stateRoot = await mkdtemp(join(tmpdir(), "flow-desktop-action-state-"));
   const registry = new DesktopProjectRegistry({ statePath: join(stateRoot, "projects.json") });
   const project = await registry.addProject(root);
@@ -2248,7 +1782,7 @@ test("Desktop action router and renderer share action values", () => {
 test("Desktop action router runs Autoflow as the primary issue action", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-desktop-autoflow-"));
   await execFileAsync("git", ["init"], { cwd: root });
-  await bootstrapFlowConfig({ projectRoot: root, storage: "repo-tracked" });
+  await bootstrapFlowConfig({ projectRoot: root });
   const stateRoot = await mkdtemp(join(tmpdir(), "flow-desktop-autoflow-state-"));
   const registry = new DesktopProjectRegistry({ statePath: join(stateRoot, "projects.json") });
   const project = await registry.addProject(root);
@@ -3392,36 +2926,26 @@ test("Reviewed issue intake apply requires completed executor review", async () 
   assert.equal(created.issue?.title, "Add SQLite workflow ledger");
 });
 
-test("Issue intake works through Flow CLI without creating during dry-run", async () => {
-  const root = await mkdtemp(join(tmpdir(), "flow-intake-cli-"));
+test("Issue intake works through Flow MCP without creating during dry-run", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-intake-mcp-"));
   await execFileAsync("git", ["init"], { cwd: root });
-  const flowCli = join(process.cwd(), ".tmp", "test", "src", "flow.js");
-  const callFlow = async (body: Record<string, unknown>) => {
-    const { stdout } = await execFileAsync(process.execPath, [flowCli, JSON.stringify(body)], {
-      cwd: root,
-      maxBuffer: 20 * 1024 * 1024,
-    });
-    return JSON.parse(stdout) as { ok?: boolean; result?: unknown; error?: unknown };
-  };
 
-  await callFlow({ op: "bootstrap", storage: "repo-tracked" });
-  const result = await callFlow({
-    op: "issue",
-    mode: "intake",
-    dryRun: true,
-    review: true,
-    issueType: "Task",
-    summary: "Add SQLite workflow ledger",
-    description: "Persist workflow state in SQLite before adding Postgres.",
+  await withFlowMcp(root, async (client) => {
+    await callFlowTool(client, "flow_bootstrap", {});
+    const intake = await callFlowTool(client, "flow_issue_intake", {
+      dryRun: true,
+      review: true,
+      issueType: "Task",
+      summary: "Add SQLite workflow ledger",
+      description: "Persist workflow state in SQLite before adding Postgres.",
+    }) as { status: string; dryRun: boolean; reviewJob?: { workType: string }; proposal: { body: string; tags: string[] } };
+
+    assert.equal(intake.dryRun, true);
+    assert.equal(intake.status, "ready");
+    assert.equal(intake.reviewJob?.workType, "flow.issue_intake");
+    assert.equal(intake.proposal.body.includes("## Problem"), true);
+    assert.equal(intake.proposal.tags.includes("lane-sql"), true);
   });
-
-  assert.equal(result.ok, true);
-  const intake = result.result as { status: string; dryRun: boolean; reviewJob?: { workType: string }; proposal: { body: string; tags: string[] } };
-  assert.equal(intake.dryRun, true);
-  assert.equal(intake.status, "ready");
-  assert.equal(intake.reviewJob?.workType, "flow.issue_intake");
-  assert.equal(intake.proposal.body.includes("## Problem"), true);
-  assert.equal(intake.proposal.tags.includes("lane-sql"), true);
 });
 
 test("Flow config builds the default work type registry when no work types are configured", () => {
@@ -5425,15 +4949,13 @@ test("Work Runtime records current local thread against a pending handoff reques
   assert.equal(record.result.taskId, requested.handoffRequest?.id);
   assert.equal(record.result.workJobId, requested.handoffRequest?.workJobId);
   assert.equal(record.result.executor, "live_agent_thread");
-  assert.deepEqual(record.nextJsonCommands?.map((command) => command.request.mode), [
-    "recordEvidence",
-    "recordPullRequest",
-    "observe",
-    "advance",
+  assert.deepEqual(record.nextMcpTools?.map((tool) => tool.toolName), [
+    "flow_record_evidence",
+    "flow_record_pull_request",
+    "flow_observe",
+    "flow_workflow_advance",
   ]);
-  assert.deepEqual(record.nextJsonCommands?.[0]?.request, {
-    op: "workflow",
-    mode: "recordEvidence",
+  assert.deepEqual(record.nextMcpTools?.[0]?.arguments, {
     id: "ISSUE-33",
     summary: "<verification summary>",
     criteria: ["<acceptance criterion>"],
@@ -5446,14 +4968,14 @@ test("Work Runtime records current local thread against a pending handoff reques
   assert.notEqual(advanced.session.pendingConfirmation?.action, "request_execution");
 });
 
-test("Work Runtime reports next JSON commands for active handoffs in observe", async () => {
-  const root = await mkdtemp(join(tmpdir(), "flow-observe-json-commands-"));
+test("Work Runtime reports next MCP tool suggestions for active handoffs in observe", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-observe-mcp-tools-"));
   const ledger = new MemoryWorkflowLedger();
   const workRuntime = testWorkRuntime({ store: new FlowStore({ root }), ledger });
-  const session = await workRuntime.createSession("session-observe-json-commands");
+  const session = await workRuntime.createSession("session-observe-mcp-tools");
   await workRuntime.selectIssue(session.id, {
     ref: "ISSUE-34",
-    title: "Observe JSON commands",
+    title: "Observe MCP tool suggestions",
     repoKeys: ["app_api"],
     state: "ready_to_run",
     metadata: {
@@ -5468,9 +4990,8 @@ test("Work Runtime reports next JSON commands for active handoffs in observe", a
   const observed = await workRuntime.observeFlowSubject({ ref: "ISSUE-34" });
 
   assert.equal(requested.status, "execution_handoff");
-  assert.deepEqual(requested.nextJsonCommands?.[0]?.request, {
-    op: "workflow",
-    mode: "recordResult",
+  assert.equal(requested.nextMcpTools?.[0]?.toolName, "flow_record_result");
+  assert.deepEqual(requested.nextMcpTools?.[0]?.arguments, {
     id: "ISSUE-34",
     repoKey: "app_api",
     taskId: requested.handoffRequest?.id,
@@ -5480,7 +5001,7 @@ test("Work Runtime reports next JSON commands for active handoffs in observe", a
     changedFiles: [],
     testsRun: [],
   });
-  assert.deepEqual(observed.nextJsonCommands?.[0]?.request, requested.nextJsonCommands?.[0]?.request);
+  assert.deepEqual(observed.nextMcpTools?.[0], requested.nextMcpTools?.[0]);
 });
 
 test("Work Runtime retries retryable executor setup failures without recreating the workspace", async () => {
@@ -7141,7 +6662,12 @@ test("Work Runtime doctor reports visibility, blockers, and next action", async 
   assert.equal(result.visibility.preparedWorktree, false);
   assert.equal(result.codeReview?.prUrl, "https://github.com/ExampleOrg/public-api/pull/3026");
   assert.equal(result.nextAction.type, "adopt_workspace");
-  assert.match(result.nextAction.command ?? "", /"op":"issue","mode":"adoptWorkspace","id":"ISSUE-15397","repoKey":"public_api"/);
+  assert.equal(result.nextAction.toolName, "flow_adopt_workspace");
+  assert.deepEqual(result.nextAction.arguments, {
+    id: "ISSUE-15397",
+    repoKey: "public_api",
+    worktreePath: "<path-to-worktree-for-feature-issue-15397-standardize-task-priority-constants>",
+  });
   assert.equal(
     result.findings.some((finding) => finding.summary === "Auto review has must-fix feedback."),
     true,
@@ -7572,10 +7098,10 @@ test("requireWorkItem throws BAD_FIELD for missing ref", () => {
   assert.throws(
     () => requireWorkItem({ title: "No ref" }, "selectIssue"),
     (error: unknown) => {
-      assert.ok(error instanceof JsonCliError);
+      assert.ok(error instanceof FlowInputError);
       assert.equal(error.code, "BAD_FIELD");
       assert.match(error.message, /selectIssue/);
-      assert.equal(error.manifestTarget, "runtime");
+      assert.equal(error.target, "runtime");
       const details = error.details as { method: string; field: string; issues: unknown[] };
       assert.equal(details.method, "selectIssue");
       assert.equal(details.field, "params.issue");
@@ -7589,7 +7115,7 @@ test("requireWorkItem throws BAD_FIELD for non-object input", () => {
   assert.throws(
     () => requireWorkItem("not-an-object", "selectIssue"),
     (error: unknown) => {
-      assert.ok(error instanceof JsonCliError);
+      assert.ok(error instanceof FlowInputError);
       assert.equal(error.code, "BAD_FIELD");
       assert.equal((error.details as { method: string }).method, "selectIssue");
       return true;
@@ -7601,7 +7127,7 @@ test("requireWorkItem throws BAD_FIELD for empty ref", () => {
   assert.throws(
     () => requireWorkItem({ ref: "", title: "Test" }, "selectIssue"),
     (error: unknown) => {
-      assert.ok(error instanceof JsonCliError);
+      assert.ok(error instanceof FlowInputError);
       assert.equal(error.code, "BAD_FIELD");
       return true;
     },
@@ -7619,7 +7145,7 @@ test("requireCreateIssueOptions throws BAD_FIELD for missing summary", () => {
   assert.throws(
     () => requireCreateIssueOptions({ issueType: "Task" }, "createIssue"),
     (error: unknown) => {
-      assert.ok(error instanceof JsonCliError);
+      assert.ok(error instanceof FlowInputError);
       assert.equal(error.code, "BAD_FIELD");
       assert.match(error.message, /createIssue/);
       const details = error.details as { method: string; field: string };
@@ -7634,7 +7160,7 @@ test("requireCreateIssueOptions throws BAD_FIELD for invalid issueType", () => {
   assert.throws(
     () => requireCreateIssueOptions({ summary: "test", issueType: "Epic" }, "intakeIssue"),
     (error: unknown) => {
-      assert.ok(error instanceof JsonCliError);
+      assert.ok(error instanceof FlowInputError);
       assert.equal(error.code, "BAD_FIELD");
       const details = error.details as { method: string; field: string };
       assert.equal(details.method, "intakeIssue");
@@ -7686,7 +7212,7 @@ test("requireWorkJobExecutor throws BAD_FIELD for invalid executor", () => {
   assert.throws(
     () => requireWorkJobExecutor("invalid_executor", "claimWorkJob"),
     (error: unknown) => {
-      assert.ok(error instanceof JsonCliError);
+      assert.ok(error instanceof FlowInputError);
       assert.equal(error.code, "BAD_FIELD");
       const details = error.details as { method: string; field: string };
       assert.equal(details.method, "claimWorkJob");
@@ -7722,7 +7248,7 @@ test("requireWorkJobResult throws BAD_FIELD for missing jobId", () => {
       completedAt: "2026-01-01T00:00:00.000Z",
     }, "recordWorkJobResult"),
     (error: unknown) => {
-      assert.ok(error instanceof JsonCliError);
+      assert.ok(error instanceof FlowInputError);
       assert.equal(error.code, "BAD_FIELD");
       const details = error.details as { method: string; field: string };
       assert.equal(details.method, "recordWorkJobResult");
@@ -7744,7 +7270,7 @@ test("requireWorkJobResult throws BAD_FIELD for invalid status", () => {
       completedAt: "2026-01-01T00:00:00.000Z",
     }, "recordWorkJobResult"),
     (error: unknown) => {
-      assert.ok(error instanceof JsonCliError);
+      assert.ok(error instanceof FlowInputError);
       assert.equal(error.code, "BAD_FIELD");
       return true;
     },

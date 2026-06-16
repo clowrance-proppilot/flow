@@ -13,7 +13,7 @@ const children = [];
 await cleanListeningPorts([dashboardPort]);
 buildFrontendAndRuntime();
 
-console.log("Starting Flow Dashboard. Workflow actions are routed through the Flow CLI.");
+console.log("Starting Flow Dashboard. Workflow actions are routed through Flow MCP tools.");
 
 const dashboard = startRole("Dashboard", resolveEntry("dashboard-server.js"));
 await waitForHealth(`${dashboardUrl}/healthz`, "Dashboard");

@@ -117,7 +117,7 @@ export function registerWorkRoutes(
       }
       const project = await requireActiveProject(projectRegistry);
       const surface = await projectSurface(project);
-      const session = await surface.piSessionDriver.openOrCreateIssueSession(issueRef);
+      const session = await surface.agentSessionDriver.openOrCreateIssueSession(issueRef);
       res.json({ ok: true, session });
     } catch (error) {
       console.error("[flow-desktop] issue session creation failed:", error);
@@ -134,14 +134,14 @@ export function registerWorkRoutes(
       }
       const project = await requireActiveProject(projectRegistry);
       const surface = await projectSurface(project);
-      await surface.piSessionDriver.getSession(sessionId);
+      await surface.agentSessionDriver.getSession(sessionId);
       res.writeHead(200, {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache, no-transform",
         Connection: "keep-alive",
       });
       res.write(`event: ready\ndata: ${JSON.stringify({ ok: true, sessionId })}\n\n`);
-      const unsubscribe = surface.piSessionDriver.subscribe(sessionId, (event) => {
+      const unsubscribe = surface.agentSessionDriver.subscribe(sessionId, (event) => {
         res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
       });
       req.on("close", unsubscribe);
@@ -205,7 +205,7 @@ export function registerWorkRoutes(
         issues: Array.isArray(payload.issues) ? payload.issues : [],
       });
     } catch (error) {
-      console.error("[flow-desktop] pi issue list failed:", error);
+      console.error("[flow-desktop] agent issue list failed:", error);
       res.status(503).json({ ok: false });
     }
   });
@@ -219,10 +219,10 @@ export function registerWorkRoutes(
       }
       const project = await requireActiveProject(projectRegistry);
       const surface = await projectSurface(project);
-      const session = await surface.piSessionDriver.startSession(issueRef);
+      const session = await surface.agentSessionDriver.startSession(issueRef);
       res.json({ ok: true, session });
     } catch (error) {
-      console.error("[flow-desktop] pi session start failed:", error);
+      console.error("[flow-desktop] agent session start failed:", error);
       res.status(503).json({ ok: false, error: message(error) });
     }
   });
@@ -236,10 +236,10 @@ export function registerWorkRoutes(
       }
       const project = await requireActiveProject(projectRegistry);
       const surface = await projectSurface(project);
-      const session = await surface.piSessionDriver.getSession(sessionId);
+      const session = await surface.agentSessionDriver.getSession(sessionId);
       res.json({ ok: true, session });
     } catch (error) {
-      console.error("[flow-desktop] pi session fetch failed:", error);
+      console.error("[flow-desktop] agent session fetch failed:", error);
       res.status(404).json({ ok: false, error: message(error) });
     }
   });
@@ -258,7 +258,7 @@ export function registerWorkRoutes(
       }
       const project = await requireActiveProject(projectRegistry);
       const surface = await projectSurface(project);
-      const current = await surface.piSessionDriver.getSession(sessionId);
+      const current = await surface.agentSessionDriver.getSession(sessionId);
       const session = await surface.autoflowRunner.sendUserMessage({
         issueRef: current.issueRef,
         sessionId,
@@ -266,7 +266,7 @@ export function registerWorkRoutes(
       });
       res.json({ ok: true, session });
     } catch (error) {
-      console.error("[flow-desktop] pi prompt post failed:", error);
+      console.error("[flow-desktop] agent prompt post failed:", error);
       res.status(400).json({ ok: false, error: message(error) });
     }
   });

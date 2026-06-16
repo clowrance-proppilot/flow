@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const flowRoot = join(scriptDir, "..");
 const coverageDir = join(flowRoot, "coverage", "v8");
-const cliShim = join(flowRoot, ".tmp", "test", "src", "flow.js");
+const mcpEntryShim = join(flowRoot, ".tmp", "test", "src", "flow.js");
 const tsxRegister = pathToFileURL(join(flowRoot, "node_modules", "tsx", "dist", "esm", "index.mjs")).href;
 const testFiles = [
   "test/flow.test.ts",
@@ -19,7 +19,7 @@ const testFiles = [
 ];
 
 rmSync(join(flowRoot, "coverage"), { recursive: true, force: true });
-writeCliShim();
+writeMcpEntryShim();
 
 const child = spawn(
   process.execPath,
@@ -46,27 +46,28 @@ const exitCode = await new Promise((resolve) => {
 
 process.exit(exitCode ?? 1);
 
-function writeCliShim() {
-  mkdirSync(dirname(cliShim), { recursive: true });
-  const sourceCli = join(flowRoot, "src", "flow.ts");
+function writeMcpEntryShim() {
+  mkdirSync(dirname(mcpEntryShim), { recursive: true });
+  const sourceEntry = join(flowRoot, "src", "flow.ts");
   writeFileSync(
-    cliShim,
+    mcpEntryShim,
     `#!/usr/bin/env node
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 
-const result = spawnSync(process.execPath, ["--import", ${JSON.stringify(tsxRegister)}, ${JSON.stringify(sourceCli)}, ...process.argv.slice(2)], {
+const child = spawn(process.execPath, ["--import", ${JSON.stringify(tsxRegister)}, ${JSON.stringify(sourceEntry)}, ...process.argv.slice(2)], {
   cwd: process.cwd(),
-  encoding: "utf8",
   env: process.env,
+  stdio: "inherit",
 });
 
-if (result.stdout) process.stdout.write(result.stdout);
-if (result.stderr) process.stderr.write(result.stderr);
-if (result.error) {
-  console.error(result.error);
+child.on("error", (error) => {
+  console.error(error);
   process.exit(1);
-}
-process.exit(result.status ?? 1);
+});
+child.on("exit", (code, signal) => {
+  if (signal) process.kill(process.pid, signal);
+  else process.exit(code ?? 1);
+});
 `,
   );
 }

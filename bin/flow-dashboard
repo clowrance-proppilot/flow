@@ -14,7 +14,7 @@ if (process.argv.slice(2).some((arg) => arg === "--help" || arg === "-h" || arg 
     invocation: ["flow-dashboard", "flow-dashboard --help"],
     defaultUrl: "http://127.0.0.1:8767/dashboard",
     config: {
-      path: ".flow/config.yaml",
+      path: "Flow-managed config",
       keys: ["runtime.dashboard.host", "runtime.dashboard.port"],
     },
   })}\n`);

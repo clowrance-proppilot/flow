@@ -1,8 +1,8 @@
 # Runtime And Dashboard
 
-Flow has two surfaces:
+Flow has two user-facing surfaces:
 
-- `flow`: JSON protocol for agents and adapters.
+- `flow`: stdio MCP server for agents.
 - `flow-dashboard`: read-only human mirror.
 
 The dashboard reads Flow state through `/api/dashboard`. It does not expose
@@ -47,7 +47,7 @@ do not mutate Flow state.
 The dashboard is a mirror over Flow's ledger and runtime projection:
 
 ```text
-.flow/config.yaml
+Flow-managed config
 .flow/runtime/
 .flow/store/
 <user-state>/ledger/workflow.db
@@ -70,20 +70,15 @@ Important routes:
 - `/api/dashboard`: JSON snapshot used by the browser UI
 - `/healthz`: server health
 
-Mutations go through the `flow` JSON protocol, not the dashboard.
+Mutations go through Flow MCP tools, not the dashboard.
 
-## Agent Protocol
+## Agent Tools
 
-```bash
-flow --help
-flow '{"op":"queue"}'
-flow '{"op":"manifest","target":"workflow"}'
-flow '{"op":"workflow","mode":"recordResult","id":"FLOW-123","repoKey":"main","summary":"Patch applied","testsRun":["npm test"]}'
-```
+Use MCP tool discovery from the host. Core tools include `flow_state`,
+`flow_queue`, `flow_issue_view`, `flow_workflow_advance`,
+`flow_prepare_workspace`, `flow_record_result`, and `flow_observe`.
 
 Work-item requests use `id` as the public identifier.
-
-Stdout is always one JSON document.
 
 ## Handoff Prompts
 

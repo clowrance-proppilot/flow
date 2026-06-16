@@ -200,7 +200,7 @@ export class GhGitHubAdapter implements CodeCollaborationProvider {
   private repoSpecifier(repo: string): string {
     if (repo.includes("/")) return repo;
     if (!this.owner) {
-      throw new Error("GitHub owner is required. Configure collaboration.owner in .flow/config.yaml.");
+      throw new Error("GitHub owner is required. Configure collaboration.owner in Flow-managed config.");
     }
     return `${this.owner}/${repo}`;
   }
@@ -551,7 +551,7 @@ export class GhGitHubIssueTrackerAdapter implements IssueTrackerProvider {
   private repoSpecifier(): string {
     if (this.repo.includes("/")) return this.repo;
     if (!this.owner) {
-      throw new Error("GitHub owner is required. Configure issueTracker.owner or collaboration.owner in .flow/config.yaml.");
+      throw new Error("GitHub owner is required. Configure issueTracker.owner or collaboration.owner in Flow-managed config.");
     }
     return `${this.owner}/${this.repo}`;
   }

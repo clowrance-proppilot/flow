@@ -1,6 +1,6 @@
 # Agent Handoff
 
-Flow is the command-line work record for agents. Use Flow to select work,
+Flow is the MCP work record for agents. Use Flow MCP tools to select work,
 prepare or adopt the workspace, request handoff, and record evidence, results,
 documentation, pull requests, and next pickup notes. Use a local agent process
 only for the implementation step.
@@ -11,26 +11,15 @@ bookkeeping contract.
 
 ## Contract
 
-- Send one JSON object to `flow` through argv or stdin.
-- Read one JSON object from stdout.
-- Treat `.flow/config.yaml` as the durable source of truth.
+- Use registered Flow MCP tools as the only agent command surface.
+- Use MCP tool discovery as the authoritative command shape.
+- Treat Flow-managed config as the durable source of truth.
 - Do not edit code before Flow has prepared or adopted the workspace.
 - Verify any subprocess output before recording success.
 - Record blockers and next pickup through Flow when work cannot finish.
 
-PowerShell stdin is the safest cross-agent shape on Windows:
-
-```powershell
-@'
-{"op":"state"}
-'@ | flow
-```
-
-For larger requests, write UTF-8 without BOM and pipe the file body:
-
-```powershell
-Get-Content .\flow-request.json -Raw | flow
-```
+If Flow MCP tools are unavailable, stop and report that Flow MCP is not
+connected.
 
 ## Orchestrator Thread
 
@@ -40,7 +29,7 @@ core.
 
 Typical loop:
 
-1. Inspect Flow state and manifests.
+1. Discover Flow MCP tools and inspect Flow state.
 2. Select or view the issue.
 3. Prepare or adopt the workspace through Flow.
 4. Request or read the handoff prompt.
@@ -49,59 +38,16 @@ Typical loop:
 7. Record evidence, result, documentation, PR state, or blocker notes through
    Flow.
 
-## Flow Commands
+## Flow MCP Tools
 
-Discover the current command shape:
+Use tool discovery from the host. The core workflow tools are:
 
-```powershell
-@'
-{"op":"manifest","target":"issue"}
-'@ | flow
-
-@'
-{"op":"manifest","target":"workflow"}
-'@ | flow
-```
-
-Inspect work:
-
-```powershell
-@'
-{"op":"state"}
-'@ | flow
-
-@'
-{"op":"issue","mode":"view","id":"GH-123"}
-'@ | flow
-```
-
-Prepare or adopt a workspace:
-
-```powershell
-@'
-{"op":"workflow","mode":"advance","id":"GH-123"}
-'@ | flow
-
-@'
-{"op":"issue","mode":"adoptWorkspace","id":"GH-123","repoKey":"flow","worktreePath":"C:/path/to/worktree"}
-'@ | flow
-```
-
-Request handoff details:
-
-```powershell
-@'
-{"op":"workflow","mode":"handoff","id":"GH-123"}
-'@ | flow
-
-@'
-{"op":"workflow","mode":"adoptHandoff","id":"GH-123","adopter":"claude"}
-'@ | flow
-
-@'
-{"op":"workflow","mode":"observe","id":"GH-123"}
-'@ | flow
-```
+- `flow_state`, `flow_issue_view`, `flow_issue_select`
+- `flow_workflow_advance`, `flow_prepare_workspace`,
+  `flow_adopt_workspace`
+- `flow_workflow_handoff`, `flow_workflow_adopt_handoff`, `flow_observe`
+- `flow_record_evidence`, `flow_record_result`,
+  `flow_record_documentation`, `flow_record_pull_request`
 
 If Flow returns a handoff prompt or handoff request, the orchestrator can save
 the returned `prompt` for a local worker:
@@ -121,21 +67,8 @@ git diff --stat
 npm test
 ```
 
-Record closeout:
-
-```powershell
-@'
-{"op":"workflow","mode":"recordEvidence","id":"GH-123","summary":"npm test passed","criteria":["tests"],"source":"npm test"}
-'@ | flow
-
-@'
-{"op":"workflow","mode":"recordResult","id":"GH-123","repoKey":"flow","executor":"live_agent_thread","summary":"Implemented agent handoff docs","changedFiles":["docs/agent-handoff.md"],"testsRun":["npm test"]}
-'@ | flow
-
-@'
-{"op":"workflow","mode":"recordDocumentation","id":"GH-123","disposition":"updated","summary":"Added agent handoff documentation."}
-'@ | flow
-```
+Record closeout through `flow_record_evidence`, `flow_record_result`, and
+`flow_record_documentation`.
 
 ## Worker CLI Recipes
 
@@ -162,14 +95,6 @@ $prompt = Get-Content .\flow-handoff-prompt.txt -Raw
 codex exec $prompt
 ```
 
-Pi Agent:
-
-```powershell
-Set-Location "C:\path\to\prepared\workspace"
-$prompt = Get-Content .\flow-handoff-prompt.txt -Raw
-pi-coding-agent $prompt
-```
-
 Quad or another local agent:
 
 ```powershell
@@ -184,25 +109,20 @@ Set a timeout outside the worker when the host supports one. If the worker exits
 nonzero, times out, or returns an unusable result, record the blocker and next
 pickup through Flow instead of retrying silently.
 
-Flow errors are JSON too. If `ok` is false, read `error.code`, `error.message`,
-and any manifest hint before deciding the next command. If Flow reports a
-blocker state, stop the worker path and record or surface the blocker rather
-than continuing in an unmanaged workspace.
+If a Flow MCP tool returns an error, read the tool error text before deciding
+the next action. If Flow reports a blocker state, stop the worker path and
+record or surface the blocker rather than continuing in an unmanaged workspace.
 
 Example handoff response shape:
 
 ```json
 {
-  "ok": true,
-  "op": "workflow",
-  "result": {
-    "id": "worker-gh-123",
-    "issueRef": "GH-123",
-    "repoKey": "flow",
-    "workJobId": "job-gh-123",
-    "workspacePath": "C:/repo/.worktrees/feature-gh-123",
-    "prompt": "Use Flow to work this prompt."
-  }
+  "id": "worker-gh-123",
+  "issueRef": "GH-123",
+  "repoKey": "flow",
+  "workJobId": "job-gh-123",
+  "workspacePath": "C:/repo/.worktrees/feature-gh-123",
+  "prompt": "Use Flow to work this prompt."
 }
 ```
 
@@ -212,11 +132,9 @@ Pass a short Flow contract into every worker:
 
 ```text
 You are working in a Flow-prepared workspace for GH-123.
-Use Flow's JSON CLI for workflow state and records. Start by discovering the
-available command shape with:
-@'
-{"op":"manifest","target":"workflow"}
-'@ | flow
+Use Flow MCP tools for workflow state and records. Start with tool discovery,
+then use `flow_workflow_audit`, `flow_observe`, and
+`flow_workflow_adopt_handoff` as needed.
 Do not use Autoflow.
 Make the requested code changes, run focused tests, and report changed files,
 tests, blockers, and next pickup.

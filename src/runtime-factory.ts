@@ -161,11 +161,11 @@ function createIssueTracker(projectRoot: string, flowConfig: FlowConfig | undefi
   if (type === "notion") {
     const apiKey = configString(issueTracker, "apiKey") ?? process.env.NOTION_API_KEY;
     if (!apiKey) {
-      throw new Error("Notion API key is required. Set issueTracker.apiKey in .flow/config.yaml or NOTION_API_KEY environment variable.");
+      throw new Error("Notion API key is required. Set issueTracker.apiKey in Flow-managed config or NOTION_API_KEY environment variable.");
     }
     const databaseId = configString(issueTracker, "databaseId");
     if (!databaseId) {
-      throw new Error("Notion database ID is required. Set issueTracker.databaseId in .flow/config.yaml.");
+      throw new Error("Notion database ID is required. Set issueTracker.databaseId in Flow-managed config.");
     }
     const propertyMapping = configRecord(issueTracker, "propertyMapping");
     return new NotionAdapter({

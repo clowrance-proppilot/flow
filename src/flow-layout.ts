@@ -3,7 +3,7 @@ import { homedir, platform } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
 
 export const flowLayout = {
-  config: ".flow/config.yaml",
+  config: "config.json",
   userState: platform() === "darwin"
     ? "Library/Application Support/Flow/projects"
     : ".local/state/flow/projects",
@@ -17,7 +17,7 @@ export const flowLayout = {
 } as const;
 
 export function flowConfigPath(projectRoot: string): string {
-  return join(resolve(projectRoot), flowLayout.config);
+  return join(flowUserStateRoot(projectRoot), flowLayout.config);
 }
 
 export function flowUserStateRoot(projectRoot: string): string {
@@ -26,8 +26,16 @@ export function flowUserStateRoot(projectRoot: string): string {
   return join(homedir(), flowLayout.userState, `${basename(root)}-${digest}`);
 }
 
+export function flowUserProjectsRoot(): string {
+  return join(homedir(), flowLayout.userState);
+}
+
+export function flowMcpProjectRegistryPath(): string {
+  return join(flowUserProjectsRoot(), "mcp-projects.json");
+}
+
 export function flowUserConfigPath(projectRoot: string): string {
-  return join(flowUserStateRoot(projectRoot), "config.yaml");
+  return flowConfigPath(projectRoot);
 }
 
 export function flowRuntimePath(projectRoot: string): string {

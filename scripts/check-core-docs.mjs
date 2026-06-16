@@ -7,20 +7,20 @@ const flowRoot = join(fileURLToPath(new URL("..", import.meta.url)));
 const docs = new Map([
   ["README.md", read("README.md")],
   ["docs/getting-started.md", read("docs/getting-started.md")],
-  ["docs/cli-reference.md", read("docs/cli-reference.md")],
+  ["docs/mcp-reference.md", read("docs/mcp-reference.md")],
   ["docs/agent-handoff.md", read("docs/agent-handoff.md")],
 ]);
 
 const violations = [];
 
-requireText("README.md", /JSON contract/, "README must lead with the JSON CLI contract.");
+requireText("README.md", /MCP-only agent surface/, "README must lead with the MCP-only agent surface.");
 requireText("README.md", /does not run agents/i, "README must say Flow core does not run agents.");
-requireText("docs/getting-started.md", /All `flow` commands accept exactly one JSON request/, "Getting Started must document JSON-only CLI input.");
+requireText("docs/getting-started.md", /Flow exposes agent actions as MCP tools/, "Getting Started must document MCP tool input.");
 requireText("docs/getting-started.md", /Record completion evidence:/, "Getting Started must lead agents through recordResult/evidence/docs.");
-requireText("docs/cli-reference.md", /Core CLI agent work should use the\s+issue and workflow commands above/i, "CLI reference must keep issue/workflow commands as the core path.");
+requireText("docs/mcp-reference.md", /Core agent work should use the MCP tools above/i, "MCP reference must keep issue/workflow tools as the core path.");
 requireText("docs/agent-handoff.md", /This path does not require Autoflow/i, "Agent handoff docs must not require Autoflow.");
-requireText("docs/agent-handoff.md", /"mode":"adoptHandoff"/, "Agent handoff docs must show adoptHandoff.");
-requireText("docs/agent-handoff.md", /"executor":"live_agent_thread"/, "Agent handoff docs must use live_agent_thread as the default handoff example.");
+requireText("docs/agent-handoff.md", /flow_workflow_adopt_handoff/, "Agent handoff docs must show flow_workflow_adopt_handoff.");
+requireText("docs/agent-handoff.md", /`live_agent_thread`/, "Agent handoff docs must use live_agent_thread as the default handoff example.");
 
 for (const [path, source] of docs) {
   if (/autoflow/i.test(source)) {

@@ -17,22 +17,28 @@ provider-specific state into durable workflow topology.
 
 ## Durable Config
 
-Select adapters in `.flow/config.yaml`:
+Select adapters with `flow_config_update`:
 
-```yaml
-issueTracker:
-  type: "github"
-  owner: "camden-lowrance"
-  repo: "flow"
-
-collaboration:
-  type: "github"
-  owner: "camden-lowrance"
-  repo: "flow"
-
-runtime:
-  agentSession:
-    provider: "claude"
+```json
+{
+  "patch": {
+    "issueTracker": {
+      "type": "github",
+      "owner": "camden-lowrance",
+      "repo": "flow"
+    },
+    "collaboration": {
+      "type": "github",
+      "owner": "camden-lowrance",
+      "repo": "flow"
+    },
+    "runtime": {
+      "agentSession": {
+        "provider": "claude"
+      }
+    }
+  }
+}
 ```
 
 Do not make environment variables the primary selector for topology or provider
@@ -44,32 +50,47 @@ Flow ships with first-class support for several issue trackers:
 
 ### GitHub Issues
 
-```yaml
-issueTracker:
-  type: "github"
-  owner: "my-org"
-  repo: "my-repo"
-  activeLabels: ["in-progress"]
-  backlogLabels: ["backlog"]
+```json
+{
+  "patch": {
+    "issueTracker": {
+      "type": "github",
+      "owner": "my-org",
+      "repo": "my-repo",
+      "activeLabels": ["in-progress"],
+      "backlogLabels": ["backlog"]
+    }
+  }
+}
 ```
 
 ### Jira
 
-```yaml
-issueTracker:
-  type: "jira"
-  siteUrl: "https://myteam.atlassian.net"
-  projectKey: "PROJ"
+```json
+{
+  "patch": {
+    "issueTracker": {
+      "type": "jira",
+      "siteUrl": "https://myteam.atlassian.net",
+      "projectKey": "PROJ"
+    }
+  }
+}
 ```
 
 ### Linear
 
-```yaml
-issueTracker:
-  type: "linear"
-  apiKey: "${LINEAR_API_KEY}"
-  teamId: "team-uuid"
-  workspaceUrl: "https://api.linear.app"  # optional, defaults to api.linear.app
+```json
+{
+  "patch": {
+    "issueTracker": {
+      "type": "linear",
+      "apiKey": "${LINEAR_API_KEY}",
+      "teamId": "team-uuid",
+      "workspaceUrl": "https://api.linear.app"
+    }
+  }
+}
 ```
 
 The Linear adapter maps Linear issue states to Flow's normalized status
@@ -89,17 +110,23 @@ The Notion adapter uses Notion's REST API to manage issues as database items.
 Issues live in a Notion database, and properties are mapped to Flow's unified
 issue fields.
 
-```yaml
-issueTracker:
-  type: "notion"
-  apiKey: "${NOTION_API_KEY}"
-  databaseId: "abc1234567890abcdef01234567890ab"
-  propertyMapping:
-    title: "Name"
-    status: "Status"
-    labels: "Tags"
-    assignee: "Assignee"
-    type: "Type"
+```json
+{
+  "patch": {
+    "issueTracker": {
+      "type": "notion",
+      "apiKey": "${NOTION_API_KEY}",
+      "databaseId": "abc1234567890abcdef01234567890ab",
+      "propertyMapping": {
+        "title": "Name",
+        "status": "Status",
+        "labels": "Tags",
+        "assignee": "Assignee",
+        "type": "Type"
+      }
+    }
+  }
+}
 ```
 
 The `propertyMapping` field is optional. Defaults are shown above. Each key maps
@@ -118,9 +145,14 @@ the `NOTION_API_KEY` environment variable.
 
 ### Local
 
-```yaml
-issueTracker:
-  type: "local"
+```json
+{
+  "patch": {
+    "issueTracker": {
+      "type": "local"
+    }
+  }
+}
 ```
 
 ## Custom Adapter Pattern
@@ -175,10 +207,8 @@ depend on provider-neutral capabilities, not on a concrete SDK.
 
 ## Verification
 
-Use the manifests and focused tests for the adapter surface you touch:
+Use MCP tool discovery and focused tests for the adapter surface you touch:
 
 ```bash
-flow '{"op":"manifest","target":"issue"}'
-flow '{"op":"manifest","target":"workflow"}'
 npm run check
 ```

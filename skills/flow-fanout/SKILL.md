@@ -1,6 +1,6 @@
 ---
 name: flow-fanout
-description: Use when the user asks Flow to fan out issue work across subagents, launch scoped workers, coordinate multiple Flow issues, or aggregate agent results through the Flow JSON CLI.
+description: Use when the user asks Flow to fan out issue work across subagents, launch scoped workers, coordinate multiple Flow issues, or aggregate agent results through Flow MCP tools.
 ---
 
 # Flow Fan-Out
@@ -11,46 +11,44 @@ handoffs, evidence, PR records, and closeout.
 
 ## Rules
 
-- Use Flow JSON commands for all workflow state changes.
+- Use Flow MCP tools for all workflow state changes.
 - Keep worker tasks thin: each worker gets one issue, one repo/workspace, and
-  the Flow handoff prompt or next JSON command.
+  the Flow handoff prompt or next MCP tool suggestion.
 - Do not edit `.flow` ledger/runtime files directly.
 - Do not add a daemon, desktop runner, or external workflow engine for this
   path.
 - Do not make environment variables the durable orchestration surface.
 - Stop and report the exact Flow error if a Flow mutation fails.
 
-## Command Surface
+## Tool Surface
 
-Prefer `node bin/flow '<json>'` inside the Flow repo, or `flow '<json>'` when
-the installed CLI is known fresh. Stdout is one JSON document.
+Use registered Flow MCP tools. If they are unavailable, stop and report that
+Flow MCP is not connected.
 
 Start with:
 
-```bash
-node bin/flow '{"op":"manifest","target":"workflow"}'
-node bin/flow '{"op":"queue"}'
-node bin/flow '{"op":"workflow","mode":"observe","id":"GH-123"}'
-```
+- `flow_queue`
+- `flow_observe`
+- `flow_workflow_audit`
 
-Use `nextJsonCommands` from Flow responses whenever present. They are the
+Use `nextMcpTools` from Flow responses whenever present. They are the
 authoritative next machine-readable actions for the current issue.
 
 ## Fan-Out Loop
 
 1. Inspect queue and choose a small batch of independent issues.
-2. For each issue, run `workflow observe`; if needed run `workflow advance`.
+2. For each issue, run `flow_observe`; if needed run `flow_workflow_advance`.
 3. If Flow returns an execution handoff, launch one scoped subagent for that
    issue. Give it only the issue ref, repo key, workspace path, handoff prompt,
-   and the expected `recordResult` JSON shape.
+   and the expected `flow_record_result` arguments.
 4. While workers run, keep observing other issues or preparing non-overlapping
    Flow commands in the current thread.
 5. When a worker finishes, inspect its changed files and tests. Record the
-   result through `workflow recordResult`.
-6. Record acceptance evidence through `workflow recordEvidence` or
-   `workflow recordAcceptance`.
-7. Record PR metadata through `workflow recordPullRequest`.
-8. Run `workflow observe`, then `workflow advance` until Flow reports review,
+   result through `flow_record_result`.
+6. Record acceptance evidence through `flow_record_evidence` or
+   `flow_record_acceptance`.
+7. Record PR metadata through `flow_record_pull_request`.
+8. Run `flow_observe`, then `flow_workflow_advance` until Flow reports review,
    closeout, done, or a real blocker.
 
 ## Worker Prompt Shape
@@ -71,8 +69,8 @@ When done, report:
 - testsRun
 - blockers
 
-Flow recordResult request:
-<JSON_FROM_nextJsonCommands>
+Flow `flow_record_result` arguments:
+<ARGUMENTS_FROM_nextMcpTools>
 
 Handoff:
 <HANDOFF_PROMPT>
@@ -82,19 +80,15 @@ Handoff:
 
 For each worker result:
 
-```bash
-node bin/flow '{"op":"workflow","mode":"recordResult","id":"GH-123","repoKey":"flow","taskId":"worker-...","workJobId":"job-...","status":"succeeded","summary":"...","changedFiles":["..."],"testsRun":["..."]}'
-node bin/flow '{"op":"workflow","mode":"observe","id":"GH-123"}'
-```
+Call `flow_record_result`, then `flow_observe`.
 
-Then follow returned `nextJsonCommands` for evidence, PR record, and advance.
+Then follow returned `nextMcpTools` for evidence, PR record, and advance.
 
 ## Blockers
 
 If a worker cannot finish, still record the result:
 
-```bash
-node bin/flow '{"op":"workflow","mode":"recordResult","id":"GH-123","repoKey":"flow","status":"blocked","summary":"Blocked on ...","blockers":["..."],"nextPickup":"..."}'
-```
+Call `flow_record_result` with `status: "blocked"`, `summary`, `blockers`,
+and `nextPickup`.
 
-Then run `workflow observe` and report the blocker with the Flow output.
+Then run `flow_observe` and report the blocker with the Flow output.

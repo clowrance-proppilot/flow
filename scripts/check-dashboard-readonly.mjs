@@ -89,7 +89,7 @@ checkRequired("src/dashboard-server.ts", /X-Frame-Options["'],\s*["']DENY/, "Das
 checkRequired("src/dashboard-server.ts", /express\.static\(dashboardAssetsPath,\s*\{\s*setHeaders:\s*setNoStore\s*\}\)/, "Dashboard assets must disable caching so stale command bundles cannot linger.");
 checkRequired("src/dashboard-server.ts", /app\.use\(\(_req,\s*res\)\s*=>\s*\{\s*res\.status\(404\)\.json\(\{\s*ok:\s*false\s*\}\);[\s\S]*?\}\)/, "Dashboard server must own 404 responses so missing routes keep mirror headers.");
 checkAbsent("src/dashboard-state.ts", /\bruntimeAction\s*\(/, "Dashboard state must not expose runtime mutation helpers.");
-checkAbsent("src/dashboard-state.ts", /node:child_process|\bexecFile\b|\bcallFlowCli\b/, "Dashboard state must call FlowWorkRuntime directly instead of spawning the Flow CLI.");
+checkAbsent("src/dashboard-state.ts", /node:child_process|\bexecFile\b|\bcallFlowCli\b/, "Dashboard state must call FlowWorkRuntime directly instead of spawning Flow.");
 checkRequired("src/dashboard-state.ts", /runtime:\s*DashboardQueueReader/, "Dashboard state must receive a configured FlowWorkRuntime reader.");
 checkRequired("src/dashboard-state.ts", /this\.runtime\.inspectDashboardQueue\(limit\)/, "Dashboard state must read dashboard queue data through FlowWorkRuntime.");
 checkRequired("src/dashboard-state.ts", /function dashboardSnapshotCacheTtlMs\(\): number[\s\S]*?return 3000;/, "Dashboard state must cache snapshots briefly to avoid hammering the runtime.");
@@ -131,7 +131,7 @@ checkAbsentInDashboardClient(/Flow stage|Flow Stage/, "Dashboard tooltips and he
 checkAbsentInDashboardClient(/\bworkflowState\b|ready_to_run|awaiting_review|awaiting_human/, "Dashboard UI should consume display work status labels, not raw workflow state keys.");
 checkAbsentInDashboardClient(/\.split\(["']_["']\)|slice\(0,\s*1\).*toUpperCase/, "Dashboard UI must not derive visible labels from raw workflow state names.");
 checkAbsentInDashboardClient(/["']Live["']/, "Dashboard status should describe snapshots, not a live stream.");
-checkAbsentInDashboardClient(/Flow CLI|reconciliation|Flow runtime/, "Dashboard UI copy must not expose implementation-specific runtime wording.");
+checkAbsentInDashboardClient(/Flow command|reconciliation|Flow runtime/, "Dashboard UI copy must not expose implementation-specific runtime wording.");
 checkAbsentInDashboardClient(/No issue tracker status/, "Dashboard UI copy should avoid adapter-specific status wording.");
 checkAbsentInDashboardClient(/\bapplyThemeToDOM\b|\bdefaultThemes\b|\bresolveTheme\b|\/dashboard\/custom\.css/, "Dashboard UI must use the built-in presentation only.");
 checkAbsentInDashboardClient(/data-theme|themed-scroll|\[data-theme=/, "Dashboard UI must not keep mutable theme hooks.");
@@ -344,16 +344,15 @@ function checkDashboardQueueContract() {
 
 function checkDashboardSmokeContract() {
   checkRequired("scripts/smoke-dashboard.mjs", /allowedWorkStatuses/, "Dashboard smoke must allowlist display work status labels.");
-  checkRequired("scripts/smoke-dashboard.mjs", /assertRuntimeDashboardQueueShape/, "Dashboard smoke must verify the runtime dashboard queue contract.");
+  checkRequired("scripts/smoke-dashboard.mjs", /callFlowTool\("flow_issue_create"/, "Dashboard smoke must create fixtures through Flow MCP tools.");
+  checkAbsent("scripts/smoke-dashboard.mjs", /\bop:\s*["']runtime["']|\bmethod:\s*["']inspectDashboardQueue["']/, "Dashboard smoke must not use raw runtime command fixtures.");
   checkRequired("scripts/smoke-dashboard.mjs", /assertSelectedIssueUsesQueueState/, "Dashboard smoke must prove selected internal state does not mirror as Active without an explicit session.");
-  checkRequired("scripts/smoke-dashboard.mjs", /assertSelectedIssueMirrorsAsActive/, "Dashboard smoke must prove explicit session selection mirrors as Active.");
   checkRequired("scripts/smoke-dashboard.mjs", /assertNoRawWorkflowStates/, "Dashboard smoke must prove raw workflow states are absent from mirror payloads.");
   checkRequired("scripts/smoke-dashboard.mjs", /assertMirrorStateUnchanged/, "Dashboard smoke must prove blocked dashboard requests do not mutate mirrored state.");
   checkRequired("scripts/smoke-dashboard.mjs", /assertMirrorStateUnchanged\(dashboardFingerprintBeforeBlockedRequests,\s*queryPayload\.issues,\s*["']dashboard API with query input["']\)/, "Dashboard smoke must prove query input does not shape mirrored state.");
   checkRequired("scripts/smoke-dashboard.mjs", /assertUnavailablePayloadShape/, "Dashboard smoke must prove unavailable routes expose only ok:false.");
   checkRequired("scripts/smoke-dashboard.mjs", /\["OPTIONS", "POST", "PUT", "PATCH", "DELETE"\]/, "Dashboard smoke must verify OPTIONS and mutation methods are unavailable.");
   checkRequired("scripts/smoke-dashboard.mjs", /dashboardFingerprintBeforeBlockedRequests/, "Dashboard smoke must fingerprint API state before blocked requests.");
-  checkRequired("scripts/smoke-dashboard.mjs", /runtimeFingerprintBeforeBlockedRequests/, "Dashboard smoke must fingerprint runtime state before blocked requests.");
   checkRequired("scripts/smoke-dashboard.mjs", /assertServedDashboardHtml/, "Dashboard smoke must verify served dashboard HTML for forbidden mirror controls and tokens.");
   checkRequired("scripts/smoke-dashboard.mjs", /rootHtml !== html/, "Dashboard smoke must prove root serves the same mirror shell as /dashboard.");
   checkRequired("scripts/smoke-dashboard.mjs", /queryHtml !== html/, "Dashboard smoke must prove dashboard shell query input does not change the mirror shell.");

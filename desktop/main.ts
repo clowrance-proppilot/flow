@@ -79,11 +79,11 @@ async function startDashboardServer(flowRoot: string): Promise<number> {
   };
 
   const agent = new DesktopAgentSessionAdapterImpl({
-    getPiSessionDriver: async () => {
+    getAgentSessionDriver: async () => {
       const project = await projectRegistry.activeProject();
       if (!project) throw new Error("No active Flow project.");
       const surface = await projectSurface(project);
-      return surface.piSessionDriver;
+      return surface.agentSessionDriver;
     },
     getAutoflowRunner: async () => {
       const project = await projectRegistry.activeProject();

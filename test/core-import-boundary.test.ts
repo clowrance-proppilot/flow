@@ -91,7 +91,7 @@ test("allows legitimate core imports", () => {
     import { FlowWorkRuntime } from "./work-runtime.js";
     import { createConfiguredWorkRuntime } from "./runtime-factory.js";
     import { repoRoot } from "./flow-runtime.js";
-    import { JsonCliError } from "./json-cli.js";
+    import { FlowInputError } from "./flow-errors.js";
   `;
   assert.equal(detectForbiddenImport(source), null);
 });

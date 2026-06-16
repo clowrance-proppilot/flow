@@ -14,7 +14,6 @@ export async function main(args) {
   const { validateFlowConfig } = await import("../src/config/config-loader.js");
   const { createConfiguredWorkRuntime } = await import("../src/runtime-factory.js");
   const { StandaloneAutoflowRunner, createDefaultAutoflowRunnerState } = await import("../src/experimental/autoflow-runner.js");
-  const { PiSessionDriver } = await import("../src/experimental/pi-session-driver.js");
   const { ClaudeSessionDriver } = await import("../src/experimental/claude-session-driver.js");
   const configValidation = await validateFlowConfig({ projectRoot: repoRoot });
   const configuredRuntime = createConfiguredWorkRuntime({ projectRoot: repoRoot, flowConfig: configValidation.config });
@@ -67,13 +66,12 @@ export async function main(args) {
 }
 
 function createAgentSessionDriver(projectId, flowConfig, runtime, repoRoot) {
-  const provider = configString(configRecord(flowConfig?.runtime, "agentSession"), "provider") ?? "pi";
+  const provider = configString(configRecord(flowConfig?.runtime, "agentSession"), "provider") ?? "claude";
   const options = {
     runtime,
     repoRoot,
     flowSessionId: `autoflow-${projectId.toLowerCase()}`,
   };
-  if (provider === "pi") return new PiSessionDriver(options);
   if (provider === "claude") return new ClaudeSessionDriver(options);
   throw new Error(`Unsupported runtime.agentSession.provider: ${provider}.`);
 }

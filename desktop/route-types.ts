@@ -1,14 +1,14 @@
 import type { DashboardState } from "../src/dashboard-state.js";
 import type { createConfiguredWorkRuntime } from "../src/runtime-factory.js";
 import type { StandaloneAutoflowRunner } from "../src/experimental/autoflow-runner.js";
-import type { PiSessionDriver } from "../src/experimental/pi-session-driver.js";
+import type { ClaudeSessionDriver } from "../src/experimental/claude-session-driver.js";
 import type { DesktopProjectRecord, DesktopProjectRegistry } from "./project-registry.js";
 
 export interface DesktopProjectSurface {
   project: DesktopProjectRecord;
   configured: ReturnType<typeof createConfiguredWorkRuntime>;
   dashboardState: DashboardState;
-  piSessionDriver: PiSessionDriver;
+  agentSessionDriver: ClaudeSessionDriver;
   autoflowRunner: StandaloneAutoflowRunner;
 }
 

@@ -1,15 +1,18 @@
 #!/usr/bin/env node
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const flowRoot = join(scriptDir, "..");
 const repoRoot = await mkdtemp(join(tmpdir(), "flow-dashboard-smoke-"));
+const flowEnv = { ...process.env, FLOW_MCP_PROJECTS_PATH: join(repoRoot, ".flow", "mcp-projects.json") };
 const host = "127.0.0.1";
 const dashboardPort = 18767;
 const dashboardUrl = `http://${host}:${dashboardPort}`;
@@ -88,38 +91,13 @@ const forbiddenServedAssetTokens = [
   "documentationRecorded",
 ];
 
-await mkdir(join(repoRoot, ".flow"), { recursive: true });
-await writeFile(join(repoRoot, ".flow", "config.yaml"), [
-  'version: "1"',
-  "project:",
-  '  name: "dashboard-smoke"',
-  "topology:",
-  "  repos:",
-  "    main:",
-  '      name: "dashboard-smoke"',
-  "issueTracker:",
-  '  type: "local"',
-  '  prefix: "FLOW"',
-  "collaboration:",
-  '  type: "none"',
-  "sourceControl:",
-  '  type: "git"',
-  "ledger:",
-  '  type: "flow"',
-  "runtime:",
-  "  dashboard:",
-  `    host: "${host}"`,
-  `    port: ${dashboardPort}`,
-  "",
-].join("\n"));
 let stdout = "";
 let stderr = "";
 let child;
 
 try {
-  const createdIssue = createReviewedIssue({
-    op: "issue",
-    mode: "create",
+  await writeFixtureConfig();
+  const createdIssue = await createReviewedIssue({
     issueType: "Task",
     summary: "Smoke dashboard mirror",
     description: "Dashboard smoke fixture.",
@@ -134,6 +112,7 @@ try {
     [join(flowRoot, "bin", "flow-dashboard")],
     {
       cwd: repoRoot,
+      env: flowEnv,
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
@@ -157,17 +136,9 @@ try {
 
   const payload = await fetchJson(`${dashboardUrl}/api/dashboard`);
   assertDashboardPayloadShape(payload);
-  const runtimeQueue = runFlow({ op: "runtime", method: "inspectDashboardQueue", params: { limit: 10 } });
-  const runtimeQueueForSession = runFlow({ op: "runtime", method: "inspectDashboardQueue", params: { limit: 10, sessionId: "cli" } });
-  assertRuntimeDashboardQueueShape(runtimeQueue);
-  assertRuntimeDashboardQueueShape(runtimeQueueForSession);
   const dashboardFingerprintBeforeBlockedRequests = dashboardIssuesFingerprint(payload.issues);
-  const runtimeFingerprintBeforeBlockedRequests = dashboardIssuesFingerprint(runtimeQueue);
   assertSelectedIssueUsesQueueState(payload.issues, createdIssue.ref, "dashboard API");
-  assertSelectedIssueUsesQueueState(runtimeQueue, createdIssue.ref, "runtime dashboard queue");
-  assertSelectedIssueMirrorsAsActive(runtimeQueueForSession, createdIssue.ref, "runtime dashboard queue with session");
   assertNoRawWorkflowStates(payload, "dashboard API");
-  assertNoRawWorkflowStates(runtimeQueue, "runtime dashboard queue");
   const statusKeys = ["degraded", "degradedError", "refreshing", "stale"].filter((key) => Object.hasOwn(payload, key));
   if (statusKeys.length) {
     throw new Error(`dashboard API should not expose runtime status wrapper fields: ${statusKeys.join(", ")}`);
@@ -281,10 +252,6 @@ try {
   assertDashboardPayloadShape(payloadAfterBlockedRequests);
   assertSelectedIssueUsesQueueState(payloadAfterBlockedRequests.issues, createdIssue.ref, "dashboard API after blocked requests");
   assertMirrorStateUnchanged(dashboardFingerprintBeforeBlockedRequests, payloadAfterBlockedRequests.issues, "dashboard API after blocked requests");
-  const runtimeQueueAfterBlockedRequests = runFlow({ op: "runtime", method: "inspectDashboardQueue", params: { limit: 10 } });
-  assertRuntimeDashboardQueueShape(runtimeQueueAfterBlockedRequests);
-  assertSelectedIssueUsesQueueState(runtimeQueueAfterBlockedRequests, createdIssue.ref, "runtime dashboard queue after blocked requests");
-  assertMirrorStateUnchanged(runtimeFingerprintBeforeBlockedRequests, runtimeQueueAfterBlockedRequests, "runtime dashboard queue after blocked requests");
 
   console.log("dashboard smoke: ok");
 } finally {
@@ -459,32 +426,6 @@ function assertHealthPayloadShape(payload) {
   }
 }
 
-function assertRuntimeDashboardQueueShape(queue) {
-  if (!Array.isArray(queue)) {
-    throw new Error(`dashboard runtime queue should be an array: ${JSON.stringify(queue)}`);
-  }
-  for (const issue of queue) {
-    const unexpected = Object.keys(issue).filter((key) => !allowedIssueKeys.has(key));
-    if (unexpected.length) {
-      throw new Error(`dashboard runtime queue exposed unexpected fields: ${unexpected.join(", ")} in ${JSON.stringify(issue)}`);
-    }
-    if (typeof issue.workStatus !== "string" || !allowedWorkStatuses.has(issue.workStatus)) {
-      throw new Error(`dashboard runtime queue should expose display workStatus labels: ${JSON.stringify(issue)}`);
-    }
-    if (!Array.isArray(issue.repositories) || !Array.isArray(issue.blockerLabels)) {
-      throw new Error(`dashboard runtime queue should expose display arrays: ${JSON.stringify(issue)}`);
-    }
-  }
-}
-
-function assertSelectedIssueMirrorsAsActive(issues, ref, source) {
-  const issue = issues.find((candidate) => candidate.ref === ref);
-  if (!issue) throw new Error(`${source} should include selected smoke issue ${ref}: ${JSON.stringify(issues)}`);
-  if (issue.workStatus !== "Active") {
-    throw new Error(`${source} should mirror explicit session selection as Active: ${JSON.stringify(issue)}`);
-  }
-}
-
 function assertSelectedIssueUsesQueueState(issues, ref, source) {
   const issue = issues.find((candidate) => candidate.ref === ref);
   if (!issue) throw new Error(`${source} should include selected smoke issue ${ref}: ${JSON.stringify(issues)}`);
@@ -579,42 +520,63 @@ function assertServedMirrorControlMarkers(assetText) {
   }
 }
 
-function createReviewedIssue(request) {
-  const intake = runFlow({ ...request, mode: "intake", dryRun: true, review: true });
+async function createReviewedIssue(request) {
+  const intake = await callFlowTool("flow_issue_intake", { ...request, dryRun: true, review: true });
   const reviewJob = intake.reviewJob;
   if (!reviewJob?.id || !reviewJob?.issueRef || !reviewJob?.repoKey || !reviewJob?.workType) {
     throw new Error(`issue intake did not return review job: ${JSON.stringify(intake)}`);
   }
-  runFlow({
-    op: "runtime",
-    method: "recordWorkJobResult",
-    params: {
-      result: {
-        jobId: reviewJob.id,
-        issueRef: reviewJob.issueRef,
-        repoKey: reviewJob.repoKey,
-        workType: reviewJob.workType,
-        status: "succeeded",
-        summary: "Executor approved issue intake.",
-        evidence: ["Smoke executor review."],
-        completedAt: new Date().toISOString(),
-      },
-    },
+  await callFlowTool("flow_record_work_job_result", {
+    jobId: reviewJob.id,
+    issueRef: reviewJob.issueRef,
+    repoKey: reviewJob.repoKey,
+    workType: reviewJob.workType,
+    status: "succeeded",
+    summary: "Executor approved issue intake.",
+    evidence: ["Smoke executor review."],
+    completedAt: new Date().toISOString(),
   });
-  return runFlow(request);
+  return await callFlowTool("flow_issue_create", request);
 }
 
-function runFlow(body) {
-  const result = spawnSync(process.execPath, [join(flowRoot, "bin", "flow"), JSON.stringify(body)], {
-    cwd: repoRoot,
-    encoding: "utf8",
+async function writeFixtureConfig() {
+  await callFlowTool("flow_bootstrap", {});
+  await callFlowTool("flow_config_update", {
+    patch: {
+      project: { name: "dashboard-smoke" },
+      topology: { repos: { main: { name: "dashboard-smoke" } } },
+      issueTracker: { type: "local", prefix: "FLOW" },
+      collaboration: { type: "none" },
+      sourceControl: { type: "git" },
+      ledger: { type: "flow" },
+      runtime: { dashboard: { host, port: dashboardPort } },
+    },
   });
-  if (result.status !== 0) {
-    throw new Error(`flow command failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+}
+
+async function callFlowTool(name, args = {}) {
+  const client = new Client({ name: "flow-dashboard-smoke", version: "1.0.0" });
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [join(flowRoot, "bin", "flow")],
+    cwd: repoRoot,
+    env: flowEnv,
+    stderr: "pipe",
+  });
+  await client.connect(transport);
+  try {
+    const response = await client.callTool({ name, arguments: args });
+    if (response.isError) {
+      const text = response.content?.find((item) => item.type === "text")?.text ?? "Flow MCP tool failed.";
+      throw new Error(text);
+    }
+    if (!response.structuredContent || typeof response.structuredContent !== "object" || Array.isArray(response.structuredContent)) {
+      throw new Error(`Flow MCP tool ${name} did not return structured content: ${JSON.stringify(response)}`);
+    }
+    return response.structuredContent;
+  } finally {
+    await transport.close();
   }
-  const parsed = JSON.parse(result.stdout);
-  if (parsed.ok === false) throw new Error(`flow command failed: ${JSON.stringify(parsed.error)}`);
-  return parsed.result;
 }
 
 async function stopChild(child) {

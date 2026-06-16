@@ -41,9 +41,10 @@ export interface HandoffProjection {
   result?: unknown;
 }
 
-export interface JsonCliCommandProjection {
+export interface McpToolSuggestionProjection {
   label: string;
-  request: Record<string, unknown>;
+  toolName: string;
+  arguments: Record<string, unknown>;
 }
 
 export interface ProjectedWorkSubject {
@@ -57,7 +58,7 @@ export interface ProjectedWorkSubject {
   links: LinkProjection[];
   records: RecordProjection[];
   handoffs: HandoffProjection[];
-  nextJsonCommands?: JsonCliCommandProjection[];
+  nextMcpTools?: McpToolSuggestionProjection[];
   completedAt?: string;
   completedByEventId?: string;
 }

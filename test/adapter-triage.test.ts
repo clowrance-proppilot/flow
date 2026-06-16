@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import assert from "node:assert/strict";
 import test from "node:test";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import {
   FlowStore,
   MemoryWorkflowLedger,
@@ -16,6 +18,50 @@ import { parsePullRequests, parseGitHubIssues, normalizePullRequest } from "../s
 import { parseJiraIssue, parseJiraCommentUrl, parseJiraSearch, currentUserOpenSprintJql, currentUserBacklogJql } from "../src/adapters/jira.js";
 import type { ProjectTopology } from "../src/project-topology.js";
 import { testWorkRuntime, configString, legacyHostConfig, execFileAsync } from "./helpers/test-fixtures.js";
+
+async function withFlowMcp<T>(
+  cwd: string,
+  runClient: (client: Client) => Promise<T>,
+  options: { env?: Record<string, string> } = {},
+): Promise<T> {
+  const env = { ...(options.env ?? mcpEnv()) };
+  env.FLOW_MCP_PROJECTS_PATH ??= join(cwd, ".flow-test", "mcp-projects.json");
+  const client = new Client({ name: "flow-triage-test-client", version: "1.0.0" });
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [join(process.cwd(), ".tmp", "test", "src", "flow.js")],
+    cwd,
+    env,
+    stderr: "pipe",
+  });
+  await client.connect(transport);
+  try {
+    return await runClient(client);
+  } finally {
+    await transport.close();
+  }
+}
+
+async function callFlowTool(client: Client, name: string, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+  const response = await client.callTool({ name, arguments: args }) as {
+    isError?: boolean;
+    content?: Array<{ type: string; text?: string }>;
+    structuredContent?: unknown;
+  };
+  if (response.isError) {
+    const text = response.content?.find((item) => item.type === "text")?.text ?? "Flow MCP tool failed.";
+    throw new Error(text);
+  }
+  assert.ok(response.structuredContent && typeof response.structuredContent === "object" && !Array.isArray(response.structuredContent));
+  return response.structuredContent as Record<string, unknown>;
+}
+
+function mcpEnv(overrides: Record<string, string> = {}): Record<string, string> {
+  const inherited = Object.fromEntries(
+    Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
+  return { ...inherited, ...overrides };
+}
 
 test("Jira adapter parses issue JSON", () => {
   const issue = parseJiraIssue({
@@ -501,92 +547,59 @@ test("Triage engine proposes close for high-confidence duplicates", async () => 
   assert.equal(gh301.duplicateCandidates[0].confidence >= 0.9, true);
 });
 
-test("Triage works through Flow CLI with dry-run mode", async () => {
-  const root = await mkdtemp(join(tmpdir(), "flow-triage-cli-"));
+test("Triage works through Flow MCP with dry-run mode", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-triage-mcp-"));
   await execFileAsync("git", ["init"], { cwd: root });
-  const flowCli = join(process.cwd(), ".tmp", "test", "src", "flow.js");
 
-  const callFlow = async (body: Record<string, unknown>) => {
-    const { stdout } = await execFileAsync(process.execPath, [flowCli, JSON.stringify(body)], {
-      cwd: root,
-      maxBuffer: 20 * 1024 * 1024,
-    });
-    return JSON.parse(stdout) as { ok?: boolean; result?: unknown; error?: unknown };
-  };
+  await withFlowMcp(root, async (client) => {
+    await callFlowTool(client, "flow_bootstrap", {});
 
-  await callFlow({ op: "bootstrap", storage: "repo-tracked" });
+    const createReviewedIssue = async (summary: string, issueType: string) => {
+      const intake = await callFlowTool(client, "flow_issue_intake", {
+        summary,
+        issueType,
+        dryRun: true,
+        review: true,
+      });
+      const reviewJob = intake.reviewJob as { id: string; issueRef: string; repoKey: string; workType: string } | undefined;
+      assert.ok(reviewJob);
+      await callFlowTool(client, "flow_record_work_job_result", {
+        jobId: reviewJob.id,
+        issueRef: reviewJob.issueRef,
+        repoKey: reviewJob.repoKey,
+        workType: reviewJob.workType,
+        status: "succeeded",
+        summary: "Executor approved issue intake.",
+        evidence: ["MCP test executor review."],
+        completedAt: nowIso(),
+      });
+      return callFlowTool(client, "flow_issue_create", { summary, issueType });
+    };
 
-  const createReviewedIssue = async (summary: string, issueType: string) => {
-    const request = { op: "issue", mode: "create", summary, issueType };
-    const intake = await callFlow({ ...request, mode: "intake", dryRun: true, review: true });
-    assert.equal(intake.ok, true);
-    const reviewJob = (intake.result as { reviewJob?: { id: string; issueRef: string; repoKey: string; workType: string } }).reviewJob;
-    assert.ok(reviewJob);
-    await callFlow({
-      op: "runtime",
-      method: "recordWorkJobResult",
-      params: {
-        result: {
-          jobId: reviewJob.id,
-          issueRef: reviewJob.issueRef,
-          repoKey: reviewJob.repoKey,
-          workType: reviewJob.workType,
-          status: "succeeded",
-          summary: "Executor approved issue intake.",
-          evidence: ["CLI test executor review."],
-          completedAt: nowIso(),
-        },
-      },
-    });
-    return callFlow(request);
-  };
+    await createReviewedIssue("First issue", "Task");
+    await createReviewedIssue("Second issue", "Bug");
 
-  // Create some issues
-  await createReviewedIssue("First issue", "Task");
-  await createReviewedIssue("Second issue", "Bug");
+    const result = await callFlowTool(client, "flow_issue_triage", { limit: 10 }) as {
+      dryRun: boolean;
+      issuesScanned: number;
+      issues: unknown[];
+    };
 
-  // Run triage in dry-run mode
-  const triageResult = await callFlow({
-    op: "issue",
-    mode: "triage",
-    dryRun: true,
-    limit: 10,
+    assert.equal(result.dryRun, true);
+    assert.equal(result.issuesScanned >= 2, true);
+    assert.equal(result.issues.length >= 2, true);
   });
-
-  assert.equal(triageResult.ok, true);
-  const result = triageResult.result as { dryRun: boolean; issuesScanned: number; issues: unknown[] };
-  assert.equal(result.dryRun, true);
-  assert.equal(result.issuesScanned >= 2, true);
-  assert.equal(result.issues.length >= 2, true);
-
-  const accidentalApply = await callFlow({
-    op: "issue",
-    mode: "triage",
-    dryRun: false,
-    limit: 10,
-  });
-  const accidentalApplyResult = accidentalApply.result as { dryRun: boolean };
-  assert.equal(accidentalApplyResult.dryRun, true);
 });
 
-test("Triage CLI manifest includes triage mode and capabilities", async () => {
-  const root = await mkdtemp(join(tmpdir(), "flow-triage-manifest-"));
+test("Flow MCP tool discovery includes triage", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-triage-tools-"));
   await execFileAsync("git", ["init"], { cwd: root });
-  const flowCli = join(process.cwd(), ".tmp", "test", "src", "flow.js");
 
-  const callFlow = async (body: Record<string, unknown>) => {
-    const { stdout } = await execFileAsync(process.execPath, [flowCli, JSON.stringify(body)], {
-      cwd: root,
-      maxBuffer: 20 * 1024 * 1024,
-    });
-    return JSON.parse(stdout) as { ok?: boolean; result?: unknown; error?: unknown };
-  };
-
-  await callFlow({ op: "bootstrap", storage: "repo-tracked" });
-
-  const manifest = await callFlow({ op: "manifest", target: "issue" });
-  const result = manifest.result as { modes: string[]; issueTracker: { capabilities: { triage: boolean } } };
-
-  assert.equal(result.modes.includes("triage"), true);
-  assert.equal(result.issueTracker.capabilities.triage, true);
+  await withFlowMcp(root, async (client) => {
+    await callFlowTool(client, "flow_bootstrap", {});
+    const tools = await client.listTools();
+    const toolNames = tools.tools.map((tool) => tool.name);
+    assert.equal(toolNames.includes("flow_issue_triage"), true);
+    assert.equal(toolNames.includes("flow_runtime"), false);
+  });
 });

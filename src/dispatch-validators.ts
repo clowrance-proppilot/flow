@@ -8,7 +8,7 @@ import {
   type WorkJobResult,
 } from "./contracts.js";
 import type { CreateIssueOptions } from "./work-runtime.js";
-import { JsonCliError } from "./json-cli.js";
+import { FlowInputError } from "./flow-errors.js";
 
 export const createIssueOptionsSchema = z.object({
   projectKey: z.string().optional(),
@@ -24,9 +24,9 @@ export const createIssueOptionsSchema = z.object({
   review: z.boolean().optional(),
 }).passthrough();
 
-function validationError(method: string, field: string, issues: z.ZodIssue[]): JsonCliError {
-  return new JsonCliError("BAD_FIELD", `Invalid ${field} in ${method}`, {
-    manifestTarget: "runtime",
+function validationError(method: string, field: string, issues: z.ZodIssue[]): FlowInputError {
+  return new FlowInputError("BAD_FIELD", `Invalid ${field} in ${method}`, {
+    target: "runtime",
     details: {
       method,
       field,

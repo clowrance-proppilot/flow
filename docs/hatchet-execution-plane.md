@@ -3,11 +3,11 @@
 ## Decision
 
 Hatchet can own durable Autoflow execution, but it is not the default Flow
-runtime. Flow keeps workflow semantics and the stable JSON CLI remains the core
-control surface.
+runtime. Flow keeps workflow semantics and the MCP tool surface remains the
+core control surface.
 
 This spike is a reference adapter. It should not make the default Flow install
-or normal CLI workflow depend on Hatchet.
+or normal MCP workflow depend on Hatchet.
 
 Flow should not make the CLI or desktop process the runner. Those surfaces should enqueue, pause, resume, inspect, and render status. A long-lived execution plane should own scheduling, retries, worker slots, concurrency, durable run state, and replay.
 
@@ -24,7 +24,7 @@ Hatchet owns:
 
 Flow owns:
 
-- `.flow/config.yaml` topology
+- Flow-managed config topology
 - issue and phase policy
 - worktree and branch policy
 - executor adapter selection
@@ -34,7 +34,7 @@ Flow owns:
 The intended shape is:
 
 ```text
-CLI/Desktop/API -> Flow control layer -> Hatchet task -> Flow runtime APIs -> executor adapters
+MCP/Desktop/API -> Flow control layer -> Hatchet task -> Flow runtime APIs -> executor adapters
 ```
 
 ## First Task Boundary
@@ -69,15 +69,15 @@ These steps are listed to show the Flow-owned semantics. They remain in Flow
 internals through `AutoflowService.runExecutionPlanePayload`; Hatchet only
 schedules and invokes that method through the task runner.
 
-## Durable Pi Sessions
+## Durable Agent Sessions
 
-A durable Pi session should be a Flow-owned handle, not a Hatchet-owned
+A durable agent session should be a Flow-owned handle, not a Hatchet-owned
 transcript. Hatchet should persist and pass only enough data to resume:
 
-- `provider: "pi"`
+- `provider: "claude"`
 - `issueRef`
 - `flowSessionId`
-- `piSessionId`
+- `agentSessionId`
 - `sessionFile`
 - `workspacePath`
 
@@ -99,9 +99,10 @@ flow:{projectId}:repos:{sortedRepoKeys}
 
 This serializes repo/worktree mutation for the same project and repo set. It is intentionally conservative. Once the repo lock model is explicit, independent repos can run in parallel.
 
-## CLI And Desktop
+## MCP And Desktop
 
-The CLI remains JSON-only. It should call the Flow control layer and return a single JSON document. It should not own run loops, retries, or active worker state.
+MCP tools call the Flow control layer. They should not own run loops, retries,
+or active worker state.
 
 Desktop can stay as a Flow-specific UI for queue, issue detail, chat/session steering, and local project controls. Hatchet's dashboard can handle execution logs, retries, replay, and worker state.
 

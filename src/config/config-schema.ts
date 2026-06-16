@@ -64,7 +64,7 @@ export const runtimeStoreConfigSchema = z.object({
 }).catchall(z.unknown());
 
 export const agentSessionConfigSchema = z.object({
-  provider: z.enum(["pi", "claude"]).default("pi"),
+  provider: z.enum(["claude"]).default("claude"),
 }).catchall(z.unknown());
 
 export const executionPlaneConfigSchema = z.object({

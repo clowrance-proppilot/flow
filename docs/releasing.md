@@ -24,8 +24,12 @@ npm ci
 npm run check
 npm test
 npm run build
+npm run smoke:flow
+npm run smoke:dashboard
 npm run readiness:public
 ```
+
+Run `npm run smoke:desktop` when the local Electron binary is installed.
 
 3. Merge the version bump to `main`.
 4. Create and publish a GitHub Release tagged `vX.Y.Z`, matching the package version.

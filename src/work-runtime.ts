@@ -82,7 +82,7 @@ import {
   mapWithConcurrency,
   workRuntimeQueueConcurrency,
 } from "./runtime-utils.js";
-import type { JsonCliCommandProjection, ProjectedWorkSubject } from "./core/work-projection.js";
+import type { McpToolSuggestionProjection, ProjectedWorkSubject } from "./core/work-projection.js";
 import type { ExecutorAdapter } from "./executors/executor-contracts.js";
 
 export interface WorkRuntimeOptions {
@@ -186,7 +186,7 @@ export interface AdvanceIssueResult {
   session: WorkRuntimeSession;
   issue?: WorkItem;
   message: string;
-  nextJsonCommands?: JsonCliCommandProjection[];
+  nextMcpTools?: McpToolSuggestionProjection[];
   handoffRequest?: {
     id: string;
     issueRef: string;
@@ -229,7 +229,7 @@ export interface LocalThreadResultRecord {
   session: WorkRuntimeSession;
   result: WorkerTaskResult;
   adoptedRun?: WorkerRunRecord;
-  nextJsonCommands?: JsonCliCommandProjection[];
+  nextMcpTools?: McpToolSuggestionProjection[];
 }
 
 export interface BootstrapJiraIssueOptions {
@@ -370,7 +370,8 @@ export interface FlowDoctorResult {
   findings: ReadinessFinding[];
   nextAction: {
     type: string;
-    command?: string;
+    toolName?: string;
+    arguments?: Record<string, unknown>;
     summary: string;
   };
 }
@@ -550,7 +551,7 @@ export class FlowWorkRuntime {
         links: [],
         records: [],
         handoffs: [],
-        nextJsonCommands: [],
+        nextMcpTools: [],
       };
     }
     const [issue, jobs, jobResults, workerResults, workerRuns] = await Promise.all([
@@ -620,7 +621,7 @@ export class FlowWorkRuntime {
       links: [],
       records,
       handoffs,
-      nextJsonCommands: nextJsonCommandsForIssue({
+      nextMcpTools: nextMcpToolsForIssue({
         issueRef: flowSubject.ref,
         repoKey: issue?.repoKeys[0] ?? latestActiveRun?.repoKey ?? latestResult?.repoKey,
         activeRun: latestActiveRun,
@@ -2392,7 +2393,7 @@ export class FlowWorkRuntime {
       completedAt,
     };
     const updated = await this.recordWorkerResult(sessionId, result);
-    return { session: updated, result, adoptedRun, nextJsonCommands: nextJsonCommandsAfterResult(result) };
+    return { session: updated, result, adoptedRun, nextMcpTools: nextMcpToolsAfterResult(result) };
   }
 
   async adoptLiveWorker(
@@ -3288,7 +3289,7 @@ export class FlowWorkRuntime {
 
   private requireDefaultJiraProjectKey(): string {
     if (this.defaultJiraProjectKey) return this.defaultJiraProjectKey;
-    throw new Error("Jira project key is required. Configure issueTracker.projectKey in .flow/config.yaml or pass projectKey.");
+    throw new Error("Jira project key is required. Configure issueTracker.projectKey in Flow-managed config or pass projectKey.");
   }
 
   private resolveJiraQueueRepoKeys(jiraIssue: JiraIssue, existing?: WorkItem): string[] {
@@ -3432,7 +3433,7 @@ export class FlowWorkRuntime {
         issue,
         message: `Record result for execution handoff ${handoffRequest.id}.`,
         handoffRequest,
-        nextJsonCommands: nextJsonCommandsForHandoff(handoffRequest),
+        nextMcpTools: nextMcpToolsForHandoff(handoffRequest),
       };
   }
 
@@ -4252,7 +4253,8 @@ function doctorNextAction(
   if (hasCloseoutCleanupNeeded(issue)) {
     return {
       type: "cleanup_worktrees",
-      command: `flow '{"op":"workflow","mode":"advance","id":"${issue.ref}"}'`,
+      toolName: "flow_workflow_advance",
+      arguments: { id: issue.ref },
       summary: "Retry closeout worktree cleanup for the merged issue.",
     };
   }
@@ -4268,8 +4270,9 @@ function doctorNextAction(
   if (!visibility.repoRouting) {
       return {
         type: "route_issue",
-        command: `flow '{"op":"issue","mode":"route","id":"${issue.ref}","repoKeys":["<repo_key>"]}'`,
-        summary: "Route the issue to a component repo, then rerun Flow.",
+        toolName: "flow_issue_route",
+        arguments: { id: issue.ref, repoKeys: ["<repo_key>"] },
+        summary: "Route the issue to a component repo, then rerun workflow audit.",
       };
   }
   if (blockerSummaries.includes("Prepared worktree is missing.")) {
@@ -4281,20 +4284,23 @@ function doctorNextAction(
       const pathHint = branch ? `<path-to-worktree-for-${branch.replace(/\//g, "-")}>` : "<worktree_path>";
       return {
         type: "adopt_workspace",
-        command: `flow '{"op":"issue","mode":"adoptWorkspace","id":"${issue.ref}","repoKey":"${repoKey}","worktreePath":"${pathHint}"}'`,
+        toolName: "flow_adopt_workspace",
+        arguments: { id: issue.ref, repoKey, worktreePath: pathHint },
         summary: "Adopt the existing code review worktree into Flow, or let Flow prepare a new routed workspace.",
       };
     }
     return {
       type: "prepare_workspace",
-      command: `flow '{"op":"workflow","mode":"advance","id":"${issue.ref}"}'`,
+      toolName: "flow_workflow_advance",
+      arguments: { id: issue.ref },
       summary: "Let Flow prepare the routed workspace or approve the prepare-workspace confirmation.",
     };
   }
   if (isRetryableWorkerFailure(latestWorker) || retryableWorkJobFailure) {
     return {
       type: "retry_execution",
-      command: `flow '{"op":"workflow","mode":"advance","id":"${issue.ref}"}'`,
+      toolName: "flow_workflow_advance",
+      arguments: { id: issue.ref },
       summary: "Retry the execution handoff now that the executor setup can be repaired.",
     };
   }
@@ -4304,7 +4310,8 @@ function doctorNextAction(
   ) {
     return {
       type: "remediate_review",
-      command: `flow '{"op":"workflow","mode":"advance","id":"${issue.ref}"}'`,
+      toolName: "flow_workflow_advance",
+      arguments: { id: issue.ref },
       summary: "Remediate code review feedback through the normal Flow advance path.",
     };
   }
@@ -4326,8 +4333,9 @@ function doctorNextAction(
   if (blockerSummaries.includes("Pull request checks are still running.")) {
     return {
       type: "wait_for_checks",
-      command: `flow '{"op":"workflow","mode":"advance","id":"${issue.ref}"}'`,
-      summary: "Wait for pull request checks to finish, then rerun Flow.",
+      toolName: "flow_workflow_advance",
+      arguments: { id: issue.ref },
+      summary: "Wait for pull request checks to finish, then rerun workflow audit.",
     };
   }
   if (findings.some((finding) => finding.summary === "Approval review is required.")) {
@@ -4345,13 +4353,15 @@ function doctorNextAction(
   if (visibility.codeReview) {
     return {
       type: "advance",
-      command: `flow '{"op":"workflow","mode":"advance","id":"${issue.ref}"}'`,
+      toolName: "flow_workflow_advance",
+      arguments: { id: issue.ref },
       summary: "Flow can continue from the reconciled code review state.",
     };
   }
   return {
     type: "advance",
-    command: `flow '{"op":"workflow","mode":"advance","id":"${issue.ref}"}'`,
+    toolName: "flow_workflow_advance",
+    arguments: { id: issue.ref },
     summary: "Run Flow advance to choose the next valid workflow action.",
   };
 }
@@ -4771,16 +4781,14 @@ function isObsoleteSatisfiedPrWorkerResult(result: WorkerTaskResult, issue: Work
   return text.includes("undraft") || text.includes("ready-for-review") || text.includes("ready for review");
 }
 
-function nextJsonCommandsForHandoff(request: {
+function nextMcpToolsForHandoff(request: {
   id: string;
   issueRef: string;
   repoKey: string;
   workJobId?: string;
-}): JsonCliCommandProjection[] {
+}): McpToolSuggestionProjection[] {
   return [
-    jsonCliCommand("Record local thread result", {
-      op: "workflow",
-      mode: "recordResult",
+    mcpToolSuggestion("Record local thread result", "flow_record_result", {
       id: request.issueRef,
       repoKey: request.repoKey,
       taskId: request.id,
@@ -4790,63 +4798,51 @@ function nextJsonCommandsForHandoff(request: {
       changedFiles: [],
       testsRun: [],
     }),
-    jsonCliCommand("Observe issue work state", {
-      op: "workflow",
-      mode: "observe",
+    mcpToolSuggestion("Observe issue work state", "flow_observe", {
       id: request.issueRef,
     }),
   ];
 }
 
-function nextJsonCommandsAfterResult(result: Pick<WorkerTaskResult, "issueRef" | "repoKey" | "status">): JsonCliCommandProjection[] {
+function nextMcpToolsAfterResult(result: Pick<WorkerTaskResult, "issueRef" | "repoKey" | "status">): McpToolSuggestionProjection[] {
   if (result.status !== "succeeded") {
     return [
-      jsonCliCommand("Observe issue work state", {
-        op: "workflow",
-        mode: "observe",
+      mcpToolSuggestion("Observe issue work state", "flow_observe", {
         id: result.issueRef,
       }),
     ];
   }
   return [
-    jsonCliCommand("Record acceptance evidence", {
-      op: "workflow",
-      mode: "recordEvidence",
+    mcpToolSuggestion("Record acceptance evidence", "flow_record_evidence", {
       id: result.issueRef,
       summary: "<verification summary>",
       criteria: ["<acceptance criterion>"],
     }),
-    jsonCliCommand("Record pull request", {
-      op: "workflow",
-      mode: "recordPullRequest",
+    mcpToolSuggestion("Record pull request", "flow_record_pull_request", {
       id: result.issueRef,
       repo: result.repoKey,
       number: 0,
       url: "<pull request url>",
       isDraft: false,
     }),
-    jsonCliCommand("Observe issue work state", {
-      op: "workflow",
-      mode: "observe",
+    mcpToolSuggestion("Observe issue work state", "flow_observe", {
       id: result.issueRef,
     }),
-    jsonCliCommand("Advance issue", {
-      op: "workflow",
-      mode: "advance",
+    mcpToolSuggestion("Advance issue", "flow_workflow_advance", {
       id: result.issueRef,
     }),
   ];
 }
 
-function nextJsonCommandsForIssue(input: {
+function nextMcpToolsForIssue(input: {
   issueRef: string;
   repoKey?: string;
   activeRun?: WorkerRunRecord;
   activeJob?: WorkJob;
   latestResult?: WorkerTaskResult;
-}): JsonCliCommandProjection[] {
+}): McpToolSuggestionProjection[] {
   if (input.activeRun) {
-    return nextJsonCommandsForHandoff({
+    return nextMcpToolsForHandoff({
       id: input.activeRun.taskId,
       issueRef: input.issueRef,
       repoKey: input.activeRun.repoKey,
@@ -4854,30 +4850,26 @@ function nextJsonCommandsForIssue(input: {
     });
   }
   if (input.activeJob) {
-    return nextJsonCommandsForHandoff({
+    return nextMcpToolsForHandoff({
       id: stringFromRecord(input.activeJob.input, "handoffTaskId") ?? input.activeJob.id,
       issueRef: input.issueRef,
       repoKey: input.activeJob.repoKey,
       workJobId: input.activeJob.id,
     });
   }
-  if (input.latestResult) return nextJsonCommandsAfterResult(input.latestResult);
+  if (input.latestResult) return nextMcpToolsAfterResult(input.latestResult);
   return [
-    jsonCliCommand("Advance issue", {
-      op: "workflow",
-      mode: "advance",
+    mcpToolSuggestion("Advance issue", "flow_workflow_advance", {
       id: input.issueRef,
     }),
-    jsonCliCommand("Observe issue work state", {
-      op: "workflow",
-      mode: "observe",
+    mcpToolSuggestion("Observe issue work state", "flow_observe", {
       id: input.issueRef,
     }),
   ];
 }
 
-function jsonCliCommand(label: string, request: Record<string, unknown>): JsonCliCommandProjection {
-  return { label, request };
+function mcpToolSuggestion(label: string, toolName: string, args: Record<string, unknown>): McpToolSuggestionProjection {
+  return { label, toolName, arguments: args };
 }
 
 function liveWorkerAdoptionSummary(adopter?: string): string {

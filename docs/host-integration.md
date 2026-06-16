@@ -3,7 +3,7 @@
 Flow is embedded by agents and adapters. Humans use the read-only dashboard
 mirror.
 
-Durable config belongs in `.flow/config.yaml`:
+Durable config belongs in Flow-managed config:
 
 - repo topology
 - provider selection
@@ -20,26 +20,37 @@ next local agent thread.
 For a concrete orchestrator-thread and local worker CLI recipe, see
 [Agent handoff](agent-handoff.md).
 
-Minimal local config:
+Minimal local config patch:
 
-```yaml
-version: "1"
-project:
-  name: "local-flow"
-topology:
-  repos:
-    main:
-      name: "local-flow"
-issueTracker:
-  type: "local"
-  prefix: "FLOW"
-collaboration:
-  type: "none"
-sourceControl:
-  type: "git"
-ledger:
-  type: "sql"
-  dialect: "sqlite"
+```json
+{
+  "patch": {
+    "project": {
+      "name": "local-flow"
+    },
+    "topology": {
+      "repos": {
+        "main": {
+          "name": "local-flow"
+        }
+      }
+    },
+    "issueTracker": {
+      "type": "local",
+      "prefix": "FLOW"
+    },
+    "collaboration": {
+      "type": "none"
+    },
+    "sourceControl": {
+      "type": "git"
+    },
+    "ledger": {
+      "type": "sql",
+      "dialect": "sqlite"
+    }
+  }
+}
 ```
 
 Provider-backed config should swap `issueTracker`, `collaboration`, and

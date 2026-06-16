@@ -1,206 +1,153 @@
 # Configuration Reference
 
-Flow stores durable project configuration in `.flow/config.yaml`. The config is
-the source of truth for topology, adapter selection, execution policy, dashboard
-settings, runtime store, and ledger selection.
+Flow-managed config is the durable source of truth for topology, adapter
+selection, execution policy, dashboard settings, runtime store, and ledger
+selection. Agents initialize and change it through MCP tools:
+
+- `flow_bootstrap`
+- `flow_config_get`
+- `flow_config_update`
+- `flow_config_validate`
+- `flow_config_explain`
+
+Do not edit a project config file. Flow owns persistence.
 
 Environment variables are acceptable for process context and secret injection
-when a concrete adapter needs them. They should not be the durable configuration
-surface for workflow topology, provider selection, ports, ledgers, or executor
-policy.
+when a concrete adapter needs them. They should not be the durable
+configuration surface for workflow topology, provider selection, ports,
+ledgers, or executor policy.
 
-## Minimal Config
+## Bootstrap
 
-```yaml
-version: "1"
-project:
-  name: "Flow"
+Call `flow_bootstrap` once for a project. Flow infers a local starter config
+from repository metadata and persists it under Flow user state.
 
-topology:
-  repos:
-    flow:
-      name: "flow"
-      baseBranch: "main"
-  branchPattern: "{kind}/{issueRef}-{slug}"
-  pullRequestUrlPattern: "https://github.com/camden-lowrance/{repoName}/pull/{number}"
+## Update Shape
 
-issueTracker:
-  type: "github"
-  owner: "camden-lowrance"
-  repo: "flow"
+Use `flow_config_update` with a schema-validated patch:
 
-collaboration:
-  type: "github"
-  owner: "camden-lowrance"
-  repo: "flow"
-
-sourceControl:
-  type: "git"
-
-runtime:
-  agentSession:
-    provider: "claude"
-
-ledger:
-  type: "sql"
-  dialect: "sqlite"
+```json
+{
+  "patch": {
+    "project": {
+      "name": "Flow"
+    },
+    "topology": {
+      "repos": {
+        "flow": {
+          "name": "flow",
+          "baseBranch": "main",
+          "pathFromRoot": "."
+        }
+      },
+      "branchPattern": "{kind}/{issueRef}-{slug}",
+      "pullRequestUrlPattern": "https://github.com/camden-lowrance/{repoName}/pull/{number}",
+      "issueInference": [
+        {
+          "repo": "flow",
+          "keywords": ["flow", "runtime", "dashboard"]
+        }
+      ]
+    },
+    "issueTracker": {
+      "type": "github",
+      "owner": "camden-lowrance",
+      "repo": "flow"
+    },
+    "collaboration": {
+      "type": "github",
+      "owner": "camden-lowrance",
+      "repo": "flow"
+    },
+    "sourceControl": {
+      "type": "git"
+    },
+    "ledger": {
+      "type": "sql",
+      "dialect": "sqlite"
+    },
+    "runtime": {
+      "agentSession": {
+        "provider": "claude"
+      }
+    }
+  }
+}
 ```
 
-Validate it:
+## Common Sections
 
-```bash
-flow '{"op":"config","mode":"validate"}'
-flow '{"op":"config","mode":"explain"}'
+- `project.name`: display/project name.
+- `project.icon`: optional display icon.
+- `topology.repos`: required map of repo keys to repository configs.
+- `topology.repos.<key>.name`: repository name used by adapters.
+- `topology.repos.<key>.baseBranch`: default base branch.
+- `topology.repos.<key>.pathFromRoot`: relative path for monorepo layouts.
+- `topology.branchPattern`: optional branch template. Must include
+  `{issueRef}`.
+- `topology.pullRequestUrlPattern`: optional PR URL template. Must include
+  `{repoName}` and `{number}`.
+- `topology.issueInference`: optional keyword rules that help infer routing.
+- `issueTracker.type`: `local`, `github`, `jira`, `linear`, or `notion`.
+- `collaboration.type`: `none`, `local`, or `github`.
+- `sourceControl.type`: currently `git`.
+- `ledger.type`: `sql` for SQLite/Postgres state or `flow` for the unified
+  SQLite state backend.
+- `runtime.store.type`: `sqlite` or `file`.
+- `runtime.agentSession.provider`: `claude`.
+- `runtime.dashboard.host`, `runtime.dashboard.port`, `runtime.dashboard.url`:
+  dashboard bind/public settings.
+
+## Examples
+
+Configure local-only work:
+
+```json
+{
+  "patch": {
+    "issueTracker": { "type": "local", "prefix": "FLOW" },
+    "collaboration": { "type": "none" },
+    "sourceControl": { "type": "git" }
+  }
+}
 ```
 
-## Project
+Configure GitHub issues and pull requests:
 
-```yaml
-project:
-  name: "Flow"
-  icon: "F"
+```json
+{
+  "patch": {
+    "issueTracker": {
+      "type": "github",
+      "owner": "camden-lowrance",
+      "repo": "flow",
+      "assignee": "*",
+      "activeLabels": ["in-progress"],
+      "backlogLabels": ["backlog"]
+    },
+    "collaboration": {
+      "type": "github",
+      "owner": "camden-lowrance",
+      "repo": "flow"
+    }
+  }
+}
 ```
 
-- `name`: required display/project name.
-- `icon`: optional display icon.
+Configure dashboard port:
 
-## Topology
-
-```yaml
-topology:
-  repos:
-    flow:
-      name: "flow"
-      baseBranch: "main"
-      pathFromRoot: "."
-  branchPattern: "{kind}/{issueRef}-{slug}"
-  pullRequestUrlPattern: "https://github.com/org/{repoName}/pull/{number}"
-  issueInference:
-    - repo: flow
-      keywords: ["flow", "runtime", "dashboard"]
+```json
+{
+  "patch": {
+    "runtime": {
+      "dashboard": {
+        "host": "127.0.0.1",
+        "port": 8767,
+        "url": "http://127.0.0.1:8767"
+      }
+    }
+  }
+}
 ```
 
-- `repos`: required map of repo keys to repository configs.
-- `repos.<key>.name`: repository name used by adapters.
-- `repos.<key>.baseBranch`: default base branch.
-- `repos.<key>.pathFromRoot`: relative path for monorepo layouts.
-- `branchPattern`: optional branch template. Must include `{issueRef}`.
-- `pullRequestUrlPattern`: optional PR URL template. Must include `{repoName}`
-  and `{number}`.
-- `issueInference`: optional keyword rules that help infer routing.
-
-## Adapters
-
-Adapters are selected by `type` and keep provider-specific behavior behind
-adapter boundaries.
-
-### GitHub Issues
-
-```yaml
-issueTracker:
-  type: "github"
-  owner: "camden-lowrance"
-  repo: "flow"
-  assignee: "*"
-  activeLabels: ["in-progress"]
-  backlogLabels: ["backlog"]
-```
-
-Requires authenticated `gh`.
-
-### Jira
-
-```yaml
-issueTracker:
-  type: "jira"
-  siteUrl: "https://example.atlassian.net"
-  projectKey: "FLOW"
-  activeQueueJql: "project = FLOW AND statusCategory != Done"
-  backlogQueueJql: "project = FLOW AND status = Backlog"
-  email: "user@example.com"
-```
-
-Jira token values may be injected as environment variables or adapter-specific
-secrets.
-
-### Local
-
-```yaml
-issueTracker:
-  type: "local"
-  prefix: "FLOW"
-```
-
-Local issues are stored in the Flow ledger.
-
-### Collaboration
-
-```yaml
-collaboration:
-  type: "github"
-  owner: "camden-lowrance"
-  repo: "flow"
-```
-
-Use `type: "none"` when pull request integration is disabled.
-
-## Runtime
-
-```yaml
-runtime:
-  stateDir: ".flow/runtime"
-  storeDir: ".flow/store"
-  store:
-    type: "sqlite"
-  agentSession:
-    provider: "claude"
-  executionPlane:
-    type: "flow-standalone"
-    workerName: "flow-worker"
-    slots: 4
-    dashboardUrl: "http://127.0.0.1:8080"
-  defaultSessionId: "cli"
-  staleWorkerRunTimeoutMs: 600000
-  debug: false
-  dashboard:
-    host: "127.0.0.1"
-    port: 8767
-    url: "http://127.0.0.1:8767"
-```
-
-- `store.type`: `file` or `sqlite`. Defaults to SQLite in configured runtime.
-- `agentSession.provider`: `pi` or `claude`.
-- `executionPlane.type`: `flow-standalone` or `hatchet`.
-- `staleWorkerRunTimeoutMs`: timeout before stale worker runs are expired.
-- `dashboard`: host, port, and public URL for dashboard serving.
-
-## Ledger
-
-```yaml
-ledger:
-  type: "sql"
-  dialect: "sqlite"
-```
-
-SQLite is the default SQL ledger. Keep runtime state local unless your project
-intentionally commits workflow ledger history.
-
-## Work Types And Executors
-
-```yaml
-workTypes:
-  - name: "flow.implement"
-    category: "implement"
-    requiredCapabilities: []
-    allowedExecutors: ["live_agent_thread"]
-    outputType: "worker_result"
-
-executors:
-  - name: "live_agent_thread"
-    executionMode: "local_thread"
-    capabilities: []
-    outputs: ["worker_result"]
-```
-
-Use these sections to make execution policy explicit while keeping SDKs, CLIs,
-review tools, issue trackers, and model providers behind adapters.
+After updates, call `flow_config_validate` and `flow_config_explain`.

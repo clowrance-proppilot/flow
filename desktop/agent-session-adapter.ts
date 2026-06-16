@@ -1,18 +1,18 @@
-import type { PiSessionDriver } from "../src/experimental/pi-session-driver.js";
+import type { ClaudeSessionDriver } from "../src/experimental/claude-session-driver.js";
 import type { StandaloneAutoflowRunner } from "../src/experimental/autoflow-runner.js";
 import type { DesktopAgentPromptInput, DesktopAgentPromptResult, DesktopAgentSessionAdapter } from "./prompt-router.js";
 
 export interface DesktopAgentSessionAdapterOptions {
-  getPiSessionDriver: () => Promise<PiSessionDriver>;
+  getAgentSessionDriver: () => Promise<ClaudeSessionDriver>;
   getAutoflowRunner: () => Promise<StandaloneAutoflowRunner>;
 }
 
 export class DesktopAgentSessionAdapterImpl implements DesktopAgentSessionAdapter {
-  private readonly getPiSessionDriver: () => Promise<PiSessionDriver>;
+  private readonly getAgentSessionDriver: () => Promise<ClaudeSessionDriver>;
   private readonly getAutoflowRunner: () => Promise<StandaloneAutoflowRunner>;
 
   constructor(options: DesktopAgentSessionAdapterOptions) {
-    this.getPiSessionDriver = options.getPiSessionDriver;
+    this.getAgentSessionDriver = options.getAgentSessionDriver;
     this.getAutoflowRunner = options.getAutoflowRunner;
   }
 
@@ -21,11 +21,11 @@ export class DesktopAgentSessionAdapterImpl implements DesktopAgentSessionAdapte
       return { summary: "Prompt recorded for project context." };
     }
 
-    const piSessionDriver = await this.getPiSessionDriver();
+    const agentSessionDriver = await this.getAgentSessionDriver();
     const autoflowRunner = await this.getAutoflowRunner();
 
     const session = input.sessionId
-      ? await piSessionDriver.getSession(input.sessionId).catch(() => undefined)
+      ? await agentSessionDriver.getSession(input.sessionId).catch(() => undefined)
       : undefined;
 
     void autoflowRunner.sendUserMessage({
@@ -33,16 +33,16 @@ export class DesktopAgentSessionAdapterImpl implements DesktopAgentSessionAdapte
       sessionId: session?.id,
       text: input.prompt,
     }).catch((error: unknown) => {
-      console.error("[flow-desktop] pi prompt failed:", error);
+      console.error("[flow-desktop] agent prompt failed:", error);
     });
 
-    const target = session ?? await piSessionDriver.openOrCreateIssueSession(input.issueRef);
+    const target = session ?? await agentSessionDriver.openOrCreateIssueSession(input.issueRef);
     const summary = `Prompt sent to ${target.issueRef}.`;
 
     return {
       session: {
         id: target.id,
-        provider: "pi",
+        provider: "claude",
         workspacePath: target.workspacePath,
         status: "active",
         summary,

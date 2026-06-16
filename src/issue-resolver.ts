@@ -1,12 +1,12 @@
 import { IssueStateValue, type WorkItem } from "./contracts.js";
 
-export interface CliIssueResolverRuntime {
+export interface IssueResolverRuntime {
   inspectQueue(limit: number): Promise<WorkItem[]>;
   inspectIssue(issueRef: string): Promise<WorkItem>;
 }
 
-export async function resolveCliIssue(
-  runtime: CliIssueResolverRuntime,
+export async function resolveFlowIssue(
+  runtime: IssueResolverRuntime,
   issueRef: string,
   matchesIssue: (issue: WorkItem, ref: string) => boolean = (issue, ref) => issue.ref.toUpperCase() === ref.toUpperCase(),
 ): Promise<WorkItem> {

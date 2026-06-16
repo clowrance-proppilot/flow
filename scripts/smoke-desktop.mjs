@@ -1,12 +1,14 @@
 #!/usr/bin/env node
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const flowRoot = join(scriptDir, "..");
@@ -23,17 +25,13 @@ assertDesktopPackagingConfig();
 try {
   await writeFixtureConfig(repoRoot, "desktop-smoke");
   await writeFixtureConfig(secondRepoRoot, "desktop-smoke-second");
-  const issue = createReviewedIssue(repoRoot, {
-    op: "issue",
-    mode: "create",
+  const issue = await createReviewedIssue(repoRoot, {
     issueType: "Task",
     summary: "Smoke desktop prompt canvas",
     description: "Desktop smoke fixture.",
     repoKeys: ["main"],
   });
-  const secondIssue = createReviewedIssue(secondRepoRoot, {
-    op: "issue",
-    mode: "create",
+  const secondIssue = await createReviewedIssue(secondRepoRoot, {
     issueType: "Task",
     summary: "Smoke second project dashboard",
     description: "Second desktop smoke fixture.",
@@ -47,6 +45,7 @@ try {
     env: {
       ...process.env,
       FLOW_ROOT: repoRoot,
+      FLOW_MCP_PROJECTS_PATH: join(userDataRoot, "mcp-projects.json"),
       FLOW_DESKTOP_USER_DATA: userDataRoot,
       FLOW_DESKTOP_AGENT: "disabled",
       ELECTRON_ENABLE_LOGGING: "1",
@@ -162,64 +161,61 @@ function assertDesktopPackagingConfig() {
 }
 
 async function writeFixtureConfig(root, projectName) {
-  await mkdir(join(root, ".flow"), { recursive: true });
-  await writeFile(join(root, ".flow", "config.yaml"), [
-    'version: "1"',
-    "project:",
-    `  name: "${projectName}"`,
-    "topology:",
-    "  repos:",
-    "    main:",
-    `      name: "${projectName}"`,
-    "issueTracker:",
-    '  type: "local"',
-    '  prefix: "FLOW"',
-    "collaboration:",
-    '  type: "none"',
-    "sourceControl:",
-    '  type: "git"',
-    "ledger:",
-    '  type: "flow"',
-    "",
-  ].join("\n"), "utf8");
+  await callFlowTool(root, "flow_bootstrap", {});
+  await callFlowTool(root, "flow_config_update", {
+    patch: {
+      project: { name: projectName },
+      topology: { repos: { main: { name: projectName } } },
+      issueTracker: { type: "local", prefix: "FLOW" },
+      collaboration: { type: "none" },
+      sourceControl: { type: "git" },
+      ledger: { type: "flow" },
+    },
+  });
 }
 
-function createReviewedIssue(cwd, request) {
-  const intake = runFlow(cwd, { ...request, mode: "intake", dryRun: true, review: true });
+async function createReviewedIssue(cwd, request) {
+  const intake = await callFlowTool(cwd, "flow_issue_intake", { ...request, dryRun: true, review: true });
   const reviewJob = intake.reviewJob;
   if (!reviewJob?.id || !reviewJob?.issueRef || !reviewJob?.repoKey || !reviewJob?.workType) {
     throw new Error(`issue intake did not return review job: ${JSON.stringify(intake)}`);
   }
-  runFlow(cwd, {
-    op: "runtime",
-    method: "recordWorkJobResult",
-    params: {
-      result: {
-        jobId: reviewJob.id,
-        issueRef: reviewJob.issueRef,
-        repoKey: reviewJob.repoKey,
-        workType: reviewJob.workType,
-        status: "succeeded",
-        summary: "Executor approved issue intake.",
-        evidence: ["Smoke executor review."],
-        completedAt: new Date().toISOString(),
-      },
-    },
+  await callFlowTool(cwd, "flow_record_work_job_result", {
+    jobId: reviewJob.id,
+    issueRef: reviewJob.issueRef,
+    repoKey: reviewJob.repoKey,
+    workType: reviewJob.workType,
+    status: "succeeded",
+    summary: "Executor approved issue intake.",
+    evidence: ["Smoke executor review."],
+    completedAt: new Date().toISOString(),
   });
-  return runFlow(cwd, request);
+  return await callFlowTool(cwd, "flow_issue_create", request);
 }
 
-function runFlow(cwd, body) {
-  const result = spawnSync(process.execPath, [join(flowRoot, "bin", "flow"), JSON.stringify(body)], {
+async function callFlowTool(cwd, name, args = {}) {
+  const client = new Client({ name: "flow-desktop-smoke", version: "1.0.0" });
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [join(flowRoot, "bin", "flow")],
     cwd,
-    encoding: "utf8",
+    env: { ...process.env, FLOW_MCP_PROJECTS_PATH: join(cwd, ".flow", "mcp-projects.json") },
+    stderr: "pipe",
   });
-  if (result.status !== 0) {
-    throw new Error(`flow command failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+  await client.connect(transport);
+  try {
+    const response = await client.callTool({ name, arguments: args });
+    if (response.isError) {
+      const text = response.content?.find((item) => item.type === "text")?.text ?? "Flow MCP tool failed.";
+      throw new Error(text);
+    }
+    if (!response.structuredContent || typeof response.structuredContent !== "object" || Array.isArray(response.structuredContent)) {
+      throw new Error(`Flow MCP tool ${name} did not return structured content: ${JSON.stringify(response)}`);
+    }
+    return response.structuredContent;
+  } finally {
+    await transport.close();
   }
-  const parsed = JSON.parse(result.stdout);
-  if (parsed.ok === false) throw new Error(`flow command failed: ${JSON.stringify(parsed.error)}`);
-  return parsed.result;
 }
 
 async function waitForDesktopUrl() {

@@ -1,6 +1,6 @@
 {
   "name": "@camden-lowrance/flow",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "description": "Workflow state for coding agents.",
   "license": "MIT",
@@ -34,7 +34,6 @@
     "bin",
     "docs",
     "examples",
-    "extensions",
     "desktop",
     "prompts",
     "skills",
@@ -50,17 +49,17 @@
     "tsconfig.json"
   ],
   "scripts": {
-    "check": "npm run check:cli-contract && npm run check:dashboard-readonly && npm run check:core-import-boundary && npm run check:core-docs && tsc -p tsconfig.json --noEmit",
+    "check": "npm run check:mcp-contract && npm run check:dashboard-readonly && npm run check:core-import-boundary && npm run check:core-docs && tsc -p tsconfig.json --noEmit",
     "check:style": "npm run lint && npm run format:check",
     "check:dashboard-readonly": "node scripts/check-dashboard-readonly.mjs",
-    "check:cli-contract": "node scripts/check-flow-cli-contract.mjs",
+    "check:mcp-contract": "node scripts/check-flow-mcp-contract.mjs",
     "check:core-import-boundary": "node scripts/check-core-import-boundary.mjs",
     "check:core-docs": "node scripts/check-core-docs.mjs",
     "lint": "eslint eslint.config.js",
     "lint:fix": "eslint --fix eslint.config.js",
     "format": "prettier --write \"package.json\" \"package-lock.json\" \".prettierrc\" \"eslint.config.js\"",
     "format:check": "prettier --check \"package.json\" \"package-lock.json\" \".prettierrc\" \"eslint.config.js\"",
-    "test": "npm run check:cli-contract && npm run check:dashboard-readonly && npm run check:core-import-boundary && npm run test:fast --",
+    "test": "npm run check:mcp-contract && npm run check:dashboard-readonly && npm run check:core-import-boundary && npm run test:fast --",
     "test:fast": "node --import tsx scripts/test-flow.mjs",
     "test:core": "npm run test:fast -- test/flow.test.ts",
     "test:autoflow": "npm run test:fast -- test/experimental/autoflow-runner.test.ts",
@@ -95,20 +94,9 @@
     "workflow",
     "coordination"
   ],
-  "pi": {
-    "extensions": [
-      "./extensions/flow.ts"
-    ],
-    "skills": [
-      "./skills"
-    ],
-    "prompts": [
-      "./prompts"
-    ]
-  },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.160",
-    "@earendil-works/pi-coding-agent": "^0.78.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "express": "^5.2.1",
     "kysely": "^0.29.2",
     "pathe": "^2.0.3",
@@ -116,6 +104,9 @@
     "typebox": "^1.1.39",
     "yaml": "^2.9.0",
     "zod": "^4.4.3"
+  },
+  "overrides": {
+    "form-data": "4.0.6"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

@@ -7,13 +7,13 @@ project under work, dogfood Flow rather than treating it as a passive codebase.
 
 ## Workflow Rules
 
-- Use registered `flow_*` tools when the host provides them.
-- If registered tools are unavailable, use the `flow` JSON CLI. Its stdout is
-  always JSON; do not request or add human-output modes.
+- Use registered `flow_*` MCP tools. If those tools are unavailable, stop and
+  report that Flow MCP is not connected; do not fall back to a removed command
+  protocol.
 - Core Flow commands are deterministic bookkeeping: issue create/select, workspace
   prepare/adopt, result/evidence/documentation/PR recording, and bounded state
   transitions. Use these directly.
-- For simple issue capture, use `flow createIssue` directly. Do not run intake
+- For simple issue capture, use `flow_issue_create` directly. Do not run intake
   review or semantic dedupe unless specifically needed.
 - Prepare a Flow workspace or adopt the current workspace through Flow before
   editing code.
@@ -28,9 +28,13 @@ project under work, dogfood Flow rather than treating it as a passive codebase.
 ## Repository Rules
 
 - Search before reading large files. Use `rg` and targeted line-range reads.
-- Keep durable behavior in `.flow/config.yaml`; use environment variables only
+- The repo's thin OKF knowledge projection lives in `.okf/`. Use it as a
+  navigation aid for stable repo contracts; canonical docs, code, tests, Flow
+  MCP state, and Flow-managed config remain the sources of truth. Use
+  `skills/okf-repo-projection` to refresh it.
+- Keep durable behavior in Flow-managed config; use environment variables only
   for process context and secrets.
-- Keep SDKs, CLIs, issue trackers, code review tools, and model providers behind
+- Keep SDKs, issue trackers, code review tools, and model providers behind
   plugin or adapter boundaries.
 - Work as the executor. Do not delegate implementation or review work to another
   agent or advisor process.

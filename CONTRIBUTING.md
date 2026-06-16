@@ -42,12 +42,12 @@ npm --version    # 10.x+
 ## Project Structure
 
 ```text
-.flow/config.yaml     Durable project configuration (topology, adapters, ledger)
-bin/                  CLI entry points (flow, flow-dashboard)
+Flow-managed config     Durable project configuration (topology, adapters, ledger)
+bin/                  MCP and dashboard entry points (flow, flow-dashboard)
 src/                  TypeScript source
   adapters/           Issue tracker and collaboration adapters
   config/             Config loading and schema
-  contracts/          JSON contract definitions
+  contracts/          Runtime contract definitions
   core/               Core runtime logic
   dashboard/          Dashboard UI (React)
   engine/             Workflow engine
@@ -88,7 +88,7 @@ npm run check
 ```
 
 This runs:
-- `check:cli-contract` — validates the Flow CLI JSON contract
+- `check:mcp-contract` — validates the Flow MCP tool contract
 - `check:dashboard-readonly` — ensures the dashboard stays read-only
 - `tsc --noEmit` — TypeScript type checking
 
@@ -105,14 +105,14 @@ npm test
 Smoke tests verify end-to-end behavior of each surface:
 
 ```bash
-npm run smoke:flow       # CLI smoke test
+npm run smoke:flow       # MCP smoke test
 npm run smoke:dashboard  # Dashboard smoke test
 npm run smoke:desktop    # Desktop app smoke test
 ```
 
 ### Starting Services
 
-Run the Flow CLI and dashboard together:
+Run Flow MCP and the dashboard together:
 
 ```bash
 npm run start:all         # Start both services
@@ -122,7 +122,7 @@ npm run start:all:watch   # Start with file watching (auto-reload)
 Or start them individually:
 
 ```bash
-npm run start      # Flow CLI only
+npm run start      # Flow MCP only
 npm run dashboard   # Dashboard only
 ```
 
@@ -146,7 +146,7 @@ npm run package:desktop:linux   # Linux (AppImage)
 
 ## Configuration
 
-Flow uses `.flow/config.yaml` for durable configuration. This file controls:
+Flow uses Flow-managed config for durable configuration. This file controls:
 
 - **Project topology** — repos, branch patterns, PR URLs
 - **Issue tracker** — GitHub owner/repo/assignee
@@ -154,7 +154,7 @@ Flow uses `.flow/config.yaml` for durable configuration. This file controls:
 - **Source control** — Git adapter
 - **Ledger** — workflow state storage
 
-Keep host-specific behavior in `.flow/config.yaml` when possible. Reusable
+Keep host-specific behavior in Flow-managed config when possible. Reusable
 runtime behavior belongs in `src/`.
 
 Environment variables are only for process context, local launch mechanics, and
@@ -197,8 +197,8 @@ Examples:
 - The project uses ES modules (`"type": "module"` in package.json).
 - Node.js `ES2022` target with `NodeNext` module resolution.
 - Keep the dashboard read-only — it mirrors state, it does not mutate it.
-- CLI output is always JSON; do not add human-readable output modes or `--json`
-  toggles.
+- `flow` is a stdio MCP server; do not add command-style JSON bodies,
+  human-readable output modes, or `--json` toggles.
 
 ## Releasing
 

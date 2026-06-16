@@ -5,10 +5,11 @@ import { fileURLToPath } from "node:url";
 
 const flowRoot = join(fileURLToPath(new URL("..", import.meta.url)));
 
-// Core CLI modules that must not import experimental orchestration code.
+// Core MCP modules that must not import experimental orchestration code.
 const coreModules = [
   "src/flow.ts",
-  "src/json-cli.ts",
+  "src/mcp-server.ts",
+  "src/mcp-project-registry.ts",
   "src/flow-runtime.ts",
   "src/work-runtime.ts",
   "src/contracts.ts",
@@ -17,7 +18,7 @@ const coreModules = [
   "src/config/config-loader.ts",
   "src/runtime-factory.ts",
   "src/dispatch-validators.ts",
-  "src/cli-issue.ts",
+  "src/issue-resolver.ts",
 ];
 
 // Experimental orchestration modules that core must not depend on.
