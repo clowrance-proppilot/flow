@@ -3,6 +3,7 @@ import { GhGitHubAdapter, GhGitHubIssueTrackerAdapter } from "./adapters/github.
 import { LinearIssueTrackerAdapter } from "./adapters/linear.js";
 import { LocalIssueTrackerAdapter, NoopCodeCollaborationAdapter } from "./adapters/local.js";
 import { NotionAdapter } from "./adapters/notion.js";
+import { HostMediatedIssueTrackerAdapter } from "./adapters/host-mediated.js";
 import type { CodeCollaborationProvider, IssueTrackerProvider } from "./adapters/provider-contracts.js";
 import type { FlowConfig } from "./config/config-schema.js";
 import { configToProjectTopology, configToWorkTypeRegistry } from "./config/config-loader.js";
@@ -148,9 +149,11 @@ function createIssueTracker(projectRoot: string, flowConfig: FlowConfig | undefi
     });
   }
   if (type === "linear") {
-    const apiKey = configString(issueTracker, "apiKey");
+    const apiKey = configString(issueTracker, "apiKey") ?? process.env.LINEAR_API_KEY;
     const teamId = configString(issueTracker, "teamId");
-    if (!apiKey) throw new Error("issueTracker.apiKey is required when issueTracker.type is linear.");
+    if (!apiKey) {
+      throw new Error("Linear API key is required. Set issueTracker.apiKey in Flow-managed config or LINEAR_API_KEY environment variable.");
+    }
     if (!teamId) throw new Error("issueTracker.teamId is required when issueTracker.type is linear.");
     return new LinearIssueTrackerAdapter({
       apiKey,
@@ -179,6 +182,9 @@ function createIssueTracker(projectRoot: string, flowConfig: FlowConfig | undefi
         type: configString(propertyMapping, "type"),
       } : undefined,
     });
+  }
+  if (type === "host-mediated") {
+    return new HostMediatedIssueTrackerAdapter(configString(issueTracker, "binding") ?? "host");
   }
   return new AcliJiraAdapter({
     cwd: projectRoot,

@@ -4,6 +4,7 @@ import * as z from "zod/v4";
 
 import { GhGitHubAdapter } from "./adapters/github.js";
 import { bootstrapFlowConfig, loadFlowConfig, migrateFlowConfig, updateFlowConfig, validateFlowConfig } from "./config/config-loader.js";
+import { resolveHostMediatedDirective } from "./config/host-mediated.js";
 import { terminalWorkerStatusValues, workerExecutorValues, type WorkerStatus } from "./contracts/executor.js";
 import type { AcceptanceCriterionEvidence, WorkItem } from "./contracts.js";
 import { flowConfigPath, flowLayout } from "./flow-layout.js";
@@ -286,6 +287,25 @@ function registerReadTools(server: McpServer, projectManager: FlowMcpProjectMana
   }, async ({ projectId, projectRoot }) => result(await withProject(projectManager, { projectId, projectRoot }, (context) =>
     explainConfig(context.projectRoot)
   )));
+
+  server.registerTool("flow_delegate", {
+    description: "Resolve the concrete host-mediated tool call for an issue-tracker operation (when issueTracker.type is \"host-mediated\"). Returns { binding, operation, tool, args }: invoke that MCP tool via your own connection, then report the result back with flow_record_* tools.",
+    inputSchema: {
+      ...projectReadScopeSchema,
+      operation: z.string().min(1).describe("view | fetchQueue | fetchBacklog | search | transition | comment | create | tag"),
+      ref: z.string().optional().describe("Issue ref, e.g. PRO-3378."),
+      status: z.string().optional().describe("Target normalized status; resolved to a provider state id via issueTracker.statusMap."),
+      body: z.string().optional(),
+      title: z.string().optional(),
+      description: z.string().optional(),
+      query: z.string().optional(),
+      limit: z.number().int().positive().optional(),
+    },
+    annotations: { readOnlyHint: true },
+  }, async ({ projectId, projectRoot, operation, ref, status, body, title, description, query, limit }) =>
+    result(await withProject(projectManager, { projectId, projectRoot }, async (context) =>
+      resolveHostMediatedDirective(context.flowConfig, operation, { ref, status, body, title, description, query, limit }),
+    )));
 
   server.registerTool("flow_config_migrate", {
     description: "Report or apply Flow config migration.",

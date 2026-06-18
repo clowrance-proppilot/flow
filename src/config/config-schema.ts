@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { workTypeCategorySchema } from "../contracts.js";
+import { validateHostMediatedTracker } from "./host-mediated.js";
 
 export const adapterSelectionConfigSchema = z.object({
   type: z.string().min(1),
@@ -175,14 +176,22 @@ export const flowConfigSchema = z.object({
     return;
   }
 
+  if (trackerType === "host-mediated") {
+    for (const issue of validateHostMediatedTracker(config.issueTracker)) {
+      ctx.addIssue({ code: "custom", path: ["issueTracker", ...issue.path], message: issue.message });
+    }
+    return;
+  }
+
   if (trackerType === "linear") {
     const apiKey = config.issueTracker?.apiKey;
     const teamId = config.issueTracker?.teamId;
-    if (typeof apiKey !== "string" || !apiKey.trim()) {
+    // apiKey can come from LINEAR_API_KEY env var, so only validate when provided in config
+    if (apiKey !== undefined && (typeof apiKey !== "string" || !apiKey.trim())) {
       ctx.addIssue({
         code: "custom",
         path: ["issueTracker", "apiKey"],
-        message: "issueTracker.apiKey is required when issueTracker.type is linear.",
+        message: "issueTracker.apiKey must be a non-empty string when provided.",
       });
     }
     if (typeof teamId !== "string" || !teamId.trim()) {

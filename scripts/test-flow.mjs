@@ -21,6 +21,7 @@ const defaultTestFiles = [
   "test/adapter-triage.test.ts",
   "test/linear-adapter.test.ts",
   "test/notion-adapter.test.ts",
+  "test/host-mediated.test.ts",
   "test/execution-plane.test.ts",
   "test/hatchet-execution.test.ts",
 ];
