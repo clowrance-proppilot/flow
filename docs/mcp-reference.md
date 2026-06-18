@@ -37,6 +37,7 @@ the default project registered at server startup. `flow_queue` and
 | `flow_config_migrate` | Report or apply config migration. |
 | `flow_ledger_verify` | Verify the configured workflow ledger. |
 | `flow_layout` | Read Flow file and directory layout. |
+| `flow_doctor` | Aggregate project health (session hygiene, worktree, config, ledger) as findings with severities and suggested fixes. |
 
 ## Issue And Workspace
 

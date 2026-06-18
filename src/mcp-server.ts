@@ -9,6 +9,8 @@ import { terminalWorkerStatusValues, workerExecutorValues, type WorkerStatus } f
 import type { AcceptanceCriterionEvidence, WorkItem } from "./contracts.js";
 import { flowConfigPath, flowLayout } from "./flow-layout.js";
 import { repoRoot as defaultRepoRoot } from "./flow-runtime.js";
+import { runFlowDoctor } from "./health.js";
+import type { FlowStoreBackend } from "./store.js";
 import { FlowMcpProjectRegistry, type FlowMcpProjectRecord } from "./mcp-project-registry.js";
 import { resolveFlowIssue } from "./issue-resolver.js";
 import { createConfiguredWorkRuntime } from "./runtime-factory.js";
@@ -29,6 +31,8 @@ interface FlowMcpContext {
   runtime: FlowWorkRuntime;
   workflowLedger: ConfiguredRuntime["workflowLedger"];
   workflowLedgerPath: string;
+  runtimeStorePath: string;
+  runtimeStoreBackend: FlowStoreBackend;
   flowConfig: ConfiguredRuntime["flowConfig"];
 }
 
@@ -159,6 +163,8 @@ async function createFlowMcpContext(options: FlowMcpServerOptions): Promise<Flow
     runtime: configuredRuntime.runtime,
     workflowLedger: configuredRuntime.workflowLedger,
     workflowLedgerPath: configuredRuntime.workflowLedgerPath,
+    runtimeStorePath: configuredRuntime.runtimeStorePath,
+    runtimeStoreBackend: configuredRuntime.runtimeStoreBackend,
     flowConfig: configuredRuntime.flowConfig,
   };
 }
@@ -342,6 +348,22 @@ function registerReadTools(server: McpServer, projectManager: FlowMcpProjectMana
     inputSchema: {},
     annotations: { readOnlyHint: true },
   }, async () => result(flowLayout));
+
+  server.registerTool("flow_doctor", {
+    description: "Aggregate project health: session hygiene (issue-collision sessions, bare/default session ids), worktree health (dirty or orphaned worktrees), and config + ledger checks. Returns structured findings, each with a severity and a suggested fix.",
+    inputSchema: projectScopeSchema,
+    annotations: { readOnlyHint: true },
+  }, async ({ projectId, projectRoot }) => result(await withProject(projectManager, { projectId, projectRoot }, (context) =>
+    runFlowDoctor({
+      projectRoot: context.projectRoot,
+      flowConfig: context.flowConfig,
+      runtimeStorePath: context.runtimeStorePath,
+      runtimeStoreBackend: context.runtimeStoreBackend,
+      workflowLedger: context.workflowLedger,
+      workflowLedgerPath: context.workflowLedgerPath,
+      defaultSessionId: context.defaultSessionId,
+    })
+  )));
 }
 
 function registerIssueTools(server: McpServer, projectManager: FlowMcpProjectManager): void {
