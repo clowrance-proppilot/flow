@@ -163,6 +163,8 @@ export interface CreateIssueInput {
   title?: string;
   summary: string;
   description?: string;
+  /** Optional external ref to key the issue by (e.g. "PRO-3373") instead of minting a new one. */
+  ref?: string;
 }
 
 export interface IssueTrackerProvider {

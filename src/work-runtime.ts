@@ -169,6 +169,7 @@ export interface JiraInspector {
     title?: string;
     summary: string;
     description?: string;
+    ref?: string;
   }): Promise<JiraIssue>;
 }
 
@@ -264,6 +265,8 @@ export interface CreateIssueOptions {
   description?: string;
   repoKeys?: string[];
   select?: boolean;
+  /** Optional external ref to key the issue by (e.g. "PRO-3373") instead of minting a new one. */
+  ref?: string;
 }
 
 /** @deprecated Use CreateIssueOptions for provider-neutral issue creation. */
@@ -847,6 +850,7 @@ export class FlowWorkRuntime {
     title?: string;
     summary: string;
     description?: string;
+    ref?: string;
   } {
     const createInput: {
       projectKey?: string;
@@ -854,6 +858,7 @@ export class FlowWorkRuntime {
       title?: string;
       summary: string;
       description?: string;
+      ref?: string;
     } = {
       projectKey: options.projectKey ?? this.defaultJiraProjectKey,
       issueType,
@@ -861,6 +866,7 @@ export class FlowWorkRuntime {
       description: options.description?.trim(),
     };
     if (options.title?.trim()) createInput.title = options.title.trim();
+    if (options.ref?.trim()) createInput.ref = options.ref.trim();
     return createInput;
   }
 
@@ -873,6 +879,7 @@ export class FlowWorkRuntime {
       title?: string;
       summary: string;
       description?: string;
+      ref?: string;
     },
   ): Promise<WorkItem> {
     const session = await this.requireSession(sessionId);

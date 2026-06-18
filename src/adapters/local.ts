@@ -90,7 +90,7 @@ export class LocalIssueTrackerAdapter implements IssueTrackerProvider {
   }
 
   async createIssue(input: CreateIssueInput): Promise<UnifiedIssue> {
-    const ref = await this.nextIssueRef();
+    const ref = input.ref?.trim() ? normalizeIssueRef(input.ref) : await this.nextIssueRef();
     return {
       ref,
       title: input.title?.trim() || input.summary,
