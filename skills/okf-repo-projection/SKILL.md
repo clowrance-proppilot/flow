@@ -81,6 +81,17 @@ The repo's thin OKF knowledge projection lives in `.okf/`. Use it as a navigatio
 7. Add or refresh the repo-local agent instruction pointer when appropriate.
 8. Run the validator:
 
+If registered Flow MCP tools are available, prefer the MCP lifecycle surface:
+
+```text
+flow_okf_list
+flow_okf_validate
+flow_okf_status
+flow_okf_record_disposition
+```
+
+Use the script directly when Flow MCP is unavailable or when validating outside a Flow project:
+
 ```bash
 python skills/okf-repo-projection/scripts/validate_okf.py .okf
 ```

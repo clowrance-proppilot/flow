@@ -93,6 +93,13 @@ Use `flow_config_update` with a schema-validated patch:
 - `sourceControl.type`: currently `git`.
 - `ledger.type`: `sql` for SQLite/Postgres state or `flow` for the unified
   SQLite state backend.
+- `knowledge.okfBundles`: optional list of OKF bundles whose lifecycle Flow
+  should track.
+- `knowledge.okfBundles[].id`: stable bundle id used by `flow_okf_*` tools.
+- `knowledge.okfBundles[].path`: bundle path, relative to the project root unless
+  absolute.
+- `knowledge.okfBundles[].description`: optional human description.
+- `knowledge.okfBundles[].owner`: optional owning team, repo, or source.
 - `runtime.store.type`: `sqlite` or `file`.
 - `runtime.agentSession.provider`: `claude`.
 - `runtime.dashboard.host`, `runtime.dashboard.port`, `runtime.dashboard.url`:
@@ -145,6 +152,24 @@ Configure dashboard port:
         "port": 8767,
         "url": "http://127.0.0.1:8767"
       }
+    }
+  }
+}
+```
+
+Configure OKF bundle lifecycle tracking:
+
+```json
+{
+  "patch": {
+    "knowledge": {
+      "okfBundles": [
+        {
+          "id": "repo",
+          "path": ".okf",
+          "description": "Repo-local OKF projection"
+        }
+      ]
     }
   }
 }

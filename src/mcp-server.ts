@@ -12,6 +12,7 @@ import { repoRoot as defaultRepoRoot } from "./flow-runtime.js";
 import { FlowMcpProjectRegistry, type FlowMcpProjectRecord } from "./mcp-project-registry.js";
 import { resolveFlowIssue } from "./issue-resolver.js";
 import { createConfiguredWorkRuntime } from "./runtime-factory.js";
+import { listOkfBundles, okfStatus, resolveOkfBundle, validateOkfBundle } from "./okf.js";
 import type { FlowWorkRuntime } from "./work-runtime.js";
 
 export interface FlowMcpServerOptions {
@@ -47,6 +48,7 @@ const issueTypeSchema = z.enum(["Bug", "Task", "Story"]);
 const branchKindSchema = z.enum(["bug", "feature"]);
 const workerStatusSchema = z.enum(terminalWorkerStatusValues);
 const workerExecutorSchema = z.enum(workerExecutorValues);
+const okfKnowledgeDispositionSchema = z.enum(["updated", "not_needed", "needed", "drift_recorded", "validated"]);
 
 export async function createFlowMcpServer(options: FlowMcpServerOptions = {}): Promise<McpServer> {
   const projectManager = new FlowMcpProjectManager(options);
@@ -59,6 +61,7 @@ export async function createFlowMcpServer(options: FlowMcpServerOptions = {}): P
   registerWorkflowTools(server, projectManager);
   registerReviewTools(server, projectManager);
   registerWorkJobTools(server, projectManager);
+  registerKnowledgeTools(server, projectManager);
 
   return server;
 }
@@ -861,6 +864,62 @@ function registerWorkJobTools(server: McpServer, projectManager: FlowMcpProjectM
   )));
 }
 
+function registerKnowledgeTools(server: McpServer, projectManager: FlowMcpProjectManager): void {
+  server.registerTool("flow_okf_list", {
+    description: "List OKF bundles configured or detected for a Flow project.",
+    inputSchema: projectReadScopeSchema,
+    annotations: { readOnlyHint: true },
+  }, async (input) => result(await readProjectOkf(projectManager, input, async (context) => ({
+    bundles: listOkfBundles(context.projectRoot, context.flowConfig),
+  }))));
+
+  server.registerTool("flow_okf_status", {
+    description: "Validate configured or detected OKF bundles and summarize knowledge health.",
+    inputSchema: projectReadScopeSchema,
+    annotations: { readOnlyHint: true },
+  }, async (input) => result(await readProjectOkf(projectManager, input, (context) =>
+    okfStatus(context.projectRoot, context.flowConfig)
+  )));
+
+  server.registerTool("flow_okf_validate", {
+    description: "Validate one OKF bundle against hard OKF conformance rules.",
+    inputSchema: {
+      ...projectScopeSchema,
+      bundleId: z.string().min(1).optional(),
+      path: z.string().min(1).optional(),
+    },
+    annotations: { readOnlyHint: true },
+  }, async ({ projectId, projectRoot, bundleId, path }) => result(await withProject(projectManager, { projectId, projectRoot }, async (context) => {
+    const bundle = resolveOkfBundle(context.projectRoot, context.flowConfig, { bundleId, path });
+    return validateOkfBundle(bundle);
+  })));
+
+  server.registerTool("flow_okf_record_disposition", {
+    description: "Record OKF or knowledge lifecycle disposition for an issue.",
+    inputSchema: {
+      ...optionalSessionSchema,
+      ...projectScopeSchema,
+      id: issueRefSchema,
+      disposition: okfKnowledgeDispositionSchema,
+      summary: z.string().min(1),
+      bundleId: z.string().min(1).optional(),
+      concept: z.string().min(1).optional(),
+      source: z.string().min(1).optional(),
+    },
+  }, async ({ sessionId, projectId, projectRoot, id, disposition, summary, bundleId, concept, source }) => result(await withProject(projectManager, { projectId, projectRoot }, (context) =>
+    selectThen(context, sessionId, id, (activeSessionId) =>
+      context.runtime.recordKnowledgeDisposition(activeSessionId, {
+        issueRef: id,
+        disposition,
+        summary,
+        bundleId,
+        concept,
+        source,
+      })
+    )
+  )));
+}
+
 async function withSession<T>(
   context: FlowMcpContext,
   sessionId: string | undefined,
@@ -908,6 +967,30 @@ async function readProjectWorkItems(
   }
   const { context } = await projectManager.resolveProject(input);
   return read(context, limit);
+}
+
+async function readProjectOkf<T extends object>(
+  projectManager: FlowMcpProjectManager,
+  input: ProjectScopedInput & { allProjects?: boolean },
+  read: (context: FlowMcpContext) => Promise<T>,
+): Promise<T | { projects: Array<{ project: FlowMcpProjectRecord; value: T }>; value: Array<T & { projectId: string; projectRoot: string; projectName: string }> }> {
+  if (input.allProjects === true) {
+    const projects = await Promise.all((await projectManager.projectContexts()).map(async ({ project, context }) => ({
+      project,
+      value: await read(context),
+    })));
+    return {
+      projects,
+      value: projects.map(({ project, value }) => ({
+        ...value,
+        projectId: project.id,
+        projectRoot: project.root,
+        projectName: project.name,
+      })),
+    };
+  }
+  const { context } = await projectManager.resolveProject(input);
+  return read(context);
 }
 
 async function selectThen<T>(
@@ -1001,6 +1084,16 @@ async function explainConfig(projectRoot: string, configPath?: string) {
         collaboration: config.collaboration?.type,
         sourceControl: config.sourceControl?.type,
         ledger: config.ledger?.type,
+      }
+      : undefined,
+    knowledge: config?.knowledge
+      ? {
+        okfBundles: config.knowledge.okfBundles.map((bundle) => ({
+          id: bundle.id,
+          path: bundle.path,
+          description: bundle.description,
+          owner: bundle.owner,
+        })),
       }
       : undefined,
     runtime: config?.runtime

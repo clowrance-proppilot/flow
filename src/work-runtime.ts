@@ -15,6 +15,7 @@ import {
   type WorkerTaskResult,
   type DocumentationRecord,
   type EvidenceRecord,
+  type KnowledgeRecord,
   type ReadinessFinding,
   type InvestigationDisposition,
   type InvestigationRecord,
@@ -3094,6 +3095,45 @@ export class FlowWorkRuntime {
     return updated;
   }
 
+  async recordKnowledgeDisposition(sessionId: string, record: Omit<KnowledgeRecord, "recordedAt" | "kind">): Promise<WorkItem> {
+    await this.requireSession(sessionId);
+    const issue = await this.reconcileIssue(sessionId, record.issueRef);
+    const recordedAt = nowIso();
+    const documentationDisposition = documentationDispositionForKnowledge(record.disposition);
+    const fullRecord: KnowledgeRecord = {
+      ...record,
+      kind: "okf",
+      recordedAt,
+    };
+    const updated = await this.ledger.writeIssue({
+      ...issue,
+      metadata: {
+        ...issue.metadata,
+        documentationRecorded: true,
+        documentationDisposition,
+        documentationSummary: record.summary,
+        documentationRecordedAt: recordedAt,
+        knowledgeRecorded: true,
+        knowledgeKind: "okf",
+        knowledgeDisposition: record.disposition,
+        knowledgeSummary: record.summary,
+        knowledgeBundleId: record.bundleId,
+        knowledgeConcept: record.concept,
+        knowledgeSource: record.source,
+        knowledgeRecordedAt: recordedAt,
+        "workflow.knowledge.status": "recorded",
+      },
+    });
+    await this.store.appendEvent({
+      sessionId,
+      type: "knowledge.recorded",
+      issueRef: issue.ref,
+      message: record.summary,
+      payload: { record: fullRecord },
+    });
+    return updated;
+  }
+
   async openPullRequest(
     sessionId: string,
     options: {
@@ -3934,8 +3974,15 @@ function hasRecordedDocumentation(issue: WorkItem): boolean {
   if (metadata.documentationRecorded === true) return true;
   if (typeof metadata.documentationRecorded === "string" && metadata.documentationRecorded.toLowerCase() === "true") return true;
   if (metadata["workflow.documentation.status"] === "recorded") return true;
+  if (metadata["workflow.knowledge.status"] === "recorded") return true;
   if (typeof metadata.documentationDisposition === "string" && metadata.documentationDisposition.length > 0) return true;
   return false;
+}
+
+function documentationDispositionForKnowledge(disposition: string): DocumentationRecord["disposition"] {
+  if (disposition === "updated") return "updated";
+  if (disposition === "not_needed" || disposition === "validated") return "not_needed";
+  return "needed";
 }
 
 function issueTrackerCanPostComments(

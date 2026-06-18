@@ -217,6 +217,7 @@ async function withFlowMcp<T>(
   options: { env?: Record<string, string> } = {},
 ): Promise<T> {
   const env = { ...(options.env ?? mcpEnv()) };
+  env.FLOW_ROOT ??= cwd;
   env.FLOW_MCP_PROJECTS_PATH ??= join(cwd, ".flow-test", "mcp-projects.json");
   const client = new Client({ name: "flow-test-client", version: "1.0.0" });
   const transport = new StdioClientTransport({
@@ -1167,6 +1168,138 @@ test("Flow MCP can record evidence and documentation in one workflow call", asyn
   });
 });
 
+test("Flow MCP detects and validates repo-local OKF bundles", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-okf-detected-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  await mkdir(join(root, ".okf", "concepts"), { recursive: true });
+  await writeFile(join(root, ".okf", "index.md"), [
+    "---",
+    'okf_version: "0.1"',
+    "---",
+    "",
+    "# Test OKF",
+    "",
+    "- [Concept](concepts/example.md)",
+    "",
+  ].join("\n"));
+  await writeFile(join(root, ".okf", "concepts", "example.md"), [
+    "---",
+    "type: Concept",
+    "title: Example",
+    "---",
+    "",
+    "# Example",
+    "",
+  ].join("\n"));
+
+  await withFlowMcp(root, async (client) => {
+    await callFlowTool(client, "flow_bootstrap", {});
+
+    const list = await callFlowTool(client, "flow_okf_list", {}) as {
+      bundles: Array<{ id: string; path: string; source: string; exists: boolean }>;
+    };
+    assert.deepEqual(list.bundles.map((bundle) => bundle.id), ["default"]);
+    assert.equal(list.bundles[0]?.path, ".okf");
+    assert.equal(list.bundles[0]?.source, "detected");
+    assert.equal(list.bundles[0]?.exists, true);
+
+    const validation = await callFlowTool(client, "flow_okf_validate", {}) as {
+      ok: boolean;
+      status: string;
+      fileCount: number;
+      conceptCount: number;
+      errors: unknown[];
+      warnings: unknown[];
+    };
+    assert.equal(validation.ok, true);
+    assert.equal(validation.status, "valid");
+    assert.equal(validation.fileCount, 2);
+    assert.equal(validation.conceptCount, 1);
+    assert.deepEqual(validation.errors, []);
+    assert.deepEqual(validation.warnings, []);
+
+    const status = await callFlowTool(client, "flow_okf_status", {}) as {
+      ok: boolean;
+      bundles: Array<{ bundle: { id: string }; ok: boolean }>;
+    };
+    assert.equal(status.ok, true);
+    assert.deepEqual(status.bundles.map((bundle) => [bundle.bundle.id, bundle.ok]), [["default", true]]);
+  });
+});
+
+test("Flow MCP validates configured OKF bundles and reports warnings", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-okf-configured-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+  await mkdir(join(root, "knowledge"), { recursive: true });
+  await writeFile(join(root, "knowledge", "index.md"), "# Knowledge\n\n- [Missing](missing.md)\n");
+  await writeFile(join(root, "knowledge", "service.md"), [
+    "---",
+    "type: Service",
+    "title: Service",
+    "---",
+    "",
+    "# Service",
+    "",
+  ].join("\n"));
+
+  await withFlowMcp(root, async (client) => {
+    await callFlowTool(client, "flow_bootstrap", {});
+    await callFlowTool(client, "flow_config_update", {
+      patch: {
+        knowledge: {
+          okfBundles: [
+            { id: "project", path: "knowledge", description: "Project OKF" },
+          ],
+        },
+      },
+    });
+
+    const list = await callFlowTool(client, "flow_okf_list", {}) as {
+      bundles: Array<{ id: string; path: string; source: string; description?: string }>;
+    };
+    assert.deepEqual(list.bundles.map((bundle) => bundle.id), ["project"]);
+    assert.equal(list.bundles[0]?.path, "knowledge");
+    assert.equal(list.bundles[0]?.source, "configured");
+    assert.equal(list.bundles[0]?.description, "Project OKF");
+
+    const validation = await callFlowTool(client, "flow_okf_validate", { bundleId: "project" }) as {
+      ok: boolean;
+      warnings: Array<{ path: string; message: string }>;
+    };
+    assert.equal(validation.ok, true);
+    assert.equal(validation.warnings.length, 1);
+    assert.equal(validation.warnings[0]?.path, "index.md");
+    assert.match(validation.warnings[0]?.message ?? "", /missing\.md/);
+  });
+});
+
+test("Flow MCP records OKF knowledge disposition for an issue", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flow-okf-disposition-"));
+  await execFileAsync("git", ["init"], { cwd: root });
+
+  await withFlowMcp(root, async (client) => {
+    await callFlowTool(client, "flow_bootstrap", {});
+    const issue = await createReviewedLocalIssue(client, "Record OKF disposition");
+
+    const updated = await callFlowTool(client, "flow_okf_record_disposition", {
+      id: issue.ref,
+      disposition: "drift_recorded",
+      summary: "OKF drift found; follow-up needed.",
+      bundleId: "project",
+      concept: "services/flow",
+      source: "flow_okf_status",
+    }) as WorkItem;
+
+    assert.equal(updated.metadata.knowledgeRecorded, true);
+    assert.equal(updated.metadata.knowledgeDisposition, "drift_recorded");
+    assert.equal(updated.metadata.knowledgeBundleId, "project");
+    assert.equal(updated.metadata.knowledgeConcept, "services/flow");
+    assert.equal(updated.metadata.documentationRecorded, true);
+    assert.equal(updated.metadata.documentationDisposition, "needed");
+    assert.equal(updated.metadata["workflow.knowledge.status"], "recorded");
+  });
+});
+
 test("Flow MCP recordResult and observe return next MCP tool suggestions", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-mcp-next-tools-"));
   await execFileAsync("git", ["init"], { cwd: root });
@@ -1341,6 +1474,10 @@ test("Flow MCP tool discovery exposes core workflow tools only", async () => {
     assert.ok(names.includes("flow_review_code_review"));
     assert.ok(names.includes("flow_workflow_advance"));
     assert.ok(names.includes("flow_workflow_audit"));
+    assert.ok(names.includes("flow_okf_list"));
+    assert.ok(names.includes("flow_okf_validate"));
+    assert.ok(names.includes("flow_okf_status"));
+    assert.ok(names.includes("flow_okf_record_disposition"));
     assert.ok(!names.includes("flow_autoflow"));
     assert.ok(!names.includes("flow_runtime"));
   });

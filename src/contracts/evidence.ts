@@ -69,3 +69,18 @@ export const documentationRecordSchema = z.object({
   recordedAt: z.string().datetime(),
 });
 export type DocumentationRecord = z.infer<typeof documentationRecordSchema>;
+
+export const knowledgeDispositionSchema = z.enum(["updated", "not_needed", "needed", "drift_recorded", "validated"]);
+export type KnowledgeDisposition = z.infer<typeof knowledgeDispositionSchema>;
+
+export const knowledgeRecordSchema = z.object({
+  issueRef: z.string().min(1),
+  kind: z.literal("okf").default("okf"),
+  disposition: knowledgeDispositionSchema,
+  summary: z.string().min(1),
+  bundleId: z.string().min(1).optional(),
+  concept: z.string().min(1).optional(),
+  source: z.string().min(1).optional(),
+  recordedAt: z.string().datetime(),
+});
+export type KnowledgeRecord = z.infer<typeof knowledgeRecordSchema>;

@@ -52,6 +52,17 @@ export const executorConfigSchema = z.object({
   outputs: z.array(z.string().min(1)).default([]),
 });
 
+export const okfBundleConfigSchema = z.object({
+  id: z.string().min(1),
+  path: z.string().min(1),
+  description: z.string().min(1).optional(),
+  owner: z.string().min(1).optional(),
+}).catchall(z.unknown());
+
+export const knowledgeConfigSchema = z.object({
+  okfBundles: z.array(okfBundleConfigSchema).default([]),
+}).catchall(z.unknown());
+
 export const serviceEndpointConfigSchema = z.object({
   host: z.string().min(1).optional(),
   port: z.number().int().positive().optional(),
@@ -100,6 +111,7 @@ export const flowConfigSchema = z.object({
   collaboration: adapterSelectionConfigSchema.optional(),
   sourceControl: adapterSelectionConfigSchema.optional(),
   ledger: adapterSelectionConfigSchema.optional(),
+  knowledge: knowledgeConfigSchema.optional(),
   runtime: runtimeConfigSchema.optional(),
   workTypes: z.array(workTypeConfigSchema).optional(),
   executors: z.array(executorConfigSchema).optional(),

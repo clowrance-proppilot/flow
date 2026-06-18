@@ -77,6 +77,20 @@ Record completion evidence:
 - Call `flow_record_evidence` with verification summary and criteria.
 - Call `flow_record_documentation` with documentation disposition.
 
+## Knowledge And OKF
+
+| Tool | Purpose |
+| --- | --- |
+| `flow_okf_list` | List configured or detected OKF bundles. |
+| `flow_okf_status` | Validate all configured or detected OKF bundles and summarize knowledge health. |
+| `flow_okf_validate` | Validate one OKF bundle against hard conformance rules. |
+| `flow_okf_record_disposition` | Record OKF/knowledge lifecycle disposition for an issue. |
+
+Flow treats OKF as source-controlled knowledge, not as Flow-owned document
+storage. The OKF MCP tools manage lifecycle state around bundles: discovery,
+validation status, drift disposition, and closeout evidence. Authoring judgment
+still belongs in agent skills and repo instructions.
+
 ## Review And Work Jobs
 
 | Tool | Purpose |

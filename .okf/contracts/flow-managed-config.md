@@ -7,7 +7,7 @@ tags: [config, topology, mcp]
 
 # Contract
 
-Flow-managed config is the durable source of truth for topology, adapter selection, execution policy, dashboard settings, runtime store, and ledger selection.
+Flow-managed config is the durable source of truth for topology, adapter selection, execution policy, dashboard settings, runtime store, ledger selection, and registered knowledge lifecycle inputs such as OKF bundles.
 
 Agents initialize and update config through MCP tools such as `flow_bootstrap`, `flow_config_get`, `flow_config_update`, `flow_config_validate`, and `flow_config_explain`. Environment variables are acceptable for process context, launch mechanics, and secret injection, but they should not become the durable selector for topology, providers, ports, ledgers, or executor policy.
 

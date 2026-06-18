@@ -7,9 +7,11 @@ tags: [mcp, surface, agents]
 
 # Contract
 
-`flow` starts a stdio MCP server. Hosts should discover and call explicit `flow_*` tools for project registration, issue state, workspace preparation, workflow advancement, evidence, results, documentation, and pull request records.
+`flow` starts a stdio MCP server. Hosts should discover and call explicit `flow_*` tools for project registration, issue state, workspace preparation, workflow advancement, evidence, results, documentation, OKF lifecycle checks, and pull request records.
 
 Flow does not accept JSON command bodies through argv or stdin, and it does not expose a raw runtime-method bridge. If a bookkeeping operation needs to be external, it should be represented as a typed MCP tool.
+
+OKF authoring guidance remains in `skills/okf-repo-projection/`; deterministic lifecycle operations such as listing bundles, validating conformance, reading bundle status, and recording OKF disposition are represented as typed MCP tools.
 
 Related concepts: [Flow-Managed Config](/contracts/flow-managed-config.md), [Agent Bookkeeping](/workflows/agent-bookkeeping.md).
 
