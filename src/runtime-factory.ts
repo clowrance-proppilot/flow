@@ -26,6 +26,7 @@ export interface ConfiguredWorkRuntime {
   issueTracker: IssueTrackerProvider;
   collaboration: CodeCollaborationProvider;
   runtimeStorePath: string;
+  runtimeStoreBackend: FlowStoreBackend;
   workflowLedgerPath: string;
 }
 
@@ -35,8 +36,9 @@ export function createConfiguredWorkRuntime(options: ConfiguredWorkRuntimeOption
   const issueTracker = createIssueTracker(projectRoot, flowConfig, workflowLedger);
   const collaboration = createCollaboration(projectRoot, flowConfig);
   const runtimeStorePath = resolveRuntimeStorePath(projectRoot, flowConfig);
+  const runtimeStoreBackend = resolveRuntimeStoreBackend(flowConfig);
   const runtime = new FlowWorkRuntime({
-    store: createFlowStore({ root: runtimeStorePath, backend: resolveRuntimeStoreBackend(flowConfig) }),
+    store: createFlowStore({ root: runtimeStorePath, backend: runtimeStoreBackend }),
     ledger: workflowLedger,
     collaboration,
     issueTracker,
@@ -60,6 +62,7 @@ export function createConfiguredWorkRuntime(options: ConfiguredWorkRuntimeOption
     issueTracker,
     collaboration,
     runtimeStorePath,
+    runtimeStoreBackend,
     workflowLedgerPath,
   };
 }
