@@ -426,21 +426,27 @@ function registerIssueTools(server: McpServer, projectManager: FlowMcpProjectMan
 
   server.registerTool("flow_issue_create", {
     description: "Create tracked work through the configured issue tracker.",
-    inputSchema: createIssueInputSchema(),
-  }, async (input) => result(await withProject(projectManager, input, (context) =>
-    withSession(context, input.sessionId, (activeSessionId) =>
-      context.runtime.createIssue(activeSessionId, {
-        projectKey: input.projectKey,
-        issueType: input.issueType ?? "Bug",
-        branchKind: input.branchKind,
-        title: input.title,
-        summary: input.summary,
-        description: input.description,
-        repoKeys: input.repoKeys,
-        select: input.select,
-      })
-    )
-  )));
+    inputSchema: createIssueInputSchema({
+      ref: z.string().min(1).optional(),
+    }),
+  }, async (rawInput) => {
+    const input = rawInput as IssueCreateToolInput & { ref?: string };
+    return result(await withProject(projectManager, input, (context) =>
+      withSession(context, input.sessionId, (activeSessionId) =>
+        context.runtime.createIssue(activeSessionId, {
+          projectKey: input.projectKey,
+          issueType: input.issueType ?? "Bug",
+          branchKind: input.branchKind,
+          title: input.title,
+          summary: input.summary,
+          description: input.description,
+          repoKeys: input.repoKeys,
+          select: input.select,
+          ref: input.ref,
+        })
+      )
+    ));
+  });
 
   server.registerTool("flow_issue_route", {
     description: "Record the repos an issue should touch.",
