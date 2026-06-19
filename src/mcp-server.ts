@@ -12,8 +12,20 @@ import { repoRoot as defaultRepoRoot } from "./flow-runtime.js";
 import { FlowMcpProjectRegistry, type FlowMcpProjectRecord } from "./mcp-project-registry.js";
 import { resolveFlowIssue } from "./issue-resolver.js";
 import { createConfiguredWorkRuntime } from "./runtime-factory.js";
+import { createId } from "./contracts/common.js";
 import { listOkfBundles, okfStatus, resolveOkfBundle, validateOkfBundle } from "./okf.js";
 import type { FlowWorkRuntime } from "./work-runtime.js";
+
+// Per-process fallback session id. The transport is stdio (one client per
+// process — one Flow MCP server per Claude Code session), so historically every
+// process fell back to the same literal "mcp" session id and collided on a
+// single shared session row in the project store: concurrent sessions working
+// different issues clobbered each other's selectedIssueRef / selectedRepoKey /
+// pendingConfirmation. Generating a unique id once per process isolates each
+// session by default. Explicit per-call sessionId and a configured
+// runtime.defaultSessionId still take precedence (see createFlowMcpContext), so
+// operators who want a stable shared id can still set one.
+const PROCESS_FALLBACK_SESSION_ID = createId("mcp");
 
 export interface FlowMcpServerOptions {
   projectRoot?: string;
@@ -155,7 +167,7 @@ async function createFlowMcpContext(options: FlowMcpServerOptions): Promise<Flow
     projectRoot,
     defaultSessionId: options.defaultSessionId
       ?? configString(configValidation.config?.runtime, "defaultSessionId")
-      ?? "mcp",
+      ?? PROCESS_FALLBACK_SESSION_ID,
     runtime: configuredRuntime.runtime,
     workflowLedger: configuredRuntime.workflowLedger,
     workflowLedgerPath: configuredRuntime.workflowLedgerPath,
@@ -467,35 +479,6 @@ function registerIssueTools(server: McpServer, projectManager: FlowMcpProjectMan
   }, async ({ sessionId, projectId, projectRoot, id, repoKey, worktreePath, baseBranch }) => result(await withProject(projectManager, { projectId, projectRoot }, (context) =>
     withSession(context, sessionId, (activeSessionId) =>
       context.runtime.adoptWorkspace(activeSessionId, id, { repoKey, worktreePath, baseBranch })
-    )
-  )));
-
-  server.registerTool("flow_adopt_branch", {
-    description: "Adopt current local branch/worktree as Flow-tracked work.",
-    inputSchema: {
-      ...optionalSessionSchema,
-      ...projectScopeSchema,
-      issueRef: z.string().optional(),
-      summary: z.string().optional(),
-      description: z.string().optional(),
-      repoKey: z.string().optional(),
-      worktreePath: z.string().optional(),
-      baseBranch: z.string().optional(),
-      prefix: z.string().optional(),
-      select: z.boolean().optional(),
-    },
-  }, async (input) => result(await withProject(projectManager, input, (context) =>
-    withSession(context, input.sessionId, (activeSessionId) =>
-      context.runtime.adoptBranch(activeSessionId, {
-        issueRef: input.issueRef,
-        summary: input.summary,
-        description: input.description,
-        repoKey: input.repoKey,
-        worktreePath: input.worktreePath,
-        baseBranch: input.baseBranch,
-        prefix: input.prefix ?? configString(context.flowConfig?.issueTracker, "prefix") ?? "FLOW",
-        select: input.select,
-      })
     )
   )));
 }

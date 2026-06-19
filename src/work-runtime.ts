@@ -244,17 +244,6 @@ export interface BootstrapJiraIssueOptions {
 
 export type BranchKind = "bug" | "feature";
 
-export interface AdoptBranchOptions {
-  issueRef?: string;
-  summary?: string;
-  description?: string;
-  repoKey?: string;
-  worktreePath?: string;
-  baseBranch?: string;
-  prefix?: string;
-  select?: boolean;
-}
-
 export interface CreateIssueOptions {
   projectKey?: string;
   issueType?: "Bug" | "Task" | "Story";
@@ -495,23 +484,6 @@ export class FlowWorkRuntime {
 
   private codeReviewRequired(): boolean {
     return collaborationRequiresCodeReview(this.collaboration);
-  }
-
-  private resolveAdoptBranchRepoKey(repoKey: string | undefined, worktreePath: string): string {
-    if (repoKey) {
-      const normalized = normalizeRepoKey(repoKey);
-      if (!this.topology.isValidRepoKey(normalized)) {
-        throw new Error(`Unknown repo key ${repoKey}. Allowed repo keys: ${[...this.topology.validRepoKeys].join(", ")}.`);
-      }
-      return normalized;
-    }
-    const repoKeys = [...this.topology.validRepoKeys];
-    const matchingRepoKeys = repoKeys.filter((candidate) =>
-      pathWithin(worktreePath, this.topology.repoPath(this.projectRoot, candidate))
-    );
-    if (matchingRepoKeys.length === 1) return matchingRepoKeys[0];
-    if (repoKeys.length === 1) return repoKeys[0];
-    throw new Error(`Repo key is required. Allowed repo keys: ${repoKeys.join(", ")}.`);
   }
 
   private async nextLocalWorkItemRef(prefix = "FLOW"): Promise<string> {
@@ -1536,69 +1508,6 @@ export class FlowWorkRuntime {
       payload: { repoKey, branch, baseRef, headSha: status.headSha, pushed },
     });
     return this.refreshReviewState(sessionId, issue.ref);
-  }
-
-  async adoptBranch(sessionId: string, options: AdoptBranchOptions = {}): Promise<WorkItem> {
-    const session = await this.requireSession(sessionId);
-    const worktreePath = options.worktreePath ?? this.projectRoot;
-    const status = await this.sourceControl.inspect(worktreePath);
-    const branch = existingString(status.branch);
-    if (!branch) throw new Error("Cannot adopt a detached HEAD or unnamed branch.");
-    const repoKey = this.resolveAdoptBranchRepoKey(options.repoKey, worktreePath);
-    const issueRef = options.issueRef?.trim() || await this.nextLocalWorkItemRef(options.prefix);
-    const existing = await this.ledger.readIssue(issueRef);
-    const existingRepoKeys = existing?.repoKeys ?? [];
-    const repoKeys = existingRepoKeys.includes(repoKey) ? existingRepoKeys : [...existingRepoKeys, repoKey];
-    const baseRef = options.baseBranch ??
-      existingString(existing?.metadata[`workflow.repos.${repoKey}.base_branch`]) ??
-      this.topology.defaultBaseBranch(repoKey);
-    const title = options.summary?.trim() || existing?.title || titleFromBranch(branch);
-    const selected = options.select !== false;
-    const preparedWorktreePath = existingString(status.worktreePath) ?? worktreePath;
-    const statusIssue: WorkItem = existing ?? { ref: issueRef, title, repoKeys, state: "queued", metadata: {} };
-    const updated = await this.ledger.writeIssue({
-      ref: issueRef,
-      title,
-      repoKeys,
-      state: selected ? "selected" : existing?.state ?? "queued",
-      summary: options.description?.trim() || existing?.summary,
-      metadata: {
-        ...(existing?.metadata ?? {}),
-        issueStatus: issueTrackerStatus(statusIssue) ?? "In Progress",
-        issueStatusCategory: issueTrackerStatusCategory(statusIssue) ?? "In Progress",
-        localStatus: existingString(existing?.metadata.localStatus) ?? "In Progress",
-        localStatusCategory: existingString(existing?.metadata.localStatusCategory) ?? "In Progress",
-        localUrl: existingString(existing?.metadata.localUrl) ?? localIssueUrl(issueRef),
-        branchKind: existingBranchKind(existing) ?? branchKindFromBranch(branch),
-        work_dir: preparedWorktreePath,
-        branch,
-        "workflow.issue.origin": existingString(existing?.metadata["workflow.issue.origin"]) ?? "branch",
-        "workflow.external.issue.status": existingString(existing?.metadata["workflow.external.issue.status"]) ?? "unpublished",
-        "workflow.external.code_review.status": existingString(existing?.metadata["workflow.external.code_review.status"]) ??
-          "unpublished",
-        [`workflow.repos.${repoKey}.base_branch`]: baseRef,
-        [`workflow.repos.${repoKey}.branch`]: branch,
-        [`workflow.repos.${repoKey}.head_sha`]: status.headSha,
-        [`workflow.repos.${repoKey}.dirty`]: status.dirty,
-        [`workflow.repos.${repoKey}.worktree_path`]: preparedWorktreePath,
-      },
-    });
-    if (selected) {
-      await this.store.writeSession({
-        ...session,
-        selectedIssueRef: updated.ref,
-        selectedRepoKey: repoKey,
-        pendingConfirmation: undefined,
-      });
-    }
-    await this.store.appendEvent({
-      sessionId,
-      type: "branch.adopted",
-      issueRef: updated.ref,
-      message: `Adopted branch ${branch} as stealth-mode Flow work ${updated.ref}.`,
-      payload: { repoKey, worktreePath: preparedWorktreePath, branch, baseRef },
-    });
-    return updated;
   }
 
   private async transitionJiraWorkStarted(sessionId: string, issue: WorkItem): Promise<WorkItem> {

@@ -3562,51 +3562,6 @@ test("Work Runtime adopts an existing worktree into issue metadata", async () =>
   assert.notEqual(advanced.message, "Prepare workspace for ISSUE-3026 in app_api.");
 });
 
-test("Work Runtime adopts a branch as stealth-mode Flow work", async () => {
-  const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
-  const ledger = new MemoryWorkflowLedger();
-  const workRuntime = testWorkRuntime({
-    store: new FlowStore({ root }),
-    ledger,
-    projectRoot: "/repo",
-    sourceControl: {
-      async inspect(repoPath) {
-        assert.equal(repoPath, "/repo/public-api");
-        return {
-          branch: "work/spike-local-work",
-          headSha: "branch-sha",
-          dirty: false,
-          entries: [],
-          worktreePath: "/repo/public-api",
-        };
-      },
-    },
-    issueTracker: {
-      async viewIssue() {
-        throw new Error("external issue tracker should not be read for branch adoption");
-      },
-    },
-  });
-  const session = await workRuntime.createSession("session-adopt-branch");
-
-  const adopted = await workRuntime.adoptBranch(session.id, {
-    repoKey: "public_api",
-    worktreePath: "/repo/public-api",
-    summary: "Spike local work",
-  });
-  const selected = await workRuntime.summarizeHandoff(session.id);
-
-  assert.equal(adopted.ref, "FLOW-1");
-  assert.equal(adopted.title, "Spike local work");
-  assert.deepEqual(adopted.repoKeys, ["public_api"]);
-  assert.equal(adopted.metadata["workflow.issue.origin"], "branch");
-  assert.equal(adopted.metadata["workflow.external.issue.status"], "unpublished");
-  assert.equal(adopted.metadata["workflow.external.code_review.status"], "unpublished");
-  assert.equal(adopted.metadata["workflow.repos.public_api.branch"], "work/spike-local-work");
-  assert.equal(adopted.metadata["workflow.repos.public_api.head_sha"], "branch-sha");
-  assert.match(selected, /FLOW-1: Spike local work/);
-});
-
 test("Work Runtime inspects queue from workflow ledger", async () => {
   const root = await mkdtemp(join(tmpdir(), "flow-pi-"));
   const ledger = new MemoryWorkflowLedger();
